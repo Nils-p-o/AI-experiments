@@ -73,11 +73,11 @@ class transformer_block(nn.Module):
 
 
     def forward(self, x):
-        mask = get_causal_mask(x.size(1))
         batch_size, seq_len, _ = x.size()
+        mask = get_causal_mask(seq_len)
         mask = mask.repeat(batch_size, self.nhead, 1, 1)
-        x = self.mha(self.norm1(x), mask) + x  # (batch_size, seq_len, d_model)
-        x = self.ff(self.norm2(x)) + x
+        x = x + self.mha(self.norm1(x), mask)  # (batch_size, seq_len, d_model)
+        x = x + self.ff(self.norm2(x))
         return x
 
 

@@ -3,6 +3,7 @@ import pytorch_lightning as pl
 from pytorch_lightning.callbacks import ModelCheckpoint, EarlyStopping
 from training.experiment import TransformerExperiment
 from transformer_arch.components import ClassicTransformer
+from transformer_arch.LLaMa import LLaMa
 from training.utils import (
     count_parameters,
     ShakespeareDataModule,
@@ -33,7 +34,7 @@ if __name__ == "__main__":
     vocab_size = data_module.get_vocab_size()
 
     # --- Model Definition ---
-    model = ClassicTransformer(
+    model = LLaMa(
         d_model=512,
         nhead=8,
         num_layers=9,
