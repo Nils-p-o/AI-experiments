@@ -15,7 +15,7 @@ from pytorch_lightning.loggers import TensorBoardLogger
 if __name__ == "__main__":
 
     logger = TensorBoardLogger(
-        "lightning_logs", name="baseline_GPT_transformer_128_512_4_9_8" # seq, d_model, d_ff mult, num_layers, nhead
+        "lightning_logs", name="baseline_LLaMa_transformer_128_512_4_9_8" # seq, d_model, d_ff mult, num_layers, nhead
     )  # Optional logging
     # --- Data Loading ---
     download_and_split_shakespeare()  # Download and prepare data if needed

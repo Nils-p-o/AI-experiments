@@ -14,7 +14,7 @@ from .components import (
 
 
 
-class LLaMa(ClassicTransformer):
+class LLaMa(nn.Module):
     def __init__(
         self,
         d_model,
@@ -38,13 +38,11 @@ class LLaMa(ClassicTransformer):
             [LLaMa_block(d_model, nhead, d_ff, dropout) for _ in range(num_layers)]
         )
         self.input_embedding = input_embedding(d_model, vocab_size)
-        self.positional_encoding = PositionalEncoding(d_model, dropout, seq_len)
         self.norm = nn.RMSNorm(d_model)
         self.out = nn.Linear(d_model, vocab_size)
 
     def forward(self, x):
         x = self.input_embedding(x)  # (batch_size, seq_len, d_model)
-        x = self.positional_encoding(x)
         x = self.dropout(x)
         for layer in self.layers:
             x = layer(x)
@@ -57,7 +55,7 @@ class LLaMa(ClassicTransformer):
 class LLaMa_block(transformer_block):
     def __init__(self, d_model, nhead, d_ff=None, dropout=0.1):
         super(LLaMa_block, self).__init__(d_model, nhead, d_ff, dropout)
-        self.mha = GQA(d_model, nhead, dropout)
+        self.mha = GQA(d_model=d_model, nhead=nhead, dropout=dropout)
         self.norm1 = nn.RMSNorm(d_model)
         self.norm2 = nn.RMSNorm(d_model)
         self.ff = SwiGLU_feed_forward(d_model, d_ff, dropout)
@@ -72,20 +70,20 @@ class RoPE(nn.Module):
         self.inv_freq = 1.0 / (
             self.theta ** (torch.arange(0, self.dim, 2).float() / self.dim)
         )
-        self.register_buffer(
-            "inv_freq", self.inv_freq
-        )  # Make it a buffer, not a parameter
+        # self.register_buffer(
+        #     "inv_freqs", self.inv_freq
+        # )  # Make it a buffer, not a parameter
 
         # Create a cache for the cos and sin values.  This improves efficiency
         # as we can reuse these values for different batches with same seq_len.
         self.cos_cached = None
         self.sin_cached = None
 
-    def _build_cache(self, x):
+    def _build_cache(self, x, seq_dim=1):
         """Builds the cos/sin cache if it doesn't exist or if seq_len changes."""
-        seq_len = x.shape[1]  # batch, seq_len, dim
+        seq_len = x.shape[seq_dim]  # batch, seq_len, dim
         if (
-            self.cos_cached is not None and seq_len <= self.cos_cached.shape[2]
+            self.cos_cached is not None and seq_len <= self.cos_cached.shape[seq_dim]
         ):  # Use cached values if appropriate
             return
 
@@ -94,8 +92,8 @@ class RoPE(nn.Module):
         freqs = torch.einsum("i,j->ij", t, self.inv_freq)  # Outer product
         # Different from paper, but it uses a different permutation in order to obtain the same calculation
         emb = torch.cat((freqs, freqs), dim=-1)
-        self.cos_cached = emb.cos()[None, None, :, :]  # [1,1,seq_len, dim]
-        self.sin_cached = emb.sin()[None, None, :, :]
+        self.cos_cached = emb.cos()[None, None, :, :x.size(-1)//2].to(device=x.device)  # [1,1,seq_len, dim]
+        self.sin_cached = emb.sin()[None, None, :, :x.size(-1)//2].to(device=x.device) # quick fix??? TODO last dim 2 times bigger than i need
         return
 
     def forward(self, x, seq_dim=1):  # added seq_dim
@@ -106,7 +104,7 @@ class RoPE(nn.Module):
         Returns:
             Tensor with RoPE applied, same shape as x.
         """
-        self._build_cache(x)
+        self._build_cache(x, seq_dim=seq_dim)
         cos = self.cos_cached[
             :, :, : x.shape[seq_dim]
         ]  # Correctly slice cos/sin caches
