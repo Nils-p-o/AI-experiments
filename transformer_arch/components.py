@@ -10,7 +10,7 @@ class ClassicTransformer(nn.Module):
         d_model,
         nhead,
         num_layers,
-        d_ff,
+        d_ff=None,
         dropout=0.1,
         vocab_size=10000,
         seq_len=128,
@@ -19,7 +19,10 @@ class ClassicTransformer(nn.Module):
         self.d_model = d_model
         self.nhead = nhead
         self.num_layers = num_layers
-        self.d_ff = d_ff
+        if d_ff is None:
+            d_ff = 4 * d_model
+        else:
+            self.d_ff = d_ff
         self.dropout = nn.Dropout(dropout)
         self.layers = nn.ModuleList(
             [

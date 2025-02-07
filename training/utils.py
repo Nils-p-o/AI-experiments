@@ -122,13 +122,13 @@ class ShakespeareDataModule(pl.LightningDataModule):
             self.test_dataset = ShakespeareDataset(self.test_file, self.seq_len)
 
     def train_dataloader(self): # increase workers
-        return DataLoader(self.train_dataset, batch_size=self.batch_size, shuffle=True, num_workers=8, pin_memory=True)
+        return DataLoader(self.train_dataset, batch_size=self.batch_size, shuffle=True, num_workers=8, pin_memory=True, persistent_workers=True)
 
     def val_dataloader(self):
         return DataLoader(self.val_dataset, batch_size=self.batch_size, shuffle=False, num_workers=8, pin_memory=True, persistent_workers=True)
 
     def test_dataloader(self):
-        return DataLoader(self.test_dataset, batch_size=self.batch_size, shuffle=False, num_workers=8, pin_memory=True)
+        return DataLoader(self.test_dataset, batch_size=self.batch_size, shuffle=False, num_workers=8, pin_memory=True, persistent_workers=True)
 
     def get_vocab_size(self):  # Added for convenience
         #  We can get vocab size from any of the datasets, assuming they share the same vocab
