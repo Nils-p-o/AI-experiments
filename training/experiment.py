@@ -18,7 +18,7 @@ class TransformerExperiment(pl.LightningModule):
         warmup_steps=100,
         t_0=500,
         t_mult=1.5,
-        lr_mult=0.5,
+        lr_mult=0.5, # maybe higher?
     ):
         super().__init__()
         self.model = model
@@ -35,55 +35,18 @@ class TransformerExperiment(pl.LightningModule):
         self.perplexity = Perplexity()
         self.save_hyperparameters(
             ignore=["model"]
-        )  # Saves the hyperparameters to the checkpoint, except the model itself
+        )
 
     def forward(self, *args, **kwargs):
         return self.model(*args, **kwargs)
 
-    def training_step(self, batch, batch_idx):
-        # Adjust based on your model's input
-        inputs, labels = batch  # labels -> (batch_size, seq_len) check this
-        inputs = inputs[:, :-1]
-        labels = labels[:, 1:]
 
-        outputs = self(inputs).transpose(
-            -1, -2
-        )  # (batch_size, seq_len, vocab_size) -> (batch_size, vocab_size, seq_len)
-
-        # Adjust according to your model's output and task
-        if isinstance(outputs, torch.Tensor):
-            logits = outputs  # If model directly returns logits
-        else:
-            logits = outputs.logits  # Or outputs[0] if it's a tuple/list
-
-        loss = self.loss_fn(logits, labels)
-        perplexity = self.perplexity(logits.transpose(-1,-2), labels)
-        preds = torch.argmax(logits, dim=-2)
-        acc = self.accuracy(preds, labels)
-
-        self.log(
-            "train_loss", loss, on_step=True, on_epoch=True, prog_bar=True, logger=True
-        )
-        self.log(
-            "train_acc", acc, on_step=True, on_epoch=True, prog_bar=True, logger=True
-        )
-        self.log(
-            "train_perplexity",
-            perplexity,
-            on_step=True,
-            on_epoch=True,
-            prog_bar=True,
-            logger=True,
-        )
-        return loss
-
-    def validation_step(self, batch, batch_idx):
-        # Same input/output adjustments as in training_step
+    def _shared_step(self, batch, batch_idx, stage="train"):
         inputs, labels = batch
-        inputs = inputs[:, :-1]
+        inputs = inputs[:, :-1] # shifted
         labels = labels[:, 1:]
 
-        outputs = self(inputs).transpose(-1, -2)
+        outputs = self(inputs).transpose(-1, -2) # (batch_size, seq_len, vocab_size) 
 
         if isinstance(outputs, torch.Tensor):
             logits = outputs
@@ -95,17 +58,28 @@ class TransformerExperiment(pl.LightningModule):
         preds = torch.argmax(logits, dim=-2)
         acc = self.accuracy(preds, labels)
 
-        self.log("val_loss", loss, prog_bar=True, on_epoch=True)
-        self.log("val_acc", acc, prog_bar=True, on_epoch=True)
-        self.log("val_perplexity", perplexity, prog_bar=True, on_epoch=True)
+        self.log(f"{stage}_loss", loss, on_step=(stage == "train"), logger=True)
+        self.log(f"{stage}_acc", acc, on_step=(stage == "train"), logger=True)
+        self.log(f"{stage}_perplexity", perplexity, on_step=(stage == 'train'), logger=True)
+        if stage == "train":
+            self.log(f"{stage}_lr", self.lr_schedulers().get_last_lr()[0], on_step=True, logger=True)
         return loss
+    
+    def training_step(self, batch, batch_idx):
+        return self._shared_step(batch, batch_idx, "train")
+
+    def validation_step(self, batch, batch_idx):
+        return self._shared_step(batch, batch_idx, "val")
+    
+    def test_step(self, batch, batch_idx):
+        return self._shared_step(batch, batch_idx, "test")
 
 
     def configure_optimizers(self):
         optimizer = optim.Adam(self.parameters(), lr=self.learning_rate)
 
         def lr_lambda(current_step):
-            min_lr = 1e-5
+            min_lr = 1e-7 / self.learning_rate
 
             current_cycle_step = current_step
             cycle_nr = 0
@@ -128,7 +102,7 @@ class TransformerExperiment(pl.LightningModule):
                 progress = float(current_cycle_step - self.warmup_steps) / float(
                     max(1, t_curr - self.warmup_steps)
                 )
-                return current_peak_lr * 0.5 * (math.cos(math.pi * progress) + 1) + 1e-6
+                return current_peak_lr * 0.5 * (math.cos(math.pi * progress) + 1) + min_lr
 
         scheduler = LambdaLR(optimizer, lr_lambda)
 

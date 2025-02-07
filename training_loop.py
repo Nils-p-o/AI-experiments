@@ -47,13 +47,13 @@ if __name__ == "__main__":
 
     # --- Training Setup ---
     experiment = TransformerExperiment(
-        model, learning_rate=1e-3, vocab_size=vocab_size
+        model, learning_rate=7.5e-4, vocab_size=vocab_size
     )  # Use vocab_size
 
     # Checkpointing
     checkpoint_callback = ModelCheckpoint(
         dirpath="checkpoints/",
-        filename="{epoch}-{val_loss:.2f}-{val_perplexity:.2f}",  # Use Perplexity, better metric
+        filename="{epoch}-{val_loss:.2f}-{val_perplexity:.2f}",
         save_top_k=3,
         monitor="val_loss",
         mode="min",
@@ -61,21 +61,19 @@ if __name__ == "__main__":
 
     # Early Stopping
     early_stopping_callback = EarlyStopping(
-        monitor="val_loss", patience=5, verbose=True, mode="min"
+        monitor="val_loss", patience=10, verbose=True, mode="min"
     )
 
     trainer = pl.Trainer(
-        max_epochs=10,  # Or use max_steps for finer control with LR scheduling
+        max_epochs=5,  # Or use max_steps for finer control with LR scheduling
         accelerator="auto",
         devices="auto",
         callbacks=[checkpoint_callback, early_stopping_callback],
-        # gradient_clip_val=0.5,  # Optional gradient clipping
-        limit_train_batches=500,
-        limit_val_batches=10,
+        limit_train_batches=1000,
+        limit_val_batches=25,
         logger=logger,
         log_every_n_steps=10,
-        val_check_interval=0.25,
+        val_check_interval=0.2,
     )
 
     trainer.fit(experiment, datamodule=data_module)
-    trainer.test(datamodule=data_module)
