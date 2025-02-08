@@ -21,3 +21,5 @@ dummy_input = torch.randn(batch_size, seq_len).long()
 model.eval()
 
 export_model(model, dummy_input, "GPT/GPT.onnx")
+
+torch._scaled_dot_product_flash_attention()

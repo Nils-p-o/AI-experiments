@@ -16,7 +16,7 @@ class TransformerExperiment(pl.LightningModule):
         batch_size=32,
         vocab_size=2,
         warmup_steps=100,
-        t_0=500,
+        t_0=3000,
         t_mult=1.5,
         lr_mult=0.5, # maybe higher?
     ):

@@ -10,9 +10,12 @@ from training.utils import (
     download_and_split_shakespeare,
 )
 from pytorch_lightning.loggers import TensorBoardLogger
+import torch
 
 
 if __name__ == "__main__":
+
+    torch.set_float32_matmul_precision("medium")
 
     logger = TensorBoardLogger(
         "lightning_logs", name="baseline_LLaMa_transformer_128_512_4_9_8" # seq, d_model, d_ff mult, num_layers, nhead
@@ -48,7 +51,7 @@ if __name__ == "__main__":
 
     # --- Training Setup ---
     experiment = TransformerExperiment(
-        model, learning_rate=7.5e-4, vocab_size=vocab_size
+        model, learning_rate=4e-4, vocab_size=vocab_size
     )  # Use vocab_size
 
     # Checkpointing
