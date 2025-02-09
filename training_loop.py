@@ -1,4 +1,4 @@
-
+import argparse
 import pytorch_lightning as pl
 from pytorch_lightning.callbacks import ModelCheckpoint, EarlyStopping
 from training.experiment import TransformerExperiment
@@ -19,7 +19,7 @@ import torch
 # TODO implement flashattention
 # combine uv into one linear layer (linear_in and linear_gate)
 
-# change how args get passed, should use args instead
+# change how args get passed to model, should use args instead
 # update older code (maybe, idk)
 
 # TODO from nGPT implementation
@@ -164,19 +164,27 @@ def run_experiment(config):
     return
 
 if __name__ == "__main__":
-    default_config = {
-        "architecture": "Diff",
-        "d_model": 512,
-        "nhead": 8,
-        "num_layers": 9,
-        "d_ff_mult": 4,
-        "groups": 4,
-        "dropout": 0.1,
-        "lr": 2e-3,
-        "warmup_steps": 100,
-        "t_0": 5000,
-        "t_mult": 1.5,
-        "lr_mult": 0.5,
-        "seq_len": 128,
-    }
-    run_experiment(default_config)
+     parser = argparse.ArgumentParser(description="Train a Transformer model.")
+
+     # Model architecture arguments (same as before)
+     parser.add_argument("--architecture", type=str, default="LLaMa", help="Model architecture (LLaMa, ...)")
+     parser.add_argument("--d_model", type=int, default=512, help="Embedding dimension.")
+     parser.add_argument("--nhead", type=int, default=8, help="Number of attention heads.")
+     parser.add_argument("--num_layers", type=int, default=6, help="Number of layers.")
+     parser.add_argument("--d_ff_mult", type=int, default=4, help="Multiplier for d_ff")
+     parser.add_argument("--groups", type=int, default=4, help="Number of groups for GQA.")
+     parser.add_argument("--dropout", type=float, default=0.1, help="Dropout probability.")
+     parser.add_argument("--type", type=str, default="test", help="Experiment type (for logging).")
+
+     # Training arguments (same as before)
+     parser.add_argument("--lr", type=float, default=1e-4, help="Learning rate.")
+     parser.add_argument("--warmup_steps", type=int, default=4000, help="Warmup steps.")
+    #  parser.add_argument("--total_steps", type=int, default=100000, help="Total training steps.")
+     parser.add_argument("--t_0", type=int, default=10000, help="Initial period for cosine annealing.")
+     parser.add_argument("--t_mult", type=float, default=2.0, help="Multiplier for period.")
+     parser.add_argument("--lr_mult", type=float, default=0.9, help="Multiplier for peak LR.")
+     parser.add_argument("--seq_len", type=int, default=128, help="Sequence length.")
+     parser.add_argument("--batch_size", type=int, default=32, help="Batch size.")
+
+     args = parser.parse_args()
+     run_experiment(args)
