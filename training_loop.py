@@ -16,6 +16,12 @@ import torch
 # some problem with nGPT, need to fix it
 # maybe the sWiGLu is the problem
 
+# modules to try:
+# Attention
+# SwiGLU
+# nGPT_block
+# weight norm
+# higher lr
 
 if __name__ == "__main__":
     if torch.cuda.is_available():
@@ -31,7 +37,7 @@ if __name__ == "__main__":
 
 
     logger = TensorBoardLogger(
-        "lightning_logs", name=f"baseline_nGPT_transformer_{seq_len}_{d_model}_{d_ff_mult}_{num_layers}_{nhead}" # seq, d_model, d_ff mult, num_layers, nhead
+        "lightning_logs", name=f"baseline_LLaMa_transformer_{seq_len}_{d_model}_{d_ff_mult}_{num_layers}_{nhead}" # seq, d_model, d_ff mult, num_layers, nhead
     )  # Optional logging
     # --- Data Loading ---
     download_and_split_shakespeare()  # Download and prepare data if needed
@@ -48,7 +54,7 @@ if __name__ == "__main__":
     vocab_size = data_module.get_vocab_size()
 
     # --- Model Definition ---
-    model = nGPT(
+    model = LLaMa(
         d_model=d_model,
         nhead=nhead,
         num_layers=num_layers,
@@ -62,7 +68,7 @@ if __name__ == "__main__":
 
     # --- Training Setup ---
     experiment = TransformerExperiment(
-        model, learning_rate=4e-4, vocab_size=vocab_size
+        model, learning_rate=2e-4, vocab_size=vocab_size
     )  # Use vocab_size
 
     # Checkpointing
@@ -76,7 +82,7 @@ if __name__ == "__main__":
 
     # Early Stopping
     early_stopping_callback = EarlyStopping(
-        monitor="val_loss", patience=10, verbose=True, mode="min"
+        monitor="val_loss", patience=20, verbose=True, mode="min"
     )
 
     trainer = pl.Trainer(
