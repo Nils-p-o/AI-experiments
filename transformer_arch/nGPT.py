@@ -5,8 +5,16 @@ import math
 from .components import input_embedding, get_causal_mask
 from .LLaMa import RoPE
 
-# TODO implement flashattention
-# combine uv into one linear layer (linear_in and linear_gate)
+
+# some problem with nGPT, need to fix it
+# maybe the sWiGLu is the problem
+
+# modules to try:
+# Attention
+# SwiGLU
+# nGPT_block
+# weight norm (wrong step, or wrong dim)
+# higher lr
 
 
 class nGPT(nn.Module):
@@ -166,7 +174,7 @@ class nGPT_GQA(nn.Module):
         a = torch.matmul(q, k.transpose(-2, -1)) * math.sqrt(self.head_dim)
 
         if mask is not None:
-            a = a.masked_fill(mask == 0, -1e9)
+            a = a.masked_fill(mask == 1, -1e9)
 
         a = torch.softmax(a, dim=-1)
         a = self.dropout(a)
