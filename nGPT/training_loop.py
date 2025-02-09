@@ -13,29 +13,19 @@ from training.utils import (
 from pytorch_lightning.loggers import TensorBoardLogger
 import torch
 
-# some problem with nGPT, need to fix it
-# maybe the sWiGLu is the problem
-
 
 if __name__ == "__main__":
     if torch.cuda.is_available():
         torch.set_float32_matmul_precision("medium")
 
-    seq_len = 128  # Or whatever sequence length you want
-    batch_size = 32  # Choose an appropriate batch size
-    d_model = 64 # 512
-    nhead = 4 # 8
-    num_layers = 5 # 9
-    d_ff_mult = 4
-
-
-
     logger = TensorBoardLogger(
-        "lightning_logs", name=f"baseline_nGPT_transformer_{seq_len}_{d_model}_{d_ff_mult}_{num_layers}_{nhead}" # seq, d_model, d_ff mult, num_layers, nhead
+        "lightning_logs", name="baseline_nGPT_transformer_128_512_4_9_8" # seq, d_model, d_ff mult, num_layers, nhead
     )  # Optional logging
     # --- Data Loading ---
     download_and_split_shakespeare()  # Download and prepare data if needed
 
+    seq_len = 128  # Or whatever sequence length you want
+    batch_size = 32  # Choose an appropriate batch size
 
     data_module = ShakespeareDataModule(
         train_file="train.txt",
@@ -49,9 +39,9 @@ if __name__ == "__main__":
 
     # --- Model Definition ---
     model = nGPT(
-        d_model=d_model,
-        nhead=nhead,
-        num_layers=num_layers,
+        d_model=512,
+        nhead=8,
+        num_layers=9,
         dropout=0.1,
         vocab_size=vocab_size,
         seq_len=seq_len,

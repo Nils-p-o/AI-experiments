@@ -176,8 +176,9 @@ class mha(nn.Module):
 
 
 def get_causal_mask(seq_len):  # ?????
+    device = "cuda" if torch.cuda.is_available() else "cpu"
     mask = torch.triu(torch.ones(seq_len, seq_len), diagonal=0)
-    return mask.unsqueeze(0).unsqueeze(0).to(device="cuda")
+    return mask.unsqueeze(0).unsqueeze(0).to(device=device)
 
 
 class self_attention(nn.Module):
