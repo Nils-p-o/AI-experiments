@@ -6,7 +6,7 @@ from torchmetrics import Accuracy
 from torchmetrics.text import Perplexity
 import math
 from torch.optim.lr_scheduler import LambdaLR
-from transformer_arch.nGPT import normalize_weights, enforce_positive_eigenvalues
+from transformer_arch.nGPT import normalize_weights_and_enforce_positive_eigenvalues #normalize_weights, enforce_positive_eigenvalues
 
 class TransformerExperiment(pl.LightningModule):
     def __init__(
@@ -86,13 +86,13 @@ class TransformerExperiment(pl.LightningModule):
 
         optimizer.zero_grad()
         self.manual_backward(loss)
-        if self.model.__class__.__name__ == "nGPT":
-            normalize_weights(self.model)
-            enforce_positive_eigenvalues(self.model)
         optimizer.step()
         if isinstance(scheduler, dict):
             scheduler = scheduler["lr_scheduler"]
         scheduler.step()
+        
+        if self.model.__class__.__name__ == "nGPT":
+            normalize_weights_and_enforce_positive_eigenvalues(self.model)
 
 
         perplexity = self.perplexity(logits.transpose(-1,-2), labels)
