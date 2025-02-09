@@ -194,6 +194,8 @@ class nGPT_SwiGLU_ff(nn.Module):
         self.linear_out = nn.Linear(d_ff, d_model)
         self.dropout = nn.Dropout(dropout)
 
+        self.silu = nn.SiLU()
+
         # self.s_u_init = 1.
         # self.s_u_scale = 1.0 / math.sqrt(d_ff)
         self.s_u = nn.Parameter(torch.ones(d_ff))
@@ -204,7 +206,7 @@ class nGPT_SwiGLU_ff(nn.Module):
     def forward(self, x):
         u = self.linear_in(x) * self.s_u
         v = self.linear_gate(x) * self.s_v * math.sqrt(self.d_model)
-        x = u * F.silu(v)
+        x = u * self.silu(v)
         x = self.linear_out(x)
         x = self.dropout(x)  # Apply dropout *after* the output projection
         return x
@@ -218,35 +220,34 @@ def cosine_norm(x, dim=-1):
 def normalize_weights_and_enforce_positive_eigenvalues(model):
     with torch.no_grad():
         for layer in model.layers:
-            for module in layer.modules():
-                module.mha.q_linear.weight.data = cosine_norm(
-                    module.mha.q_linear.weight.data, dim=-1
-                )  # n_proj, n_embed
-                module.mha.k_linear.weight.data = cosine_norm(
-                    module.mha.k_linear.weight.data, dim=-1
-                )  # n_proj, n_embed
-                module.mha.v_linear.weight.data = cosine_norm(
-                    module.mha.v_linear.weight.data, dim=-1
-                )  # n_proj, n_embed
-                module.mha.o.weight.data = cosine_norm(
-                    module.mha.o.weight.data, dim=-2
-                )  # n_embed, n_proj
+            layer.mha.q_linear.weight.data = cosine_norm(
+                layer.mha.q_linear.weight.data, dim=-1
+            )  # n_proj, n_embed
+            layer.mha.k_linear.weight.data = cosine_norm(
+                layer.mha.k_linear.weight.data, dim=-1
+            )  # n_proj, n_embed
+            layer.mha.v_linear.weight.data = cosine_norm(
+                layer.mha.v_linear.weight.data, dim=-1
+            )  # n_proj, n_embed
+            layer.mha.o.weight.data = cosine_norm(
+                layer.mha.o.weight.data, dim=-2
+            )  # n_embed, n_proj
 
-                module.ff.linear_in.weight.data = cosine_norm(
-                    module.ff.linear_in.weight.data, dim=-1
-                )  # n_proj, n_embed
-                module.ff.linear_gate.weight.data = cosine_norm(
-                    module.ff.linear_gate.weight.data, dim=-1
-                )  # n_proj, n_embed
-                module.ff.linear_out.weight.data = cosine_norm(
-                    module.ff.linear_out.weight.data, dim=-2
-                )  # n_embed, n_proj
+            layer.ff.linear_in.weight.data = cosine_norm(
+                layer.ff.linear_in.weight.data, dim=-1
+            )  # n_proj, n_embed
+            layer.ff.linear_gate.weight.data = cosine_norm(
+                layer.ff.linear_gate.weight.data, dim=-1
+            )  # n_proj, n_embed
+            layer.ff.linear_out.weight.data = cosine_norm(
+                layer.ff.linear_out.weight.data, dim=-2
+            )  # n_embed, n_proj
 
-                module.eigen_a.data = torch.abs(module.eigen_a.data)
-                module.eigen_m.data = torch.abs(module.eigen_m.data)
+            layer.eigen_a.data = torch.abs(layer.eigen_a.data)
+            layer.eigen_m.data = torch.abs(layer.eigen_m.data)
 
-        model.input_embedding.weight.data = cosine_norm(
-            model.input_embedding.weight.data, dim=-1
+        model.input_embedding.embedding.weight.data = cosine_norm(
+            model.input_embedding.embedding.weight.data, dim=-1
         )  # V, n_embed
         model.out.weight.data = cosine_norm(
             model.out.weight.data, dim=-1

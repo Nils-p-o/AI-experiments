@@ -20,7 +20,7 @@ import torch
 # Attention
 # SwiGLU
 # nGPT_block
-# weight norm
+# weight norm (wrong step, or wrong dim)
 # higher lr
 
 # TODO from nGPT implementation
@@ -52,7 +52,7 @@ def run_experiment():
     d_ff_mult = 4
     group_size = 4
     dropout = 0.1
-    lr = 7.5e-4
+    lr = 2e-3
     warmup_steps=100
     t_0=5000
     t_mult=1.5
@@ -108,14 +108,15 @@ def run_experiment():
 
     # Early Stopping
     early_stopping_callback = EarlyStopping(
-        monitor="val_loss", patience=20, verbose=True, mode="min"
+        monitor="val_loss", patience=10, verbose=True, mode="min"
     )
 
     trainer = pl.Trainer(
-        max_steps=5000,  # Or use max_steps for finer control with LR scheduling
+        max_epochs=5,
         accelerator="auto",
         devices="auto",
         callbacks=[checkpoint_callback, early_stopping_callback],
+        limit_train_batches=1000,
         limit_val_batches=25,
         logger=logger,
         log_every_n_steps=10,
