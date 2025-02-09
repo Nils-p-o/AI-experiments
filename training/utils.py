@@ -221,3 +221,4 @@ def export_model(model, dummy_input, model_path):
         output_names=["output"],
         opset_version=12,
     )
+

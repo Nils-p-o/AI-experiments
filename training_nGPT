@@ -2,8 +2,8 @@
 import pytorch_lightning as pl
 from pytorch_lightning.callbacks import ModelCheckpoint, EarlyStopping
 from training.experiment import TransformerExperiment
-from transformer_arch.components import ClassicTransformer
 from transformer_arch.LLaMa import LLaMa
+from transformer_arch.nGPT import nGPT
 from training.utils import (
     count_parameters,
     ShakespeareDataModule,
@@ -18,7 +18,7 @@ if __name__ == "__main__":
         torch.set_float32_matmul_precision("medium")
 
     logger = TensorBoardLogger(
-        "lightning_logs", name="baseline_LLaMa_transformer_128_512_4_9_8" # seq, d_model, d_ff mult, num_layers, nhead
+        "lightning_logs", name="baseline_nGPT_transformer_128_512_4_9_8" # seq, d_model, d_ff mult, num_layers, nhead
     )  # Optional logging
     # --- Data Loading ---
     download_and_split_shakespeare()  # Download and prepare data if needed
@@ -37,7 +37,7 @@ if __name__ == "__main__":
     vocab_size = data_module.get_vocab_size()
 
     # --- Model Definition ---
-    model = LLaMa(
+    model = nGPT(
         d_model=512,
         nhead=8,
         num_layers=9,
