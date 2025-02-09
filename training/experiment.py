@@ -6,7 +6,7 @@ from torchmetrics import Accuracy
 from torchmetrics.text import Perplexity
 import math
 from torch.optim.lr_scheduler import LambdaLR
-from transformer_arch.nGPT import normalize_weights
+from transformer_arch.nGPT import normalize_weights, enforce_positive_eigenvalues
 
 class TransformerExperiment(pl.LightningModule):
     def __init__(
@@ -42,6 +42,9 @@ class TransformerExperiment(pl.LightningModule):
 
 
     def _shared_step(self, batch, batch_idx, stage="train"):
+        if self.model.__class__.__name__ == "nGPT":
+            normalize_weights(self.model)
+            enforce_positive_eigenvalues(self.model)
         inputs, labels = batch
         inputs = inputs[:, :-1] # shifted
         labels = labels[:, 1:]
@@ -63,8 +66,6 @@ class TransformerExperiment(pl.LightningModule):
         self.log(f"{stage}_perplexity", perplexity, on_step=(stage == 'train'), logger=True)
         if stage == "train":
             self.log(f"{stage}_lr", self.lr_schedulers().get_last_lr()[0], on_step=True, logger=True)
-            if self.model.__class__.__name__ == "nGPT":
-                normalize_weights(self.model)
         return loss
     
     def training_step(self, batch, batch_idx):

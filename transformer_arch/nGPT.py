@@ -74,7 +74,7 @@ class nGPT_block(nn.Module):
         x_a = cosine_norm(self.mha(x, mask))  # (batch_size, seq_len, d_model)
         x = cosine_norm(x + self.eigen_a * (self.eigen_a_init/self.eigen_a_scale) * (x_a - x))
         x_m = cosine_norm(self.ff(x))
-        x = cosine_norm(x + self.eigen_m * (self.eigen_m_init / self.eigen_m_scale) (x_m - x))
+        x = cosine_norm(x + self.eigen_m * (self.eigen_m_init / self.eigen_m_scale) * (x_m - x))
         return x
 
 
@@ -131,10 +131,6 @@ class nGPT_GQA(nn.Module):
         q = self.rotary_emb(q, seq_dim=2)
         k = self.rotary_emb(k, seq_dim=2)
 
-        effective_s_qk = self.s_qk * (self.s_qk_init / self.s_qk_scale)
-        q = cosine_norm(q) * effective_s_qk
-        k = cosine_norm(k) * effective_s_qk
-
         # --- Reshape K and V for Grouped Attention ---
         # Repeat K and V for each head within the group.
         k = k.repeat_interleave(
@@ -143,6 +139,12 @@ class nGPT_GQA(nn.Module):
         v = v.repeat_interleave(
             self.heads_per_group, dim=1
         )  # (batch_size, nhead, seq_len, head_dim)
+
+        effective_s_qk = self.s_qk * (self.s_qk_init / self.s_qk_scale)
+        q = cosine_norm(q).transpose(1, 2) * effective_s_qk
+        k = cosine_norm(k).transpose(1, 2) * effective_s_qk
+        q = q.transpose(1, 2)
+        k = k.transpose(1, 2)
 
         # --- Attention Calculation ---
         a = torch.matmul(q, k.transpose(-2, -1)) * math.sqrt(self.head_dim)
@@ -205,4 +207,14 @@ def normalize_weights(model):
                     # module.bias.data = cosine_norm(module.bias.data, dim=-1)
         if hasattr(model, "embedding"):
             model.embedding.weight.data = cosine_norm(model.embedding.weight.data, dim=-2)
+    return model
+
+def enforce_positive_eigenvalues(model):
+    with torch.no_grad():
+        for layer in model.layers:
+            for module in layer.modules():
+                if module.__class__.__name__ == "nGPT_block":
+                    module.eigen_a.data = torch.abs(module.eigen_a.data)
+                    module.eigen_m.data = torch.abs(module.eigen_m.data)
+    
     return model
