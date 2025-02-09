@@ -1,8 +1,10 @@
 from training_loop import run_experiment
+import time
 # might need to make the params allow dynamic changes in architecture, maybe (like mixing DiffAttn and nGPT, when it works...)
 
 LLaMa = {
     "architecture": "LLaMa",
+    "batch_size": 32,
     "d_model": 512,
     "nhead": 8,
     "num_layers": 9,
@@ -20,6 +22,7 @@ LLaMa = {
 
 DiffTransformer = {
     "architecture": "Diff",
+    "batch_size": 32,
     "d_model": 512,
     "nhead": 8,
     "num_layers": 9,
@@ -38,6 +41,7 @@ DiffTransformer = {
 experiment_nr = 1
 # checking if i fucked up the causal mask
 run_experiment(LLaMa)
+time.sleep(10)
 print(f"Experiment {experiment_nr} completed")
 experiment_nr += 1
 
