@@ -44,6 +44,8 @@ def run_experiment(args):
     torch.set_float32_matmul_precision("medium") # turns out this is not exclusive to gpu(~20% faster), cpu(~0% faster, maybe even slower)
     # add flashattn to speed things up for gpu and cpu too
     # torch.bfloat16 # extra speed up??
+    if torch.cuda.is_available():
+        torch.backends.cuda.enable_flash_sdp(True)
 
     architecture = args.architecture
     seq_len = args.seq_len
@@ -154,7 +156,7 @@ def run_experiment(args):
         accelerator="auto",
         devices="auto",
         callbacks=[checkpoint_callback, early_stopping_callback],
-        limit_train_batches=1000
+        limit_train_batches=1000,
         limit_val_batches=25,
         logger=logger,
         log_every_n_steps=10,
