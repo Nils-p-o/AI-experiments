@@ -168,7 +168,7 @@ class RoPE_mha(nn.Module):
 
         # Apply mask if provided
         if mask is not None:
-            a = a.masked_fill(mask == 0, -1e9)
+            a = a.masked_fill(mask == 1, -1e9)
 
         a = torch.softmax(a, dim=-1)
         a = self.dropout(a)
@@ -246,7 +246,7 @@ class GQA(nn.Module):
         a = torch.matmul(q, k.transpose(-2, -1)) / math.sqrt(self.head_dim)
 
         if mask is not None:
-            a = a.masked_fill(mask == 0, -1e9)
+            a = a.masked_fill(mask == 1, -1e9)
 
         a = torch.softmax(a, dim=-1)
         a = self.dropout(a)
