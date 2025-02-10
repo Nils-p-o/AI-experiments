@@ -39,26 +39,26 @@ import torch
 #         torch.nn.init.normal_(p, mean=0.0, std=config.base_scale/math.sqrt(2 * config.n_layer))
 
 
-def run_experiment(config):
+def run_experiment(args):
     if torch.cuda.is_available():
         torch.set_float32_matmul_precision("medium")
 
 
-    architecture = config["architecture"]
-    seq_len = config["seq_len"]
-    batch_size = config["batch_size"]
-    d_model = config["d_model"]
-    nhead = config["nhead"]
-    num_layers = config["num_layers"]
-    d_ff_mult = config["d_ff_mult"]
-    groups = config["groups"]
-    dropout = config["dropout"]
-    lr = config["lr"]
-    warmup_steps=config["warmup_steps"]
-    t_0=config["t_0"]
-    t_mult=config["t_mult"]
-    lr_mult=config["lr_mult"]
-    type = config["type"]
+    architecture = args.architecture
+    seq_len = args.seq_len
+    batch_size = args.batch_size
+    d_model = args.d_model
+    nhead = args.nhead
+    num_layers = args.num_layers
+    d_ff_mult = args.d_ff_mult
+    groups = args.groups
+    dropout = args.dropout
+    lr = args.lr
+    warmup_steps=args.warmup_steps
+    t_0=args.t_0
+    t_mult=args.t_mult
+    lr_mult=args.lr_mult
+    type = args.type
 
 
     logger = TensorBoardLogger(

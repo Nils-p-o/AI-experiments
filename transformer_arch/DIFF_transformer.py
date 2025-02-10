@@ -51,7 +51,7 @@ class DiffTransformer(nn.Module):
 
 
 class Diff_block(nn.Module):
-    def __init__(self, d_model, nhead, groups, d_ff=None, dropout=0.1, depth=0):
+    def __init__(self, d_model, nhead, d_ff=None, dropout=0.1, depth=0, groups=4):
         super(Diff_block, self).__init__()
         self.d_model = d_model
         self.nhead = nhead
@@ -83,7 +83,7 @@ class DiffGQA(nn.Module):
         assert self.head_dim * nhead == d_model
         assert (
             nhead % groups == 0
-        ), "Number of heads must be divisible by number of groups"
+        ), f"Number of heads {nhead} must be divisible by number of groups {groups}" 
         self.heads_per_group = nhead // groups
 
         # Separate Q projections for each head

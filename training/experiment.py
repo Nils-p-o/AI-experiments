@@ -37,8 +37,6 @@ class TransformerExperiment(pl.LightningModule):
             ignore=["model"]
         )
 
-        self.automatic_optimization = False
-
     def forward(self, *args, **kwargs):
         return self.model(*args, **kwargs)
 
@@ -68,42 +66,44 @@ class TransformerExperiment(pl.LightningModule):
         return loss
     
     def training_step(self, batch, batch_idx):
+        return self._shared_step(batch, batch_idx, "train")
+
+        # TODO probably the cause of the bug????
+        # inputs, labels = batch
+        # optimizer = self.optimizers()
+        # scheduler = self.lr_schedulers()
+        # inputs = inputs[:, :-1] # shifted
+        # labels = labels[:, 1:]
+
+        # outputs = self(inputs).transpose(-1, -2) # (batch_size, seq_len, vocab_size) 
+
+        # if isinstance(outputs, torch.Tensor):
+        #     logits = outputs
+        # else:
+        #     logits = outputs.logits
+
+        # loss = self.loss_fn(logits, labels)
+
+        # optimizer.zero_grad()
+        # self.manual_backward(loss)
+        # optimizer.step()
+        # if isinstance(scheduler, dict):
+        #     scheduler = scheduler["lr_scheduler"]
+        # scheduler.step()
         
-        inputs, labels = batch
-        optimizer = self.optimizers()
-        scheduler = self.lr_schedulers()
-        inputs = inputs[:, :-1] # shifted
-        labels = labels[:, 1:]
-
-        outputs = self(inputs).transpose(-1, -2) # (batch_size, seq_len, vocab_size) 
-
-        if isinstance(outputs, torch.Tensor):
-            logits = outputs
-        else:
-            logits = outputs.logits
-
-        loss = self.loss_fn(logits, labels)
-
-        optimizer.zero_grad()
-        self.manual_backward(loss)
-        optimizer.step()
-        if isinstance(scheduler, dict):
-            scheduler = scheduler["lr_scheduler"]
-        scheduler.step()
-        
-        if self.model.__class__.__name__ == "nGPT":
-            normalize_weights_and_enforce_positive_eigenvalues(self.model)
+        # if self.model.__class__.__name__ == "nGPT":
+        #     normalize_weights_and_enforce_positive_eigenvalues(self.model)
 
 
-        perplexity = self.perplexity(logits.transpose(-1,-2), labels)
-        preds = torch.argmax(logits, dim=-2)
-        acc = self.accuracy(preds, labels)
+        # perplexity = self.perplexity(logits.transpose(-1,-2), labels)
+        # preds = torch.argmax(logits, dim=-2)
+        # acc = self.accuracy(preds, labels)
 
-        self.log(f"train_loss", loss, on_step=True, logger=True)
-        self.log(f"train_acc", acc, on_step=True, logger=True)
-        self.log(f"train_perplexity", perplexity, on_step=True, logger=True)
-        self.log(f"train_lr", self.lr_schedulers().get_last_lr()[0], on_step=True, logger=True)
-        return loss
+        # self.log(f"train_loss", loss, on_step=True, logger=True)
+        # self.log(f"train_acc", acc, on_step=True, logger=True)
+        # self.log(f"train_perplexity", perplexity, on_step=True, logger=True)
+        # self.log(f"train_lr", self.lr_schedulers().get_last_lr()[0], on_step=True, logger=True)
+        # return loss
 
 
     def validation_step(self, batch, batch_idx):
