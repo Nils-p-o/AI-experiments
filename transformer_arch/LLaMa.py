@@ -233,24 +233,27 @@ class GQA(nn.Module):
         q = self.rotary_emb(q, seq_dim=2)
         k = self.rotary_emb(k, seq_dim=2)
 
-        # --- Reshape K and V for Grouped Attention ---
-        # Repeat K and V for each head within the group.
-        k = k.repeat_interleave(
-            self.heads_per_group, dim=1
-        )  # (batch_size, nhead, seq_len, head_dim)
-        v = v.repeat_interleave(
-            self.heads_per_group, dim=1
-        )  # (batch_size, nhead, seq_len, head_dim)
+        # # --- Reshape K and V for Grouped Attention ---
+        # # Repeat K and V for each head within the group.
+        # k = k.repeat_interleave(
+        #     self.heads_per_group, dim=1
+        # )  # (batch_size, nhead, seq_len, head_dim)
+        # v = v.repeat_interleave(
+        #     self.heads_per_group, dim=1
+        # )  # (batch_size, nhead, seq_len, head_dim)
 
-        # --- Attention Calculation ---
-        a = torch.matmul(q, k.transpose(-2, -1)) / math.sqrt(self.head_dim)
+        # # --- Attention Calculation ---
+        # a = torch.matmul(q, k.transpose(-2, -1)) / math.sqrt(self.head_dim)
 
-        if mask is not None:
-            a = a.masked_fill(mask == 1, -1e9)
+        # if mask is not None:
+        #     a = a.masked_fill(mask == 1, -1e9)
 
-        a = torch.softmax(a, dim=-1)
-        a = self.dropout(a)
-        attn_output = torch.matmul(a, v)  # (batch_size, nhead, seq_len, head_dim)
+        # a = torch.softmax(a, dim=-1)
+        # a = self.dropout(a)
+        # attn_output = torch.matmul(a, v)  # (batch_size, nhead, seq_len, head_dim)
+
+        # should be equivalent to commented above, but faster
+        attn_output = F.scaled_dot_product_attention(q, k, v, is_causal=True, dropout_p=0.1, enable_gqa=True)
 
         # --- Concatenate and Output Projection ---
         attn_output = (

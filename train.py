@@ -14,9 +14,10 @@ from training.utils import (
 from pytorch_lightning.loggers import TensorBoardLogger
 import torch
 
-# f'ed up, and masked the wrong part of attention???
+# dataleakage, ignore all results pre ~nGPT architecture, as this is when i found out
 
 # TODO implement flashattention
+# combine swiglu into one module
 # combine uv into one linear layer (linear_in and linear_gate)
 
 # change how args get passed to model, should use args instead
@@ -40,7 +41,8 @@ import torch
 
 
 def run_experiment(args):
-    torch.set_float32_matmul_precision("medium") # turns out this is not exclusive to gpu
+    torch.set_float32_matmul_precision("medium") # turns out this is not exclusive to gpu(~20% faster), cpu(~0% faster, maybe even slower)
+    # add flashattn to speed things up for gpu and cpu too
     # torch.bfloat16 # extra speed up??
 
     architecture = args.architecture
@@ -53,6 +55,7 @@ def run_experiment(args):
     groups = args.groups
     dropout = args.dropout
     lr = args.lr
+    t_total=args.t_total
     warmup_steps=args.warmup_steps
     t_0=args.t_0
     t_mult=args.t_mult
@@ -143,15 +146,15 @@ def run_experiment(args):
 
     # Early Stopping
     early_stopping_callback = EarlyStopping(
-        monitor="val_loss", patience=10, verbose=True, mode="min"
+        monitor="val_loss", patience=25, verbose=True, mode="min"
     )
 
     trainer = pl.Trainer(
-        max_epochs=5,
+        max_epochs=t_total//1000,
         accelerator="auto",
         devices="auto",
         callbacks=[checkpoint_callback, early_stopping_callback],
-        limit_train_batches=1000,
+        limit_train_batches=1000
         limit_val_batches=25,
         logger=logger,
         log_every_n_steps=10,
@@ -178,7 +181,7 @@ if __name__ == "__main__":
      # Training arguments (same as before)
      parser.add_argument("--lr", type=float, default=4e-4, help="Learning rate.")
      parser.add_argument("--warmup_steps", type=int, default=100, help="Warmup steps.")
-    #  parser.add_argument("--total_steps", type=int, default=100000, help="Total training steps.")
+     parser.add_argument("--t_total", type=int, default=100000, help="Total training steps.")
      parser.add_argument("--t_0", type=int, default=5000, help="Initial period for cosine annealing.")
      parser.add_argument("--t_mult", type=float, default=1.5, help="Multiplier for period.")
      parser.add_argument("--lr_mult", type=float, default=0.5, help="Multiplier for peak LR.")
