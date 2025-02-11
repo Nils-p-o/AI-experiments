@@ -31,7 +31,7 @@ class DiffTransformer(nn.Module):
         self.dropout = nn.Dropout(dropout)
         self.layers = nn.ModuleList(
             [
-                Diff_block(d_model, nhead, d_ff, dropout, depth, groups)
+                Dint_block(d_model, nhead, d_ff, dropout, depth, groups)
                 for depth in range(num_layers)
             ]
         )
@@ -50,14 +50,16 @@ class DiffTransformer(nn.Module):
         return x  # (batch_size, seq_len, vocab_size) logits
 
 
-class Diff_block(nn.Module):
+class Dint_block(nn.Module):
     def __init__(self, d_model, nhead, d_ff=None, dropout=0.1, depth=0, groups=4):
-        super(Diff_block, self).__init__()
+        super(Dint_block, self).__init__()
         self.d_model = d_model
         self.nhead = nhead
         self.d_ff = d_ff
         self.dropout = dropout
-        self.mha = DiffGQA(d_model=d_model, nhead=nhead, dropout=dropout, depth=depth, groups=groups)
+        self.mha = DintGQA(
+            d_model=d_model, nhead=nhead, dropout=dropout, depth=depth, groups=groups
+        )
         self.norm1 = nn.RMSNorm(d_model)
         self.norm2 = nn.RMSNorm(d_model)
         self.ff = SwiGLU_feed_forward(d_model, d_ff, dropout)
@@ -71,7 +73,7 @@ class Diff_block(nn.Module):
         return x
 
 
-class DiffGQA(nn.Module):
+class DintGQA(nn.Module):
     def __init__(self, d_model, nhead, groups=4, dropout=0.1, depth=0):
         super().__init__()
         self.d_model = d_model
@@ -83,7 +85,7 @@ class DiffGQA(nn.Module):
         assert self.head_dim * nhead == d_model
         assert (
             nhead % groups == 0
-        ), f"Number of heads {nhead} must be divisible by number of groups {groups}" 
+        ), f"Number of heads {nhead} must be divisible by number of groups {groups}"
         self.heads_per_group = nhead // groups
 
         # Separate Q projections for each head
@@ -120,7 +122,9 @@ class DiffGQA(nn.Module):
             )
         )
 
-        self.norm = nn.RMSNorm(self.head_dim, eps=1e-5, elementwise_affine=True)
+        self.num_groups_norm = self.nhead # maybe different numbers??
+        # Now applied *after* attention, so normalize the head_dim
+        self.norm = nn.GroupNorm(self.num_groups_norm, self.nhead * self.head_dim)
 
     def forward(self, x, mask=None):
         batch_size, seq_len, _ = x.shape
@@ -163,11 +167,16 @@ class DiffGQA(nn.Module):
         lambda_2 = torch.exp(torch.sum(self.lambda_k2 * self.lambda_q2, dim=-1))
         lambda_full = lambda_1 - lambda_2 + self.lambda_init
         a = a.view(batch_size, self.nhead, 2, seq_len, seq_len)
-        a = a[:, :, 0, :, :] - lambda_full * a[:, :, 1, :, :]
+        a3 = torch.repeat_interleave(
+            torch.mean(a[:, :, 0, :, :], dim=-2), seq_len, dim=-2
+        )
+        a = a[:, :, 0, :, :] - lambda_full * a[:, :, 1, :, :] + a3 * lambda_full
 
         attn_output = torch.matmul(a, v)  # (batch_size, nhead, seq_len, head_dim)
-        attn_output = self.norm(attn_output)
-        attn_output = attn_output * (1 - self.lambda_init)
+        attn_output.transpose(1, 2).reshape(batch_size, seq_len, self.nhead * self.head_dim) # TODO: check if this is correct
+        attn_output = self.norm(attn_output.transpose(1,2)).transpose(1,2) # Apply GroupNorm, then put back into right shape
+        attn_output = attn_output.reshape(batch_size, seq_len, self.nhead, self.head_dim).transpose(1,2)
+        # attn_output = attn_output * (1 - self.lambda_init)
         # --- Concatenate and Output Projection ---
         attn_output = (
             attn_output.transpose(1, 2)

@@ -5,7 +5,7 @@ from training.experiment import TransformerExperiment
 from transformer_arch.components import ClassicTransformer
 from transformer_arch.LLaMa import LLaMa
 from transformer_arch.nGPT import nGPT, normalize_weights_and_enforce_positive_eigenvalues
-from transformer_arch.DIFF_transformer import DiffTransformer
+from transformer_arch.DIFF import DiffTransformer
 from training.utils import (
     count_parameters,
     ShakespeareDataModule,
