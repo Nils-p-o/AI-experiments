@@ -62,6 +62,68 @@ class LLaMa_block(transformer_block):
         self.ff = SwiGLU_feed_forward(d_model, d_ff, dropout)
 
 
+# class RoPE(nn.Module):
+#     def __init__(self, dim, max_seq_len=2048, theta=10000.0):
+#         super().__init__()
+#         self.dim = dim
+#         self.max_seq_len = max_seq_len
+#         self.theta = theta
+#         self.inv_freq = 1.0 / (
+#             self.theta ** (torch.arange(0, self.dim, 2).float() / self.dim)
+#         )
+#         # self.register_buffer(
+#         #     "inv_freqs", self.inv_freq
+#         # )  # Make it a buffer, not a parameter
+
+#         # Create a cache for the cos and sin values.  This improves efficiency
+#         # as we can reuse these values for different batches with same seq_len.
+#         self.cos_cached = None
+#         self.sin_cached = None
+
+#     def _build_cache(self, x, seq_dim=1):
+#         """Builds the cos/sin cache if it doesn't exist or if seq_len changes."""
+#         seq_len = x.shape[seq_dim]  # batch, seq_len, dim
+#         if (
+#             self.cos_cached is not None and seq_len <= self.cos_cached.shape[seq_dim]
+#         ):  # Use cached values if appropriate
+#             return
+
+#         # contiguous is very important for performance.
+#         t = torch.arange(seq_len, device=x.device).type_as(self.inv_freq)
+#         freqs = torch.einsum("i,j->ij", t, self.inv_freq)  # Outer product
+#         # Different from paper, but it uses a different permutation in order to obtain the same calculation
+#         emb = torch.cat((freqs, freqs), dim=-1)
+#         self.cos_cached = emb.cos()[None, None, :, :x.size(-1)].to(device=x.device)  # [1,1,seq_len, dim]
+#         self.sin_cached = emb.sin()[None, None, :, :x.size(-1)].to(device=x.device) # quick fix??? TODO last dim 2 times bigger than i need
+#         return
+
+#     def forward(self, x, seq_dim=1):  # added seq_dim
+#         """
+#         Args:
+#             x: Input tensor of shape (batch, seq_len, ... , dim)
+
+#         Returns:
+#             Tensor with RoPE applied, same shape as x.
+#         """
+#         self._build_cache(x, seq_dim=seq_dim)
+#         cos = self.cos_cached[
+#             :, :, : x.shape[seq_dim]
+#         ]  # Correctly slice cos/sin caches
+#         sin = self.sin_cached[:, :, : x.shape[seq_dim]]
+
+#         x_rope, x_pass = x.chunk(2, dim=-1)  # Split x into two parts
+
+#         # Apply the rotation to the first part of x
+#         x_rope_rotated = (x_rope * cos) + (self.rotate_half(x_rope) * sin)
+
+#         return torch.cat((x_rope_rotated, x_pass), dim=-1)  # Concatenate and return
+
+#     def rotate_half(self, x):
+#         """Rotates half the hidden dims of the input."""
+#         x1 = x[..., : x.shape[-1] // 2]
+#         x2 = x[..., x.shape[-1] // 2 :]
+#         return torch.cat((-x2, x1), dim=-1)  # negative x2, positive x1
+
 class RoPE(nn.Module):
     def __init__(self, dim, max_seq_len=2048, theta=10000.0):
         super().__init__()
@@ -71,20 +133,16 @@ class RoPE(nn.Module):
         self.inv_freq = 1.0 / (
             self.theta ** (torch.arange(0, self.dim, 2).float() / self.dim)
         )
-        # self.register_buffer(
-        #     "inv_freqs", self.inv_freq
-        # )  # Make it a buffer, not a parameter
 
-        # Create a cache for the cos and sin values.  This improves efficiency
-        # as we can reuse these values for different batches with same seq_len.
-        self.cos_cached = None
-        self.sin_cached = None
+        # Create a cache for the cos and sin values. This improves efficiency
+        # as we can reuse these values for different batches with the same seq_len.
+        self.cache = None
 
     def _build_cache(self, x, seq_dim=1):
         """Builds the cos/sin cache if it doesn't exist or if seq_len changes."""
         seq_len = x.shape[seq_dim]  # batch, seq_len, dim
         if (
-            self.cos_cached is not None and seq_len <= self.cos_cached.shape[seq_dim]
+            self.cache is not None and seq_len * 2 <= self.cache.shape[seq_dim]
         ):  # Use cached values if appropriate
             return
 
@@ -93,35 +151,32 @@ class RoPE(nn.Module):
         freqs = torch.einsum("i,j->ij", t, self.inv_freq)  # Outer product
         # Different from paper, but it uses a different permutation in order to obtain the same calculation
         emb = torch.cat((freqs, freqs), dim=-1)
-        self.cos_cached = emb.cos()[None, None, :, :x.size(-1)//2].to(device=x.device)  # [1,1,seq_len, dim]
-        self.sin_cached = emb.sin()[None, None, :, :x.size(-1)//2].to(device=x.device) # quick fix??? TODO last dim 2 times bigger than i need
+
+        # Cache with the correct dimensions
+        self.cache = emb.cos()[None, None,:,:].to(device=x.device)
         return
 
     def forward(self, x, seq_dim=1):  # added seq_dim
         """
         Args:
-            x: Input tensor of shape (batch, seq_len, ... , dim)
+            x: Input tensor of shape (batch, seq_len,..., dim)
 
         Returns:
             Tensor with RoPE applied, same shape as x.
         """
         self._build_cache(x, seq_dim=seq_dim)
-        cos = self.cos_cached[
-            :, :, : x.shape[seq_dim]
+        cos_cache = self.cache[
+          :,:,: x.shape[seq_dim]
         ]  # Correctly slice cos/sin caches
-        sin = self.sin_cached[:, :, : x.shape[seq_dim]]
 
-        x_rope, x_pass = x.chunk(2, dim=-1)  # Split x into two parts
+        # Interleave sine and cosine
+        x = torch.cat([x[...,::2], x[..., 1::2]], dim=-1)
+        return x * cos_cache + self.rotate(x) * cos_cache
 
-        # Apply the rotation to the first part of x
-        x_rope_rotated = (x_rope * cos) + (self.rotate_half(x_rope) * sin)
-
-        return torch.cat((x_rope_rotated, x_pass), dim=-1)  # Concatenate and return
-
-    def rotate_half(self, x):
+    def rotate(self, x):
         """Rotates half the hidden dims of the input."""
-        x1 = x[..., : x.shape[-1] // 2]
-        x2 = x[..., x.shape[-1] // 2 :]
+        x1 = x[...,: x.shape[-1] // 2]
+        x2 = x[..., x.shape[-1] // 2:]
         return torch.cat((-x2, x1), dim=-1)  # negative x2, positive x1
 
 
@@ -162,8 +217,8 @@ class RoPE_mha(nn.Module):
             .transpose(1, 2)
         )  # (batch_size, nhead, seq_len, head_dim)
 
-        q = self.rotary_emb(q, seq_dim=2)
-        k = self.rotary_emb(k, seq_dim=2)
+        q = self.rotary_emb(q, seq_dim=-2)
+        k = self.rotary_emb(k, seq_dim=-2)
 
         a = torch.matmul(q, k.transpose(-2, -1)) / math.sqrt(self.head_dim)
 

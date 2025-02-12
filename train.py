@@ -188,7 +188,7 @@ if __name__ == "__main__":
      parser.add_argument("--architecture", type=str, default="LLaMa", help="Model architecture (LLaMa, ...)")
      parser.add_argument("--d_model", type=int, default=512, help="Embedding dimension.")
      parser.add_argument("--nhead", type=int, default=8, help="Number of attention heads.")
-     parser.add_argument("--num_layers", type=int, default=9, help="Number of layers.")
+     parser.add_argument("--num_layers", type=int, default=6, help="Number of layers.")
      parser.add_argument("--d_ff_mult", type=int, default=4, help="Multiplier for d_ff")
      parser.add_argument("--groups", type=int, default=4, help="Number of groups for GQA.")
      parser.add_argument("--dropout", type=float, default=0.1, help="Dropout probability.")
