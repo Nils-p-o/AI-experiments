@@ -1,3 +1,5 @@
+# dataleakage, ignore all results pre ~nGPT architecture, as this is when i found out
+# TODO implement flashattention (doesn't work, compile fails)
 import argparse
 import pytorch_lightning as pl
 from pytorch_lightning.callbacks import ModelCheckpoint, EarlyStopping
@@ -13,10 +15,8 @@ from training.utils import (
 )
 from pytorch_lightning.loggers import TensorBoardLogger
 import torch
+from torch.nn.attention import SDPBackend
 
-# dataleakage, ignore all results pre ~nGPT architecture, as this is when i found out
-
-# TODO implement flashattention
 # combine swiglu into one module
 # combine uv into one linear layer (linear_in and linear_gate)
 
@@ -39,13 +39,7 @@ import torch
 #     if pn.endswith('c_proj.weight'):
 #         torch.nn.init.normal_(p, mean=0.0, std=config.base_scale/math.sqrt(2 * config.n_layer))
 
-
-def run_experiment(args):
-    torch.set_float32_matmul_precision("medium") # turns out this is not exclusive to gpu(~20% faster), cpu(~0% faster, maybe even slower)
-    # add flashattn to speed things up for gpu and cpu too
-    # torch.bfloat16 # extra speed up??
-    if torch.cuda.is_available():
-        torch.backends.cuda.enable_flash_sdp(True)
+def proceed(args):
 
     architecture = args.architecture
     seq_len = args.seq_len
@@ -59,10 +53,12 @@ def run_experiment(args):
     lr = args.lr
     t_total=args.t_total
     warmup_steps=args.warmup_steps
-    t_0=args.t_0
+    t_0=args.t_0 + warmup_steps
     t_mult=args.t_mult
     lr_mult=args.lr_mult
     type = args.type
+
+    print(f"type: {type} {architecture}_transformer seq_len:{seq_len} d_model:{d_model} d_ff_mult:{d_ff_mult} num_layers:{num_layers} nhead:{nhead} groups:{groups} dropout:{dropout} lr:{lr} t_total:{t_total} warmup_steps:{warmup_steps} t_0:{t_0} t_mult:{t_mult} lr_mult:{lr_mult} batch_size:{batch_size}")
 
 
     logger = TensorBoardLogger(
@@ -148,24 +144,42 @@ def run_experiment(args):
 
     # Early Stopping
     early_stopping_callback = EarlyStopping(
-        monitor="val_loss", patience=25, verbose=True, mode="min"
+        monitor="val_loss", patience=100, verbose=True, mode="min"
     )
 
     trainer = pl.Trainer(
-        max_epochs=t_total//1000,
+        max_steps=t_total,
         accelerator="auto",
         devices="auto",
         callbacks=[checkpoint_callback, early_stopping_callback],
-        limit_train_batches=1000,
+        # limit_train_batches=1000,
         limit_val_batches=25,
         logger=logger,
-        log_every_n_steps=10,
+        log_every_n_steps=30,
         val_check_interval=200,
     )
 
     trainer.fit(experiment, datamodule=data_module)
 
     return
+
+def run_experiment(args):
+    torch.set_float32_matmul_precision("medium") # turns out this is not exclusive to gpu(~20% faster), cpu(~0% faster, maybe even slower)
+    # add flashattn to speed things up for gpu and cpu too
+    # torch.bfloat16 # extra speed up??
+    if torch.cuda.is_available():
+        # if torch.backends.cuda.is_flash_attention_available():
+        with torch.nn.attention.sdpa_kernel([SDPBackend.FLASH_ATTENTION, SDPBackend.EFFICIENT_ATTENTION, SDPBackend.MATH, SDPBackend.CUDNN_ATTENTION], set_priority=True):
+            proceed(args)
+            return
+        # else:
+        #     proceed(args)
+        #     return
+    else:
+        proceed(args)
+        return
+
+    
 
 if __name__ == "__main__":
      parser = argparse.ArgumentParser(description="Train a Transformer model.")

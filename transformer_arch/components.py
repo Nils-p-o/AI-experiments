@@ -156,7 +156,7 @@ class mha(nn.Module):
 
         # Apply mask if provided
         if mask is not None:
-            a = a.masked_fill(mask == 0, -1e9)
+            a = a.masked_fill(mask == 1, -1e9)
 
         # Calculate attention probabilities
         a = torch.softmax(a, dim=-1)

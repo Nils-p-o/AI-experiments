@@ -79,7 +79,7 @@ class TransformerExperiment(pl.LightningModule):
         optimizer = optim.Adam(self.parameters(), lr=self.learning_rate)
 
         def lr_lambda(current_step):
-            min_lr = 1e-7 / self.learning_rate
+            min_lr = 1e-8 / self.learning_rate
 
             current_cycle_step = current_step
             cycle_nr = 0
@@ -94,9 +94,12 @@ class TransformerExperiment(pl.LightningModule):
             current_peak_lr = self.lr_mult**cycle_nr
 
             if current_cycle_step < self.warmup_steps:  # Linear warmup
-                return (current_peak_lr - min_lr) * float(current_cycle_step) / float(
+                return (current_peak_lr) * float(current_cycle_step) / float(
                     max(1, self.warmup_steps)
-                ) + min_lr
+                )
+                # return (current_peak_lr - min_lr) * float(current_cycle_step) / float(
+                #     max(1, self.warmup_steps)
+                # ) + min_lr
 
             if current_cycle_step >= self.warmup_steps and current_cycle_step <= t_curr:
                 progress = float(current_cycle_step - self.warmup_steps) / float(

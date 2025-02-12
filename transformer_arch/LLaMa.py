@@ -24,6 +24,7 @@ class LLaMa(nn.Module):
         dropout=0.1,
         vocab_size=10000,
         seq_len=128,
+        groups=4,
     ):
         super(LLaMa, self).__init__()
         self.d_model = d_model
@@ -35,7 +36,7 @@ class LLaMa(nn.Module):
             self.d_ff = d_ff
         self.dropout = nn.Dropout(dropout)
         self.layers = nn.ModuleList(
-            [LLaMa_block(d_model, nhead, d_ff, dropout) for _ in range(num_layers)]
+            [LLaMa_block(d_model, nhead, d_ff, dropout, groups) for _ in range(num_layers)]
         )
         self.input_embedding = input_embedding(d_model, vocab_size)
         self.norm = nn.RMSNorm(d_model)
@@ -53,9 +54,9 @@ class LLaMa(nn.Module):
 
 
 class LLaMa_block(transformer_block):
-    def __init__(self, d_model, nhead, d_ff=None, dropout=0.1):
+    def __init__(self, d_model, nhead, d_ff=None, dropout=0.1, groups=4):
         super(LLaMa_block, self).__init__(d_model, nhead, d_ff, dropout)
-        self.mha = GQA(d_model=d_model, nhead=nhead, dropout=dropout)
+        self.mha = GQA(d_model=d_model, nhead=nhead, dropout=dropout, groups=groups)
         self.norm1 = nn.RMSNorm(d_model)
         self.norm2 = nn.RMSNorm(d_model)
         self.ff = SwiGLU_feed_forward(d_model, d_ff, dropout)
