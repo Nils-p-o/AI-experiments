@@ -6,7 +6,7 @@ from torchmetrics import Accuracy
 from torchmetrics.text import Perplexity
 import math
 from torch.optim.lr_scheduler import LambdaLR
-
+from .utils import OrthoGrad
 
 class TransformerExperiment(pl.LightningModule):
     def __init__(
@@ -76,7 +76,8 @@ class TransformerExperiment(pl.LightningModule):
 
 
     def configure_optimizers(self):
-        optimizer = optim.Adam(self.parameters(), lr=self.learning_rate)
+        # optimizer = optim.Adam(self.parameters(), lr=self.learning_rate)
+        optimizer = OrthoGrad(params=self.parameters(), base_optimizer_cls=optim.Adam, lr=self.learning_rate)
 
         def lr_lambda(current_step):
             min_lr = 1e-8 / self.learning_rate

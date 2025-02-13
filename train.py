@@ -17,12 +17,11 @@ from pytorch_lightning.loggers import TensorBoardLogger
 import torch
 from torch.nn.attention import SDPBackend
 
-# combine swiglu into one module
-# combine uv into one linear layer (linear_in and linear_gate)
+# TODO along with orthograd, rewrite crossentropy to not use log_softmax, but stablemax instead
 
 # change how args get passed to model, should use args instead
 # update older code (maybe, idk)
-
+ 
 # TODO from nGPT implementation
 # def _init_weights(self, module):
 #     if isinstance(module, nn.Linear):

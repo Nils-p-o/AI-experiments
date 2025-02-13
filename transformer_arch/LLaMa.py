@@ -3,15 +3,12 @@ import torch.nn as nn
 import math
 import torch.nn.functional as F
 from .components import (
-    ClassicTransformer,
     transformer_block,
     input_embedding,
-    PositionalEncoding,
     mha,
 )
 
 # added RoPE, GQA, swiGLU
-
 
 
 class LLaMa(nn.Module):
@@ -36,7 +33,10 @@ class LLaMa(nn.Module):
             self.d_ff = d_ff
         self.dropout = nn.Dropout(dropout)
         self.layers = nn.ModuleList(
-            [LLaMa_block(d_model, nhead, d_ff, dropout, groups) for _ in range(num_layers)]
+            [
+                LLaMa_block(d_model, nhead, d_ff, dropout, groups)
+                for _ in range(num_layers)
+            ]
         )
         self.input_embedding = input_embedding(d_model, vocab_size)
         self.norm = nn.RMSNorm(d_model)
@@ -64,49 +64,63 @@ class LLaMa_block(transformer_block):
 
 class RoPE(nn.Module):
 
-  def __init__(self, d: int, base: int = 10_000):
+    def __init__(self, d: int, base: int = 10_000):
 
-    super().__init__()
-    self.base = base
-    self.d = d
-    self.cos_cached = None
-    self.sin_cached = None
+        super().__init__()
+        self.base = base
+        self.d = d
+        self.cos_cached = None
+        self.sin_cached = None
 
-  def _build_cache(self, x: torch.Tensor):
+    def _build_cache(self, x: torch.Tensor):
 
-    if self.cos_cached is not None and x.shape[0] <= self.cos_cached.shape[0]:
-      return
+        if self.cos_cached is not None and x.shape[0] <= self.cos_cached.shape[0]:
+            return
 
-    seq_len = x.shape[0]
+        seq_len = x.shape[0]
 
-    theta = 1. / (self.base ** (torch.arange(0, self.d, 2).float() / self.d)).to(x.device) # THETA = 10,000^(-2*i/d) or 1/10,000^(2i/d)
+        theta = 1.0 / (self.base ** (torch.arange(0, self.d, 2).float() / self.d)).to(
+            x.device
+        )  # THETA = 10,000^(-2*i/d) or 1/10,000^(2i/d)
 
-    seq_idx = torch.arange(seq_len, device=x.device).float().to(x.device) #Position Index -> [0,1,2...seq-1]
+        seq_idx = (
+            torch.arange(seq_len, device=x.device).float().to(x.device)
+        )  # Position Index -> [0,1,2...seq-1]
 
-    idx_theta = torch.einsum('n,d->nd', seq_idx, theta)  #Calculates m*(THETA) = [ [0, 0...], [THETA_1, THETA_2...THETA_d/2], ... [seq-1*(THETA_1), seq-1*(THETA_2)...] ]
+        idx_theta = torch.einsum(
+            "n,d->nd", seq_idx, theta
+        )  # Calculates m*(THETA) = [ [0, 0...], [THETA_1, THETA_2...THETA_d/2], ... [seq-1*(THETA_1), seq-1*(THETA_2)...] ]
 
-    idx_theta2 = torch.cat([idx_theta, idx_theta], dim=1) # [THETA_1, THETA_2...THETA_d/2] -> [THETA_1, THETA_2...THETA_d]
+        idx_theta2 = torch.cat(
+            [idx_theta, idx_theta], dim=1
+        )  # [THETA_1, THETA_2...THETA_d/2] -> [THETA_1, THETA_2...THETA_d]
 
+        self.cos_cached = idx_theta2.cos()[
+            :, None, None, :
+        ]  # Cache [cosTHETA_1, cosTHETA_2...cosTHETA_d]
+        self.sin_cached = idx_theta2.sin()[
+            :, None, None, :
+        ]  # cache [sinTHETA_1, sinTHETA_2...sinTHETA_d]
 
-    self.cos_cached = idx_theta2.cos()[:, None, None, :] #Cache [cosTHETA_1, cosTHETA_2...cosTHETA_d]
-    self.sin_cached = idx_theta2.sin()[:, None, None, :] #cache [sinTHETA_1, sinTHETA_2...sinTHETA_d]
+    def _neg_half(self, x: torch.Tensor):
 
-  def _neg_half(self, x: torch.Tensor):
+        d_2 = self.d // 2  #
 
-    d_2 = self.d // 2 #
+        return torch.cat(
+            [-x[:, :, :, d_2:], x[:, :, :, :d_2]], dim=-1
+        )  # [x_1, x_2,...x_d] -> [-x_d/2, ... -x_d, x_1, ... x_d/2]
 
-    return torch.cat([-x[:, :, :, d_2:], x[:, :, :, :d_2]], dim=-1) # [x_1, x_2,...x_d] -> [-x_d/2, ... -x_d, x_1, ... x_d/2]
+    def forward(self, x: torch.Tensor):
 
+        self._build_cache(x)
 
-  def forward(self, x: torch.Tensor):
+        neg_half_x = self._neg_half(x)
 
-    self._build_cache(x)
+        x_rope = (x * self.cos_cached[: x.shape[0]]) + (
+            neg_half_x * self.sin_cached[: x.shape[0]]
+        )  # [x_1*cosTHETA_1 - x_d/2*sinTHETA_d/2, ....]
 
-    neg_half_x = self._neg_half(x)
-
-    x_rope = (x * self.cos_cached[:x.shape[0]]) + (neg_half_x * self.sin_cached[:x.shape[0]]) # [x_1*cosTHETA_1 - x_d/2*sinTHETA_d/2, ....]
-
-    return x_rope
+        return x_rope
 
 
 class GQA(nn.Module):
@@ -156,7 +170,9 @@ class GQA(nn.Module):
         q = self.rotary_emb(q)
         k = self.rotary_emb(k)
 
-        attn_output = F.scaled_dot_product_attention(q, k, v, is_causal=True, dropout_p=0.1, enable_gqa=True)
+        attn_output = F.scaled_dot_product_attention(
+            q, k, v, is_causal=True, dropout_p=0.1, enable_gqa=True
+        )
 
         # --- Concatenate and Output Projection ---
         attn_output = (
@@ -220,13 +236,19 @@ class SwiGLU_feed_forward(nn.Module):
         super().__init__()
         # d_ff is now the "intermediate" dimension.  The SwiGLU layer
         # will project to d_ff, and then the output projection will go back to d_model.
-        self.swiglu = SwiGLU(d_model, d_ff)
+        # self.swiglu = SwiGLU(d_model, d_ff)
+        self.linear_in_gate = nn.Linear(d_model, d_ff*2)
         self.linear_out = nn.Linear(d_ff, d_model)
         self.dropout = nn.Dropout(dropout)
         self.d_model = d_model
 
     def forward(self, x):
-        x = self.swiglu(x) # * self.d_model ** 0.5)  # Apply SwiGLU with scaling
+        # x = self.swiglu(x) #
+
+        u, v = self.linear_in_gate(x).chunk(
+            2, dim=-1
+        )  # * self.d_model ** 0.5)  # Apply SwiGLU with scaling
+        x = u * F.silu(v)
         x = self.linear_out(x)
         x = self.dropout(x)  # Apply dropout *after* the output projection
         return x
