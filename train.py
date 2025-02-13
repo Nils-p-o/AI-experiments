@@ -144,7 +144,7 @@ def proceed(args):
 
     # Early Stopping
     early_stopping_callback = EarlyStopping(
-        monitor="val_loss", patience=100, verbose=True, mode="min"
+        monitor="val_loss", patience=1000, verbose=True, mode="min"
     )
 
     trainer = pl.Trainer(
@@ -153,10 +153,10 @@ def proceed(args):
         devices="auto",
         callbacks=[checkpoint_callback, early_stopping_callback],
         # limit_train_batches=1000,
-        limit_val_batches=25,
+        limit_val_batches=50,
         logger=logger,
         log_every_n_steps=30,
-        val_check_interval=200,
+        val_check_interval=500,
     )
 
     trainer.fit(experiment, datamodule=data_module)

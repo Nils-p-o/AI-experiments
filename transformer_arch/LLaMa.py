@@ -49,7 +49,7 @@ class LLaMa(nn.Module):
             x = layer(x)
         x = self.norm(x)  # (batch_size, seq_len, d_model)
         x = self.out(x)
-        x = torch.softmax(x, -1)
+        # x = torch.softmax(x, -1) inference only, dumbass!!!
         return x  # (batch_size, seq_len, vocab_size) logits
 
 
@@ -226,7 +226,7 @@ class SwiGLU_feed_forward(nn.Module):
         self.d_model = d_model
 
     def forward(self, x):
-        x = self.swiglu(x)# * self.d_model ** 0.5)  # Apply SwiGLU with scaling
+        x = self.swiglu(x) # * self.d_model ** 0.5)  # Apply SwiGLU with scaling
         x = self.linear_out(x)
         x = self.dropout(x)  # Apply dropout *after* the output projection
         return x
