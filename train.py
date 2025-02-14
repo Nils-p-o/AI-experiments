@@ -185,7 +185,8 @@ def proceed(args):
     )
 
     trainer.fit(experiment, datamodule=data_module)
-
+    # torch.save(model, "result_model.pth")
+    # print("Model saved.")
     return
 
 
