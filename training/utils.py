@@ -345,7 +345,7 @@ class custom_cross_entropy(torch.nn.Module):
             / torch.sum(soft_logits, dim=-1, keepdim=True).to(torch.float64)
         )
         prediction_logprobs = torch.gather(logprobs, index=labels[:, None], dim=-1).to(
-            torch.float64
+            torch.float32
         )
 
         loss = (
