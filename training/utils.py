@@ -277,3 +277,80 @@ class OrthoGrad(torch.optim.Optimizer):
             self._orthogonalize_gradients(group["params"])
 
         return self.base_optimizer.step(closure)
+
+
+# TODO implement and test this
+def stablemax(x, epsilon=1e-30, dim=-1):
+    return torch.where(x < 0, 1 / (1 - x + epsilon), x + 1)
+
+
+def log_stablemax(x, dim=-1):
+    s_x = stablemax(x)
+    return torch.log(s_x / torch.sum(s_x, dim=dim, keepdim=True))
+
+
+# TODO check importance of precision
+def stablemax_cross_entropy(logits, labels, reduction="mean"):
+    labels = labels.to(torch.int64)
+    logprobs = log_stablemax(logits.to(torch.float64), dim=-1)
+    prediction_logprobs = torch.gather(logprobs, index=labels[:, None], dim=-1).to(
+        torch.float64
+    )
+
+    loss = (
+        -torch.mean(prediction_logprobs)
+        if reduction == "mean"
+        else -prediction_logprobs
+    )
+    return loss
+
+
+def taylor_softmax(x, dim=-1):  # TODO mess around with this
+    x_prim = x - torch.min(x, dim=dim, keepdim=True).values
+    y = 1 + x_prim + x_prim**2 / 2
+    return y
+
+
+def log_taylor_softmax(x, dim=-1):
+    t_x = taylor_softmax(x, dim=dim)
+    return torch.log(t_x / torch.sum(t_x, dim=dim, keepdim=True))
+
+
+def taylor_cross_entropy(logits, labels, reduction="mean"):
+    labels = labels.to(torch.int64)
+    logprobs = log_taylor_softmax(logits.to(torch.float64), dim=-1)
+    prediction_logprobs = torch.gather(logprobs, index=labels[:, None], dim=-1).to(
+        torch.float64
+    )
+
+    loss = (
+        -torch.mean(prediction_logprobs)
+        if reduction == "mean"
+        else -prediction_logprobs
+    )
+    return loss
+
+
+class custom_cross_entropy(torch.nn.Module):
+    def __init__(self, reduction="mean", softmax_fn=torch.nn.functional.softmax):
+        super(custom_cross_entropy, self).__init__()
+        self.reduction = reduction
+        self.softmax_fn = softmax_fn
+
+    def forward(self, logits, labels):
+        labels = labels.to(torch.int64)
+        soft_logits = self.softmax_fn(logits.to(torch.float64), dim=-1)
+        logprobs = torch.log(
+            soft_logits.to(torch.float64)
+            / torch.sum(soft_logits, dim=-1, keepdim=True).to(torch.float64)
+        )
+        prediction_logprobs = torch.gather(logprobs, index=labels[:, None], dim=-1).to(
+            torch.float64
+        )
+
+        loss = (
+            -torch.mean(prediction_logprobs)
+            if self.reduction == "mean"
+            else -prediction_logprobs
+        )
+        return loss

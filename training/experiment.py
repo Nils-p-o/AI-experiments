@@ -6,7 +6,7 @@ from torchmetrics import Accuracy
 from torchmetrics.text import Perplexity
 import math
 from torch.optim.lr_scheduler import LambdaLR
-from .utils import OrthoGrad
+from .utils import OrthoGrad, custom_cross_entropy, stablemax, taylor_softmax
 
 class TransformerExperiment(pl.LightningModule):
     def __init__(
@@ -19,6 +19,7 @@ class TransformerExperiment(pl.LightningModule):
         t_0=5000,
         t_mult=1.5,
         lr_mult=0.5, # maybe higher?
+        loss_fn=None,
     ):
         super().__init__()
         self.model = model
@@ -28,7 +29,8 @@ class TransformerExperiment(pl.LightningModule):
         self.t_mult = t_mult
         self.lr_mult = lr_mult
         self.batch_size = batch_size
-        self.loss_fn = nn.CrossEntropyLoss()  # Example, adjust as needed
+        # self.loss_fn = nn.CrossEntropyLoss()
+        self.loss_fn = loss_fn # custom_cross_entropy(softmax_fn=stablemax)
         self.accuracy = Accuracy(
             task="multiclass", num_classes=vocab_size
         )  # Adjust task and num_classes

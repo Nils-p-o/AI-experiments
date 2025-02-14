@@ -12,16 +12,21 @@ from training.utils import (
     count_parameters,
     ShakespeareDataModule,
     download_and_split_shakespeare,
+    stablemax,
+    taylor_softmax,
+    custom_cross_entropy,
 )
 from pytorch_lightning.loggers import TensorBoardLogger
 import torch
 from torch.nn.attention import SDPBackend
 
+# "the sewage from the city never stops" 
+
 # TODO along with orthograd, rewrite crossentropy to not use log_softmax, but stablemax instead
 
 # change how args get passed to model, should use args instead
 # update older code (maybe, idk)
- 
+
 # TODO from nGPT implementation
 # def _init_weights(self, module):
 #     if isinstance(module, nn.Linear):
@@ -38,6 +43,7 @@ from torch.nn.attention import SDPBackend
 #     if pn.endswith('c_proj.weight'):
 #         torch.nn.init.normal_(p, mean=0.0, std=config.base_scale/math.sqrt(2 * config.n_layer))
 
+
 def proceed(args):
 
     architecture = args.architecture
@@ -50,22 +56,24 @@ def proceed(args):
     groups = args.groups
     dropout = args.dropout
     lr = args.lr
-    t_total=args.t_total
-    warmup_steps=args.warmup_steps
-    t_0=args.t_0 + warmup_steps
-    t_mult=args.t_mult
-    lr_mult=args.lr_mult
+    t_total = args.t_total
+    warmup_steps = args.warmup_steps
+    t_0 = args.t_0 + warmup_steps
+    t_mult = args.t_mult
+    lr_mult = args.lr_mult
     type = args.type
+    cce_fn = args.custom_cross_entropy
 
-    print(f"type: {type} {architecture}_transformer seq_len:{seq_len} d_model:{d_model} d_ff_mult:{d_ff_mult} num_layers:{num_layers} nhead:{nhead} groups:{groups} dropout:{dropout} lr:{lr} t_total:{t_total} warmup_steps:{warmup_steps} t_0:{t_0} t_mult:{t_mult} lr_mult:{lr_mult} batch_size:{batch_size}")
-
+    print(
+        f"type: {type} {architecture}_transformer seq_len:{seq_len} d_model:{d_model} d_ff_mult:{d_ff_mult} num_layers:{num_layers} nhead:{nhead} groups:{groups} dropout:{dropout} lr:{lr} t_total:{t_total} warmup_steps:{warmup_steps} t_0:{t_0} t_mult:{t_mult} lr_mult:{lr_mult} batch_size:{batch_size}"
+    )
 
     logger = TensorBoardLogger(
-        "lightning_logs", name=f"{type}_{architecture}_transformer_{seq_len}_{d_model}_{d_ff_mult}_{num_layers}_{nhead}" # seq, d_model, d_ff mult, num_layers, nhead
+        "lightning_logs",
+        name=f"{type}_{architecture}_transformer_{seq_len}_{d_model}_{d_ff_mult}_{num_layers}_{nhead}",  # seq, d_model, d_ff mult, num_layers, nhead
     )  # Optional logging
     # --- Data Loading ---
     download_and_split_shakespeare()  # Download and prepare data if needed
-
 
     data_module = ShakespeareDataModule(
         train_file="train.txt",
@@ -124,12 +132,30 @@ def proceed(args):
     num_params = count_parameters(model)
     print(f"The model has {num_params:,} trainable parameters.")
 
+    match cce_fn:
+        case "stablemax":
+            cce_fn = custom_cross_entropy(softmax_fn=stablemax)
+        case "taylor_softmax":
+            cce_fn = custom_cross_entropy(softmax_fn=taylor_softmax)
+        case "false":
+            cce_fn = torch.nn.CrossEntropyLoss()
+        case _:
+            raise ValueError(f"Custom cross entropy function {cce_fn} not supported")
+
     # --- Training Setup ---
     # if model.__class__.__name__ == "nGPT":
     #     normalize_weights_and_enforce_positive_eigenvalues(model)
-    
+
     experiment = TransformerExperiment(
-        model, learning_rate=lr, batch_size=batch_size, vocab_size=vocab_size, warmup_steps=warmup_steps, t_0=t_0, t_mult=t_mult, lr_mult=lr_mult
+        model,
+        learning_rate=lr,
+        batch_size=batch_size,
+        vocab_size=vocab_size,
+        warmup_steps=warmup_steps,
+        t_0=t_0,
+        t_mult=t_mult,
+        lr_mult=lr_mult,
+        loss_fn=cce_fn,
     )  # Use vocab_size
 
     # Checkpointing
@@ -162,13 +188,24 @@ def proceed(args):
 
     return
 
+
 def run_experiment(args):
-    torch.set_float32_matmul_precision("medium") # turns out this is not exclusive to gpu(~20% faster), cpu(~0% faster, maybe even slower)
+    torch.set_float32_matmul_precision(
+        "medium"
+    )  # turns out this is not exclusive to gpu(~20% faster), cpu(~0% faster, maybe even slower)
     # add flashattn to speed things up for gpu and cpu too
     # torch.bfloat16 # extra speed up??
     if torch.cuda.is_available():
         # if torch.backends.cuda.is_flash_attention_available():
-        with torch.nn.attention.sdpa_kernel([SDPBackend.FLASH_ATTENTION, SDPBackend.EFFICIENT_ATTENTION, SDPBackend.MATH, SDPBackend.CUDNN_ATTENTION], set_priority=True):
+        with torch.nn.attention.sdpa_kernel(
+            [
+                SDPBackend.FLASH_ATTENTION,
+                SDPBackend.EFFICIENT_ATTENTION,
+                SDPBackend.MATH,
+                SDPBackend.CUDNN_ATTENTION,
+            ],
+            set_priority=True,
+        ):
             proceed(args)
             return
         # else:
@@ -178,30 +215,58 @@ def run_experiment(args):
         proceed(args)
         return
 
-    
 
 if __name__ == "__main__":
-     parser = argparse.ArgumentParser(description="Train a Transformer model.")
+    parser = argparse.ArgumentParser(description="Train a Transformer model.")
 
-     # Model architecture arguments (same as before)
-     parser.add_argument("--architecture", type=str, default="LLaMa", help="Model architecture (LLaMa, ...)")
-     parser.add_argument("--d_model", type=int, default=512, help="Embedding dimension.")
-     parser.add_argument("--nhead", type=int, default=8, help="Number of attention heads.")
-     parser.add_argument("--num_layers", type=int, default=6, help="Number of layers.")
-     parser.add_argument("--d_ff_mult", type=int, default=4, help="Multiplier for d_ff")
-     parser.add_argument("--groups", type=int, default=4, help="Number of groups for GQA.")
-     parser.add_argument("--dropout", type=float, default=0.1, help="Dropout probability.")
-     parser.add_argument("--type", type=str, default="baseline", help="Experiment type (for logging).")
+    # Model architecture arguments (same as before)
+    parser.add_argument(
+        "--architecture",
+        type=str,
+        default="LLaMa",
+        help="Model architecture (LLaMa, ...)",
+    )
+    parser.add_argument("--d_model", type=int, default=128, help="Embedding dimension.")
+    parser.add_argument(
+        "--nhead", type=int, default=8, help="Number of attention heads."
+    )
+    parser.add_argument("--num_layers", type=int, default=4, help="Number of layers.")
+    parser.add_argument("--d_ff_mult", type=int, default=4, help="Multiplier for d_ff")
+    parser.add_argument(
+        "--groups", type=int, default=4, help="Number of groups for GQA."
+    )
+    parser.add_argument(
+        "--dropout", type=float, default=0.1, help="Dropout probability."
+    )
+    parser.add_argument(
+        "--type", type=str, default="baseline", help="Experiment type (for logging)."
+    )
 
-     # Training arguments (same as before)
-     parser.add_argument("--lr", type=float, default=4e-4, help="Learning rate.")
-     parser.add_argument("--warmup_steps", type=int, default=100, help="Warmup steps.")
-     parser.add_argument("--t_total", type=int, default=100000, help="Total training steps.")
-     parser.add_argument("--t_0", type=int, default=5000, help="Initial period for cosine annealing.")
-     parser.add_argument("--t_mult", type=float, default=1.5, help="Multiplier for period.")
-     parser.add_argument("--lr_mult", type=float, default=0.5, help="Multiplier for peak LR.")
-     parser.add_argument("--seq_len", type=int, default=128, help="Sequence length.")
-     parser.add_argument("--batch_size", type=int, default=32, help="Batch size.")
+    # Training arguments (same as before)
+    parser.add_argument("--lr", type=float, default=1e-3, help="Learning rate.")
+    parser.add_argument("--warmup_steps", type=int, default=2000, help="Warmup steps.")
+    parser.add_argument(
+        "--t_total", type=int, default=100000, help="Total training steps."
+    )
+    parser.add_argument(
+        "--t_0", type=int, default=5000, help="Initial period for cosine annealing."
+    )
+    parser.add_argument(
+        "--t_mult", type=float, default=1.5, help="Multiplier for period."
+    )
+    parser.add_argument(
+        "--lr_mult", type=float, default=0.6, help="Multiplier for peak LR."
+    )
+    parser.add_argument("--seq_len", type=int, default=128, help="Sequence length.")
+    parser.add_argument("--batch_size", type=int, default=16, help="Batch size.")
 
-     args = parser.parse_args()
-     run_experiment(args)
+    # for custor_cross_entropy
+    parser.add_argument(
+        "--custom_cross_entropy",
+        type=str,
+        default="stablemax",
+        help="Use custom cross entropy.",
+    )  # stablemax, taylor_softmax
+
+    args = parser.parse_args()
+    run_experiment(args)
