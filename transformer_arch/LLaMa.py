@@ -185,52 +185,6 @@ class GQA(nn.Module):
         return output
 
 
-class SwiGLU(nn.Module):
-    """
-    Swish-Gated Linear Unit (SwiGLU) activation function.
-
-    This implements the SwiGLU activation as described in:
-      "GLU Variants Improve Transformer"
-      https://arxiv.org/abs/2002.05202
-    and used in LLaMA models.
-
-    In summary, it's a variant of Gated Linear Units (GLUs) that uses
-    the Swish (SiLU) activation function:
-        SwiGLU(x) = (x * W + b) ⊗ SiLU(x * V + c)
-    where:
-        x is the input
-        W, V are learnable weight matrices
-        b, c are learnable bias vectors
-        ⊗ is the element-wise product
-        SiLU(x) = x * sigmoid(x)  (also known as Swish-1)
-    """
-
-    def __init__(self, in_features, out_features, bias=True):
-        super().__init__()
-        self.linear_gate = nn.Linear(in_features, out_features, bias=bias)
-        self.linear_out = nn.Linear(in_features, out_features, bias=bias)
-
-        # Initialize weights (optional, but generally a good idea)
-        self._init_weights()
-
-    def _init_weights(self):
-        # You can use different initialization schemes. This is just an example.
-        nn.init.xavier_uniform_(self.linear_gate.weight)
-        nn.init.xavier_uniform_(self.linear_out.weight)
-        if self.linear_gate.bias is not None:
-            nn.init.zeros_(self.linear_gate.bias)
-        if self.linear_out.bias is not None:
-            nn.init.zeros_(self.linear_out.bias)
-
-    def forward(self, x):
-        # (x * W + b)
-        out = self.linear_out(x)
-        # SiLU(x * V + c)
-        gate = F.silu(self.linear_gate(x))  # Use SiLU (Swish) activation
-        # Element-wise product: (xW + b) * SiLU(xV + c)
-        return out * gate
-
-
 class SwiGLU_feed_forward(nn.Module):
     def __init__(self, d_model, d_ff, dropout=0.1):
         super().__init__()
