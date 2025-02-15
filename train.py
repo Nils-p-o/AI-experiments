@@ -70,7 +70,7 @@ def proceed(args):
 
     logger = TensorBoardLogger(
         "lightning_logs",
-        name=f"{type}_{architecture}_transformer_{seq_len}_{d_model}_{d_ff_mult}_{num_layers}_{nhead}",  # seq, d_model, d_ff mult, num_layers, nhead
+        name=f"{type}_{architecture}_transformer_{seq_len}_{d_model}_{d_ff_mult}_{num_layers}_{nhead}_{groups}_{batch_size}_{cce_fn}",  # seq, d_model, d_ff mult, num_layers, nhead
     )  # Optional logging
     # --- Data Loading ---
     download_and_split_shakespeare()  # Download and prepare data if needed
@@ -132,16 +132,6 @@ def proceed(args):
     num_params = count_parameters(model)
     print(f"The model has {num_params:,} trainable parameters.")
 
-    match cce_fn:
-        case "stablemax":
-            cce_fn = custom_cross_entropy(softmax_fn=stablemax)
-        case "taylor_softmax":
-            cce_fn = custom_cross_entropy(softmax_fn=taylor_softmax)
-        case "false":
-            cce_fn = torch.nn.CrossEntropyLoss()
-        case _:
-            raise ValueError(f"Custom cross entropy function {cce_fn} not supported")
-
     # --- Training Setup ---
     # if model.__class__.__name__ == "nGPT":
     #     normalize_weights_and_enforce_positive_eigenvalues(model)
@@ -155,7 +145,7 @@ def proceed(args):
         t_0=t_0,
         t_mult=t_mult,
         lr_mult=lr_mult,
-        loss_fn=cce_fn,
+        cce_fn=cce_fn,
     )  # Use vocab_size
 
     # Checkpointing
