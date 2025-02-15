@@ -7,14 +7,11 @@ from training.experiment import TransformerExperiment
 from transformer_arch.components import ClassicTransformer
 from transformer_arch.LLaMa import LLaMa
 # from transformer_arch.nGPT import nGPT, normalize_weights_and_enforce_positive_eigenvalues
-# from transformer_arch.DIFF_transformer import DiffTransformer
+from transformer_arch.Diff_transformer import DiffTransformer
 from training.utils import (
     count_parameters,
     ShakespeareDataModule,
-    download_and_split_shakespeare,
-    stablemax,
-    taylor_softmax,
-    custom_cross_entropy,
+    download_and_split_shakespeare
 )
 from pytorch_lightning.loggers import TensorBoardLogger
 import torch
@@ -105,6 +102,7 @@ def proceed(args):
                 dropout=dropout,
                 vocab_size=vocab_size,
                 seq_len=seq_len,
+                groups=groups,
             )
         case "nGPT":
             model = nGPT(
