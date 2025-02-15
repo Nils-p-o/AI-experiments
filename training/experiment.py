@@ -19,7 +19,7 @@ class TransformerExperiment(pl.LightningModule):
         t_0=5000,
         t_mult=1.5,
         lr_mult=0.5, # maybe higher?
-        loss_fn=None,
+        cce_fn=None,
     ):
         super().__init__()
         self.model = model
@@ -30,7 +30,15 @@ class TransformerExperiment(pl.LightningModule):
         self.lr_mult = lr_mult
         self.batch_size = batch_size
         # self.loss_fn = nn.CrossEntropyLoss()
-        self.loss_fn = loss_fn # custom_cross_entropy(softmax_fn=stablemax)
+        match cce_fn:
+            case "stablemax":
+                self.loss_fn = custom_cross_entropy(softmax_fn=stablemax)
+            case "taylor_softmax":
+                self.loss_fn = custom_cross_entropy(softmax_fn=taylor_softmax)
+            case "softmax":
+                self.loss_fn = custom_cross_entropy() # these two should be the same, as they have the same output, but training is very different
+            case _:
+                self.loss_fn = torch.nn.CrossEntropyLoss() # wtf
         self.accuracy = Accuracy(
             task="multiclass", num_classes=vocab_size
         )  # Adjust task and num_classes
