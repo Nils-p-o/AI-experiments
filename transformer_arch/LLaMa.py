@@ -166,6 +166,7 @@ class GQA(nn.Module):
             .transpose(1, 2)
         )
 
+
         # --- RoPE ---
         q = self.rotary_emb(q)
         k = self.rotary_emb(k)

@@ -174,9 +174,10 @@ class mha(nn.Module):
         return self.dropout(self.o(attn_output))
 
 
-def get_causal_mask(seq_len):  # ?????
+def get_causal_mask(seq_len):
     mask = torch.triu(torch.ones(seq_len, seq_len), diagonal=1)
     return mask.unsqueeze(0).unsqueeze(0).to(device="cuda" if torch.cuda.is_available() else "cpu")
+
 
 
 class self_attention(nn.Module):

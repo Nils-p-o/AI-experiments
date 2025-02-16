@@ -1,5 +1,6 @@
 # dataleakage, ignore all results pre ~nGPT architecture, as this is when i found out
 # TODO implement flashattention (doesn't work, compile fails)
+
 import argparse
 import pytorch_lightning as pl
 from pytorch_lightning.callbacks import ModelCheckpoint, EarlyStopping
@@ -20,6 +21,7 @@ from torch.nn.attention import SDPBackend
 # "the sewage from the city never stops" 
 
 # TODO along with orthograd, rewrite crossentropy to not use log_softmax, but stablemax instead
+
 
 # change how args get passed to model, should use args instead
 # update older code (maybe, idk)
@@ -42,6 +44,7 @@ from torch.nn.attention import SDPBackend
 
 
 def proceed(args):
+
 
     architecture = args.architecture
     seq_len = args.seq_len
@@ -107,6 +110,7 @@ def proceed(args):
                 vocab_size=vocab_size,
                 seq_len=seq_len,
                 groups=groups,
+
             )
         case "nGPT":
             model = nGPT(
@@ -148,6 +152,7 @@ def proceed(args):
         t_mult=t_mult,
         lr_mult=lr_mult,
         cce_fn=cce_fn,
+
     )  # Use vocab_size
 
     # Checkpointing
@@ -263,3 +268,4 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
     run_experiment(args)
+
