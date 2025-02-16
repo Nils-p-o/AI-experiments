@@ -6,7 +6,7 @@ from pytorch_lightning.callbacks import ModelCheckpoint, EarlyStopping
 from training.experiment import TransformerExperiment
 from transformer_arch.components import ClassicTransformer
 from transformer_arch.LLaMa import LLaMa
-# from transformer_arch.nGPT import nGPT, normalize_weights_and_enforce_positive_eigenvalues
+from transformer_arch.nGPT import nGPT, normalize_weights_and_enforce_positive_eigenvalues
 from transformer_arch.Diff_transformer import DiffTransformer
 from training.utils import (
     count_parameters,
@@ -131,8 +131,8 @@ def proceed(args):
     print(f"The model has {num_params:,} trainable parameters.")
 
     # --- Training Setup ---
-    # if model.__class__.__name__ == "nGPT":
-    #     normalize_weights_and_enforce_positive_eigenvalues(model)
+    if model.__class__.__name__ == "nGPT":
+        normalize_weights_and_enforce_positive_eigenvalues(model)
 
     experiment = TransformerExperiment(
         model,

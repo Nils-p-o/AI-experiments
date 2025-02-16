@@ -7,6 +7,7 @@ from torchmetrics.text import Perplexity
 import math
 from torch.optim.lr_scheduler import LambdaLR
 from .utils import OrthoGrad, custom_cross_entropy, stablemax, taylor_softmax
+from transformer_arch.nGPT import normalize_weights_and_enforce_positive_eigenvalues
 
 class TransformerExperiment(pl.LightningModule):
     def __init__(
@@ -127,3 +128,8 @@ class TransformerExperiment(pl.LightningModule):
                 "interval": "step",
             },
         }
+    
+    def on_train_batch_end(self, outputs, batch, batch_idx):
+        if self.model.__class__.__name__ == "nGPT":
+            normalize_weights_and_enforce_positive_eigenvalues(self.model)
+        return
