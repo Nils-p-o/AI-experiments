@@ -1,3 +1,6 @@
+# dataleakage, ignore all results pre ~nGPT architecture, as this is when i found out
+# TODO implement flashattention (doesn't work, compile fails)
+
 import argparse
 import pytorch_lightning as pl
 from pytorch_lightning.callbacks import ModelCheckpoint, EarlyStopping
@@ -5,19 +8,20 @@ from training.experiment import TransformerExperiment
 from transformer_arch.components import ClassicTransformer
 from transformer_arch.LLaMa import LLaMa
 from transformer_arch.nGPT import nGPT, normalize_weights_and_enforce_positive_eigenvalues
-from transformer_arch.DIFF import DiffTransformer
+from transformer_arch.Diff_transformer import DiffTransformer
 from training.utils import (
     count_parameters,
     ShakespeareDataModule,
-    download_and_split_shakespeare,
+    download_and_split_shakespeare
 )
 from pytorch_lightning.loggers import TensorBoardLogger
 import torch
+from torch.nn.attention import SDPBackend
 
-# f'ed up, and masked the wring part of attention???
+# "the sewage from the city never stops" 
 
-# TODO implement flashattention
-# combine uv into one linear layer (linear_in and linear_gate)
+# TODO along with orthograd, rewrite crossentropy to not use log_softmax, but stablemax instead
+
 
 # change how args get passed to model, should use args instead
 # update older code (maybe, idk)
@@ -39,9 +43,7 @@ import torch
 #         torch.nn.init.normal_(p, mean=0.0, std=config.base_scale/math.sqrt(2 * config.n_layer))
 
 
-def run_experiment(args):
-    if torch.cuda.is_available():
-        torch.set_float32_matmul_precision("medium")
+def proceed(args):
 
 
     architecture = args.architecture
@@ -54,19 +56,28 @@ def run_experiment(args):
     groups = args.groups
     dropout = args.dropout
     lr = args.lr
-    warmup_steps=args.warmup_steps
-    t_0=args.t_0
-    t_mult=args.t_mult
-    lr_mult=args.lr_mult
+    t_total = args.t_total
+    warmup_steps = args.warmup_steps
+    t_0 = args.t_0 + warmup_steps
+    t_mult = args.t_mult
+    lr_mult = args.lr_mult
     type = args.type
+    cce_fn = args.custom_cross_entropy
 
+    print(
+        f"type: {type} {architecture}_transformer seq_len:{seq_len} d_model:{d_model} d_ff_mult:{d_ff_mult} num_layers:{num_layers} nhead:{nhead} groups:{groups} dropout:{dropout} lr:{lr} t_total:{t_total} warmup_steps:{warmup_steps} t_0:{t_0} t_mult:{t_mult} lr_mult:{lr_mult} batch_size:{batch_size}"
+    )
+
+    name = f"{type}_{architecture}_transformer_{seq_len}_{d_model}_{d_ff_mult}_{num_layers}_{nhead}_{groups}_{batch_size}"
+    if cce_fn == "stablemax" or cce_fn == "taylor_softmax" or cce_fn == "softmax":
+        name = name + "_" + cce_fn
 
     logger = TensorBoardLogger(
-        "lightning_logs", name=f"{type}_{architecture}_transformer_{seq_len}_{d_model}_{d_ff_mult}_{num_layers}_{nhead}" # seq, d_model, d_ff mult, num_layers, nhead
+        "lightning_logs",
+        name=name,  # seq, d_model, d_ff mult, num_layers, nhead
     )  # Optional logging
     # --- Data Loading ---
     download_and_split_shakespeare()  # Download and prepare data if needed
-
 
     data_module = ShakespeareDataModule(
         train_file="train.txt",
@@ -98,6 +109,8 @@ def run_experiment(args):
                 dropout=dropout,
                 vocab_size=vocab_size,
                 seq_len=seq_len,
+                groups=groups,
+
             )
         case "nGPT":
             model = nGPT(
@@ -128,9 +141,18 @@ def run_experiment(args):
     # --- Training Setup ---
     if model.__class__.__name__ == "nGPT":
         normalize_weights_and_enforce_positive_eigenvalues(model)
-    
+
     experiment = TransformerExperiment(
-        model, learning_rate=lr, batch_size=batch_size, vocab_size=vocab_size, warmup_steps=warmup_steps, t_0=t_0, t_mult=t_mult, lr_mult=lr_mult
+        model,
+        learning_rate=lr,
+        batch_size=batch_size,
+        vocab_size=vocab_size,
+        warmup_steps=warmup_steps,
+        t_0=t_0,
+        t_mult=t_mult,
+        lr_mult=lr_mult,
+        cce_fn=cce_fn,
+
     )  # Use vocab_size
 
     # Checkpointing
@@ -144,47 +166,106 @@ def run_experiment(args):
 
     # Early Stopping
     early_stopping_callback = EarlyStopping(
-        monitor="val_loss", patience=10, verbose=True, mode="min"
+        monitor="val_loss", patience=1000, verbose=True, mode="min"
     )
 
     trainer = pl.Trainer(
-        max_epochs=5,
+        max_steps=t_total,
         accelerator="auto",
         devices="auto",
         callbacks=[checkpoint_callback, early_stopping_callback],
-        limit_train_batches=1000,
-        limit_val_batches=25,
+        # limit_train_batches=1000,
+        limit_val_batches=50,
         logger=logger,
-        log_every_n_steps=10,
-        val_check_interval=200,
+        log_every_n_steps=30,
+        val_check_interval=500,
     )
 
     trainer.fit(experiment, datamodule=data_module)
-
+    # torch.save(model, "result_model.pth")
+    # print("Model saved.")
     return
 
+
+def run_experiment(args):
+    torch.set_float32_matmul_precision(
+        "medium"
+    )  # turns out this is not exclusive to gpu(~20% faster), cpu(~0% faster, maybe even slower)
+    # add flashattn to speed things up for gpu and cpu too
+    # torch.bfloat16 # extra speed up??
+    if torch.cuda.is_available():
+        # if torch.backends.cuda.is_flash_attention_available():
+        with torch.nn.attention.sdpa_kernel(
+            [
+                SDPBackend.FLASH_ATTENTION,
+                SDPBackend.EFFICIENT_ATTENTION,
+                SDPBackend.MATH,
+                SDPBackend.CUDNN_ATTENTION,
+            ],
+            set_priority=True,
+        ):
+            proceed(args)
+            return
+        # else:
+        #     proceed(args)
+        #     return
+    else:
+        proceed(args)
+        return
+
+
 if __name__ == "__main__":
-     parser = argparse.ArgumentParser(description="Train a Transformer model.")
+    parser = argparse.ArgumentParser(description="Train a Transformer model.")
 
-     # Model architecture arguments (same as before)
-     parser.add_argument("--architecture", type=str, default="LLaMa", help="Model architecture (LLaMa, ...)")
-     parser.add_argument("--d_model", type=int, default=512, help="Embedding dimension.")
-     parser.add_argument("--nhead", type=int, default=8, help="Number of attention heads.")
-     parser.add_argument("--num_layers", type=int, default=6, help="Number of layers.")
-     parser.add_argument("--d_ff_mult", type=int, default=4, help="Multiplier for d_ff")
-     parser.add_argument("--groups", type=int, default=4, help="Number of groups for GQA.")
-     parser.add_argument("--dropout", type=float, default=0.1, help="Dropout probability.")
-     parser.add_argument("--type", type=str, default="test", help="Experiment type (for logging).")
+    # Model architecture arguments (same as before)
+    parser.add_argument(
+        "--architecture",
+        type=str,
+        default="LLaMa",
+        help="Model architecture (LLaMa, ...)",
+    )
+    parser.add_argument("--d_model", type=int, default=128, help="Embedding dimension.")
+    parser.add_argument(
+        "--nhead", type=int, default=8, help="Number of attention heads."
+    )
+    parser.add_argument("--num_layers", type=int, default=4, help="Number of layers.")
+    parser.add_argument("--d_ff_mult", type=int, default=4, help="Multiplier for d_ff")
+    parser.add_argument(
+        "--groups", type=int, default=4, help="Number of groups for GQA."
+    )
+    parser.add_argument(
+        "--dropout", type=float, default=0.1, help="Dropout probability."
+    )
+    parser.add_argument(
+        "--type", type=str, default="baseline", help="Experiment type (for logging)."
+    )
 
-     # Training arguments (same as before)
-     parser.add_argument("--lr", type=float, default=1e-4, help="Learning rate.")
-     parser.add_argument("--warmup_steps", type=int, default=4000, help="Warmup steps.")
-    #  parser.add_argument("--total_steps", type=int, default=100000, help="Total training steps.")
-     parser.add_argument("--t_0", type=int, default=10000, help="Initial period for cosine annealing.")
-     parser.add_argument("--t_mult", type=float, default=2.0, help="Multiplier for period.")
-     parser.add_argument("--lr_mult", type=float, default=0.9, help="Multiplier for peak LR.")
-     parser.add_argument("--seq_len", type=int, default=128, help="Sequence length.")
-     parser.add_argument("--batch_size", type=int, default=32, help="Batch size.")
+    # Training arguments (same as before)
+    parser.add_argument("--lr", type=float, default=1e-3, help="Learning rate.")
+    parser.add_argument("--warmup_steps", type=int, default=2000, help="Warmup steps.")
+    parser.add_argument(
+        "--t_total", type=int, default=100000, help="Total training steps."
+    )
+    parser.add_argument(
+        "--t_0", type=int, default=5000, help="Initial period for cosine annealing."
+    )
+    parser.add_argument(
+        "--t_mult", type=float, default=1.5, help="Multiplier for period."
+    )
+    parser.add_argument(
+        "--lr_mult", type=float, default=0.6, help="Multiplier for peak LR."
+    )
+    parser.add_argument("--seq_len", type=int, default=128, help="Sequence length.")
+    parser.add_argument("--batch_size", type=int, default=16, help="Batch size.")
 
-     args = parser.parse_args()
-     run_experiment(args)
+    # for custor_cross_entropy
+    parser.add_argument(
+        "--custom_cross_entropy",
+        type=str,
+        default="stablemax",
+        help="Use custom cross entropy.",
+    )  # stablemax, taylor_softmax
+
+    args = parser.parse_args()
+    run_experiment(args)
+

@@ -43,7 +43,6 @@ class ClassicTransformer(nn.Module):
             x = layer(x)
         x = self.norm(x)  # (batch_size, seq_len, d_model)
         x = self.out(x)
-        x = torch.softmax(x, -1)
         return x  # (batch_size, seq_len, vocab_size) logits
 
 
@@ -156,7 +155,7 @@ class mha(nn.Module):
 
         # Apply mask if provided
         if mask is not None:
-            a = a.masked_fill(mask == 0, -1e9)
+            a = a.masked_fill(mask == 1, -1e9)
 
         # Calculate attention probabilities
         a = torch.softmax(a, dim=-1)
@@ -175,10 +174,10 @@ class mha(nn.Module):
         return self.dropout(self.o(attn_output))
 
 
-def get_causal_mask(seq_len):  # ?????
-    device = "cuda" if torch.cuda.is_available() else "cpu"
+def get_causal_mask(seq_len):
     mask = torch.triu(torch.ones(seq_len, seq_len), diagonal=1)
-    return mask.unsqueeze(0).unsqueeze(0).to(device=device)
+    return mask.unsqueeze(0).unsqueeze(0).to(device="cuda" if torch.cuda.is_available() else "cpu")
+
 
 
 class self_attention(nn.Module):

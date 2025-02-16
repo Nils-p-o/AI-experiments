@@ -57,7 +57,6 @@ class nGPT(nn.Module):
             x = layer(x)
         x = self.out(x)
         x = x * self.s_z * (self.s_z_init / self.s_z_scale)
-        x = torch.softmax(x, -1)
         return x  # (batch_size, seq_len, vocab_size) logits
 
 
@@ -152,8 +151,8 @@ class nGPT_GQA(nn.Module):
         )
 
         # --- RoPE ---
-        q = self.rotary_emb(q, seq_dim=2)
-        k = self.rotary_emb(k, seq_dim=2)
+        q = self.rotary_emb(q)
+        k = self.rotary_emb(k)
 
         # --- Reshape K and V for Grouped Attention ---
         # Repeat K and V for each head within the group.
