@@ -56,7 +56,7 @@ class Diff_block(nn.Module):
         self.nhead = nhead
         self.d_ff = d_ff
         self.dropout = dropout
-        self.mha = DiffGQA(d_model=d_model, nhead=nhead, dropout=dropout, depth=depth, groups=groups)
+        self.mha = Diff_GQA(d_model=d_model, nhead=nhead, dropout=dropout, depth=depth, groups=groups)
         self.norm1 = nn.RMSNorm(d_model)
         self.norm2 = nn.RMSNorm(d_model)
         self.ff = SwiGLU_feed_forward(d_model, d_ff, dropout)
@@ -70,9 +70,9 @@ class Diff_block(nn.Module):
         return x
 
 
-class DiffGQA(nn.Module):
+class Diff_GQA(nn.Module):
     def __init__(self, d_model, nhead, groups=4, dropout=0.1, depth=0):
-        super().__init__()
+        super(Diff_GQA, self).__init__()
         self.d_model = d_model
         self.nhead = nhead
         self.groups = groups
@@ -93,7 +93,7 @@ class DiffGQA(nn.Module):
 
         self.o = nn.Linear(d_model, d_model)
         self.dropout = nn.Dropout(dropout)
-        self.rotary_emb = RoPE(self.head_dim)
+        self.rotary_emb = RoPE(self.head_dim//2)
 
         self.scaling = 1.0 / math.sqrt(self.head_dim)
 
@@ -135,32 +135,32 @@ class DiffGQA(nn.Module):
         v = self.v_linear(x).view(batch_size, seq_len, self.groups, self.head_dim)
 
         # --- RoPE ---
-        q = self.rotary_emb(q, seq_dim=2)
-        k = self.rotary_emb(k, seq_dim=2)
+        q = self.rotary_emb(q) # some problem here dim mismatch, might have already been fixed, idk
+        k = self.rotary_emb(k)
 
-        # q = q.transpose(1, 2)  # (batch_size, 2*nhead, seq_len, head_dim/2)
-        # # --- Reshape K and V for Grouped Attention ---
-        # # Repeat K and V for each head within the group.
-        # k = k.transpose(1, 2).repeat_interleave(
-        #     self.heads_per_group, dim=1
-        # )  # (batch_size, 2*nhead, seq_len, head_dim/2)
-        # v = v.transpose(1, 2).repeat_interleave(
-        #     self.heads_per_group, dim=1
-        # )  # (batch_size, nhead, seq_len, head_dim)
+        q = q.transpose(1, 2)  # (batch_size, 2*nhead, seq_len, head_dim/2)
+        # --- Reshape K and V for Grouped Attention ---
+        # Repeat K and V for each head within the group.
+        k = k.transpose(1, 2).repeat_interleave(
+            self.heads_per_group, dim=1
+        )  # (batch_size, 2*nhead, seq_len, head_dim/2)
+        v = v.transpose(1, 2).repeat_interleave(
+            self.heads_per_group, dim=1
+        )  # (batch_size, nhead, seq_len, head_dim)
 
-        # # --- Attention Calculation ---
-        # a = (
-        #     torch.matmul(q, k.transpose(-2, -1)) * self.scaling
-        # )  # (batch_size, 2*nhead, seq_len, seq_len)
+        # --- Attention Calculation ---
+        a = (
+            torch.matmul(q, k.transpose(-2, -1)) * self.scaling
+        )  # (batch_size, 2*nhead, seq_len, seq_len)
 
-        # if mask is not None:
-        #     a = a.masked_fill(mask == 1, -1e9)
+        if mask is not None:
+            a = a.masked_fill(mask == 1, -1e9)
 
-        # a = torch.softmax(a, dim=-1)
-        # a = self.dropout(a)
-        a = F.scaled_dot_product_attention(
-            q, k, v, is_causal=True, dropout_p=0.1, enable_gqa=True
-        )
+        a = torch.softmax(a, dim=-1)
+        a = self.dropout(a)
+        # a = F.scaled_dot_product_attention(
+        #     q, k, v, is_causal=True, dropout_p=0.1, enable_gqa=True
+        # )
 
 
         lambda_1 = torch.exp(torch.sum(self.lambda_k1 * self.lambda_q1, dim=-1))

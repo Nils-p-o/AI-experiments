@@ -151,12 +151,11 @@ class nGPT_GQA(nn.Module):
         )
 
         # --- RoPE ---
-        q = self.rotary_emb(q, seq_dim=2)
-        k = self.rotary_emb(k, seq_dim=2)
+        q = self.rotary_emb(q)
+        k = self.rotary_emb(k)
 
         # --- Reshape K and V for Grouped Attention ---
         # Repeat K and V for each head within the group.
-        # TODO maybe just .repeat, not repeat_interleave
         k = k.repeat_interleave(
             self.heads_per_group, dim=1
         )  # (batch_size, nhead, seq_len, head_dim)

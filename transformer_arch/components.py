@@ -43,7 +43,6 @@ class ClassicTransformer(nn.Module):
             x = layer(x)
         x = self.norm(x)  # (batch_size, seq_len, d_model)
         x = self.out(x)
-        x = torch.softmax(x, -1)
         return x  # (batch_size, seq_len, vocab_size) logits
 
 

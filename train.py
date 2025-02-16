@@ -65,9 +65,13 @@ def proceed(args):
         f"type: {type} {architecture}_transformer seq_len:{seq_len} d_model:{d_model} d_ff_mult:{d_ff_mult} num_layers:{num_layers} nhead:{nhead} groups:{groups} dropout:{dropout} lr:{lr} t_total:{t_total} warmup_steps:{warmup_steps} t_0:{t_0} t_mult:{t_mult} lr_mult:{lr_mult} batch_size:{batch_size}"
     )
 
+    name = f"{type}_{architecture}_transformer_{seq_len}_{d_model}_{d_ff_mult}_{num_layers}_{nhead}_{groups}_{batch_size}"
+    if cce_fn == "stablemax" or cce_fn == "taylor_softmax" or cce_fn == "softmax":
+        name = name + "_" + cce_fn
+
     logger = TensorBoardLogger(
         "lightning_logs",
-        name=f"{type}_{architecture}_transformer_{seq_len}_{d_model}_{d_ff_mult}_{num_layers}_{nhead}_{groups}_{batch_size}_{cce_fn}",  # seq, d_model, d_ff mult, num_layers, nhead
+        name=name,  # seq, d_model, d_ff mult, num_layers, nhead
     )  # Optional logging
     # --- Data Loading ---
     download_and_split_shakespeare()  # Download and prepare data if needed
