@@ -54,7 +54,7 @@ targets = torch.tensor([0, 1])
 targets = targets.repeat(1, 1)
 
 for _ in range(rng):
-    logits = torch.randn(1, 10, 2)
+    logits = torch.randn(1, 100, 2)
 
     for scaler in range(scaler_max):
         scaled_logits = logits * scaler
@@ -73,5 +73,9 @@ plt.plot(false_data, label="false") # this is the same as true when logits only 
 plt.plot(true_data, label="true")
 plt.plot(stablemax_data, label="stablemax")
 plt.plot(taylor_softmax_data, label="taylor_softmax")
+plt.legend()
+plt.show()
+
+plt.plot(true_data, label="true")
 plt.legend()
 plt.show()

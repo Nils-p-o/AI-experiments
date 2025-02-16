@@ -338,13 +338,13 @@ class custom_cross_entropy(torch.nn.Module):
         self.softmax_fn = softmax_fn
 
     def forward(self, logits, labels):
-        labels = labels.to(torch.int64)
-        soft_logits = self.softmax_fn(logits.to(torch.float64), dim=-1)
+        labels = labels.to(torch.int64) # [..., seq_len]
+        soft_logits = self.softmax_fn(logits.to(torch.float64), dim=-2)  # [..., vocab_size, seq_len]
         logprobs = torch.log(
             soft_logits.to(torch.float64)
-            / torch.sum(soft_logits, dim=-1, keepdim=True).to(torch.float64)
+            / torch.sum(soft_logits, dim=-2, keepdim=True).to(torch.float64)
         )
-        prediction_logprobs = torch.gather(logprobs, index=labels.unsqueeze(dim=-2), dim=-1).to(
+        prediction_logprobs = torch.gather(logprobs, index=labels.unsqueeze(dim=-2), dim=-2).to(
             torch.float32
         )
 
