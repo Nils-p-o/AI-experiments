@@ -2,11 +2,10 @@ import torch
 import torch.nn as nn
 import math
 import torch.nn.functional as F
-from .components import transformer_block, input_embedding, mha, get_causal_mask
-from .LLaMa import RoPE
+from .components import input_embedding, get_causal_mask
+from .LLaMa import RoPE, SwiGLU_feed_forward
 
 # added DiffAttn
-
 
 class DiffTransformer(nn.Module):
     def __init__(
@@ -46,7 +45,6 @@ class DiffTransformer(nn.Module):
             x = layer(x)
         x = self.norm(x)  # (batch_size, seq_len, d_model)
         x = self.out(x)
-        x = torch.softmax(x, -1)
         return x  # (batch_size, seq_len, vocab_size) logits
 
 
@@ -57,7 +55,7 @@ class Diff_block(nn.Module):
         self.nhead = nhead
         self.d_ff = d_ff
         self.dropout = dropout
-        self.mha = DiffGQA(d_model=d_model, nhead=nhead, dropout=dropout, depth=depth, groups=groups)
+        self.mha = Diff_GQA(d_model=d_model, nhead=nhead, dropout=dropout, depth=depth, groups=groups)
         self.norm1 = nn.RMSNorm(d_model)
         self.norm2 = nn.RMSNorm(d_model)
         self.ff = SwiGLU_feed_forward(d_model, d_ff, dropout)
@@ -71,9 +69,9 @@ class Diff_block(nn.Module):
         return x
 
 
-class DiffGQA(nn.Module):
+class Diff_GQA(nn.Module):
     def __init__(self, d_model, nhead, groups=4, dropout=0.1, depth=0):
-        super().__init__()
+        super(Diff_GQA, self).__init__()
         self.d_model = d_model
         self.nhead = nhead
         self.groups = groups
@@ -94,7 +92,7 @@ class DiffGQA(nn.Module):
 
         self.o = nn.Linear(d_model, d_model)
         self.dropout = nn.Dropout(dropout)
-        self.rotary_emb = RoPE(self.head_dim)
+        self.rotary_emb = RoPE(self.head_dim//2)
 
         self.scaling = 1.0 / math.sqrt(self.head_dim)
 
@@ -120,11 +118,11 @@ class DiffGQA(nn.Module):
             )
         )
 
-        # self.norm = nn.RMSNorm(self.head_dim, eps=1e-5, elementwise_affine=True)
-
-        self.num_groups_norm = self.nhead # maybe different numbers??
-        # Now applied *after* attention, so normalize the head_dim
-        self.norm = nn.GroupNorm(self.num_groups_norm, self.nhead * self.head_dim)
+        self.norm = nn.RMSNorm(self.head_dim, eps=1e-5, elementwise_affine=True)
+        #TODO supposed to be groupnorm, but i dunno how to do that
+        # self.num_groups_norm = self.nhead # maybe different numbers??
+        # # Now applied *after* attention, so normalize the head_dim
+        # self.norm = nn.GroupNorm(self.num_groups_norm, self.nhead * self.head_dim)
 
     def forward(self, x, mask=None):
         batch_size, seq_len, _ = x.shape
@@ -139,8 +137,8 @@ class DiffGQA(nn.Module):
         v = self.v_linear(x).view(batch_size, seq_len, self.groups, self.head_dim)
 
         # --- RoPE ---
-        q = self.rotary_emb(q, seq_dim=2)
-        k = self.rotary_emb(k, seq_dim=2)
+        q = self.rotary_emb(q) # some problem here dim mismatch, might have already been fixed, idk
+        k = self.rotary_emb(k)
 
         q = q.transpose(1, 2)  # (batch_size, 2*nhead, seq_len, head_dim/2)
         # --- Reshape K and V for Grouped Attention ---
@@ -162,6 +160,10 @@ class DiffGQA(nn.Module):
 
         a = torch.softmax(a, dim=-1)
         a = self.dropout(a)
+        # a = F.scaled_dot_product_attention(
+        #     q, k, v, is_causal=True, dropout_p=0.1, enable_gqa=True
+        # )
+
 
         lambda_1 = torch.exp(torch.sum(self.lambda_k1 * self.lambda_q1, dim=-1))
         lambda_2 = torch.exp(torch.sum(self.lambda_k2 * self.lambda_q2, dim=-1))
@@ -170,10 +172,7 @@ class DiffGQA(nn.Module):
         a = a[:, :, 0, :, :] - lambda_full * a[:, :, 1, :, :]
 
         attn_output = torch.matmul(a, v)  # (batch_size, nhead, seq_len, head_dim)
-        # attn_output = self.norm(attn_output)
-        attn_output.transpose(1, 2).reshape(batch_size, seq_len, self.nhead * self.head_dim) # TODO: check if this is correct
-        attn_output = self.norm(attn_output.transpose(1,2)).transpose(1,2) # Apply GroupNorm, then put back into right shape
-        attn_output = attn_output.reshape(batch_size, seq_len, self.nhead, self.head_dim).transpose(1,2)
+        attn_output = self.norm(attn_output)
         attn_output = attn_output * (1 - self.lambda_init)
         # --- Concatenate and Output Projection ---
         attn_output = (
@@ -184,68 +183,6 @@ class DiffGQA(nn.Module):
         output = self.dropout(self.o(attn_output))
 
         return output
-
-
-class SwiGLU(nn.Module):
-    """
-    Swish-Gated Linear Unit (SwiGLU) activation function.
-
-    This implements the SwiGLU activation as described in:
-      "GLU Variants Improve Transformer"
-      https://arxiv.org/abs/2002.05202
-    and used in LLaMA models.
-
-    In summary, it's a variant of Gated Linear Units (GLUs) that uses
-    the Swish (SiLU) activation function:
-        SwiGLU(x) = (x * W + b) ⊗ SiLU(x * V + c)
-    where:
-        x is the input
-        W, V are learnable weight matrices
-        b, c are learnable bias vectors
-        ⊗ is the element-wise product
-        SiLU(x) = x * sigmoid(x)  (also known as Swish-1)
-    """
-
-    def __init__(self, in_features, out_features, bias=True):
-        super().__init__()
-        self.linear_gate = nn.Linear(in_features, out_features, bias=bias)
-        self.linear_out = nn.Linear(in_features, out_features, bias=bias)
-
-        # Initialize weights (optional, but generally a good idea)
-        self._init_weights()
-
-    def _init_weights(self):
-        # You can use different initialization schemes. This is just an example.
-        nn.init.xavier_uniform_(self.linear_gate.weight)
-        nn.init.xavier_uniform_(self.linear_out.weight)
-        if self.linear_gate.bias is not None:
-            nn.init.zeros_(self.linear_gate.bias)
-        if self.linear_out.bias is not None:
-            nn.init.zeros_(self.linear_out.bias)
-
-    def forward(self, x):
-        # (x * W + b)
-        out = self.linear_out(x)
-        # SiLU(x * V + c)
-        gate = F.silu(self.linear_gate(x))  # Use SiLU (Swish) activation
-        # Element-wise product: (xW + b) * SiLU(xV + c)
-        return out * gate
-
-
-class SwiGLU_feed_forward(nn.Module):
-    def __init__(self, d_model, d_ff, dropout=0.1):
-        super().__init__()
-        # d_ff is now the "intermediate" dimension.  The SwiGLU layer
-        # will project to d_ff, and then the output projection will go back to d_model.
-        self.swiglu = SwiGLU(d_model, d_ff)
-        self.linear_out = nn.Linear(d_ff, d_model)
-        self.dropout = nn.Dropout(dropout)
-
-    def forward(self, x):
-        x = self.swiglu(x)
-        x = self.linear_out(x)
-        x = self.dropout(x)  # Apply dropout *after* the output projection
-        return x
 
 
 def lambda_init_fn(depth):

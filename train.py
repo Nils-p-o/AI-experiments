@@ -8,7 +8,8 @@ from training.experiment import TransformerExperiment
 from transformer_arch.components import ClassicTransformer
 from transformer_arch.LLaMa import LLaMa
 from transformer_arch.nGPT import nGPT, normalize_weights_and_enforce_positive_eigenvalues
-from transformer_arch.Diff_transformer import DiffTransformer
+from transformer_arch.DIFF import DiffTransformer
+from transformer_arch.DINT import DintTransformer
 from training.utils import (
     count_parameters,
     ShakespeareDataModule,
@@ -44,8 +45,6 @@ from torch.nn.attention import SDPBackend
 
 
 def proceed(args):
-
-
     architecture = args.architecture
     seq_len = args.seq_len
     batch_size = args.batch_size
@@ -123,6 +122,17 @@ def proceed(args):
             )
         case "Diff":
             model = DiffTransformer(
+                d_model=d_model,
+                nhead=nhead,
+                num_layers=num_layers,
+                d_ff=d_model * d_ff_mult,
+                dropout=dropout,
+                vocab_size=vocab_size,
+                seq_len=seq_len,
+                groups=groups,
+            )
+        case "Dint":
+            model = DintTransformer(
                 d_model=d_model,
                 nhead=nhead,
                 num_layers=num_layers,
