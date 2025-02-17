@@ -164,8 +164,12 @@ class nGPT_GQA(nn.Module):
         )  # (batch_size, nhead, seq_len, head_dim)
 
         effective_s_qk = self.s_qk * (self.s_qk_init / self.s_qk_scale)
-        q = cosine_norm(q).transpose(1, 2) * effective_s_qk
-        k = cosine_norm(k).transpose(1, 2) * effective_s_qk
+        # q = cosine_norm(q).transpose(1, 2) * effective_s_qk
+        # k = cosine_norm(k).transpose(1, 2) * effective_s_qk
+        # q = q.transpose(1, 2)
+        # k = k.transpose(1, 2)
+        q = q.transpose(1, 2) * effective_s_qk
+        k = k.transpose(1, 2) * effective_s_qk
         q = q.transpose(1, 2)
         k = k.transpose(1, 2)
 

@@ -1,0 +1,7 @@
+batch_size: 64
+learning_rate: 0.002
+lr_mult: 0.6
+t_0: 6000
+t_mult: 1.5
+vocab_size: 65
+warmup_steps: 1000

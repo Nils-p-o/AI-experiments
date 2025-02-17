@@ -21,8 +21,7 @@ from torch.nn.attention import SDPBackend
 
 # "the sewage from the city never stops" 
 
-# TODO along with orthograd, rewrite crossentropy to not use log_softmax, but stablemax instead
-
+# TODO make orthograd part of the config (Dint and Diff, and nGPT)
 
 # change how args get passed to model, should use args instead
 # update older code (maybe, idk)
@@ -64,7 +63,7 @@ def proceed(args):
     cce_fn = args.custom_cross_entropy
 
     print(
-        f"type: {type} {architecture}_transformer seq_len:{seq_len} d_model:{d_model} d_ff_mult:{d_ff_mult} num_layers:{num_layers} nhead:{nhead} groups:{groups} dropout:{dropout} lr:{lr} t_total:{t_total} warmup_steps:{warmup_steps} t_0:{t_0} t_mult:{t_mult} lr_mult:{lr_mult} batch_size:{batch_size}"
+        f"type: {type} {architecture}_transformer seq_len:{seq_len} d_model:{d_model} d_ff_mult:{d_ff_mult} num_layers:{num_layers} nhead:{nhead} groups:{groups} dropout:{dropout} lr:{lr} t_total:{t_total} warmup_steps:{warmup_steps} t_0:{t_0} t_mult:{t_mult} lr_mult:{lr_mult} batch_size:{batch_size} cce_fn:{cce_fn}"
     )
 
     name = f"{type}_{architecture}_transformer_{seq_len}_{d_model}_{d_ff_mult}_{num_layers}_{nhead}_{groups}_{batch_size}"

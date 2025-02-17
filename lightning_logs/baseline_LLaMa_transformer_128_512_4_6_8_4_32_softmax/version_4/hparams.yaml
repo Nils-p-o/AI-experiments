@@ -1,0 +1,8 @@
+batch_size: 32
+cce_fn: softmax
+learning_rate: 0.0003
+lr_mult: 0.6
+t_0: 50000
+t_mult: 1.5
+vocab_size: 65
+warmup_steps: 5000

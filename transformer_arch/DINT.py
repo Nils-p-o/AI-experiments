@@ -169,7 +169,7 @@ class DintGQA(nn.Module):
         lambda_full = lambda_1 - lambda_2 + self.lambda_init
         a = a.view(batch_size, self.nhead, 2, seq_len, seq_len)
         a3 = torch.repeat_interleave(
-            torch.mean(a[:, :, 0, :, :], dim=-2), seq_len, dim=-2
+            torch.mean(a[:, :, 0, :, :], dim=-2, keepdim=True), seq_len, dim=-2
         )
         a = a[:, :, 0, :, :] - lambda_full * a[:, :, 1, :, :] + a3 * lambda_full
 
