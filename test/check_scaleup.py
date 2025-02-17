@@ -27,14 +27,10 @@ def scaleup_weights(w : torch.Tensor, method="noisy_diagonal"):
             n12 = torch.cat(torch.cat([n1, -n1], dim=1), torch.cat([n2, -n2], dim=1), dim=0)
             return nw + n12
 
-def scaleup_bias(b : torch.Tensor, method="noisy"):
-    match method:
-        case "symmetric":
-            return b.repeat(2)
-        case "noisy":
-            n = torch.randn(b.shape) * 0.1
-            return b + n
+def scaleup_bias(b : torch.Tensor):
+    return b.repeat(2)
 
 
+def scaleup_model(model, method="noisy_diagonal"):
+    ... # write this like in nGPT
 
-print(torch.randn(2,3))
