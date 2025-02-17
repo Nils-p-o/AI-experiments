@@ -20,8 +20,8 @@ def check(logits, targets, cce_fn):
 
 def get_avg(losses, rng, scaler_max):
     temp = [0 for _ in range(scaler_max)]
-    for i in range(rng):
-        temp[i] = sum(losses[j] for j in range(i, rng*scaler_max, rng))
+    for i in range(scaler_max):
+        temp[i] = sum(losses[j] for j in range(i, rng*scaler_max, scaler_max)) / rng
     return temp
 
 
@@ -47,14 +47,14 @@ false_data = list()
 stablemax_data = list()
 taylor_softmax_data = list()
 scaler_max = 10
-rng = 10
+rng = 25
 
 
 targets = torch.tensor([0, 1])
 targets = targets.repeat(1, 1)
 
 for _ in range(rng):
-    logits = torch.randn(1, 100, 2)
+    logits = torch.randn(1, 10, 2)
 
     for scaler in range(scaler_max):
         scaled_logits = logits * scaler
@@ -76,6 +76,6 @@ plt.plot(taylor_softmax_data, label="taylor_softmax")
 plt.legend()
 plt.show()
 
-plt.plot(true_data, label="true")
-plt.legend()
-plt.show()
+# plt.plot(true_data, label="true")
+# plt.legend()
+# plt.show()

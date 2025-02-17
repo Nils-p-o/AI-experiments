@@ -275,6 +275,12 @@ if __name__ == "__main__":
         help="Use custom cross entropy.",
     )  # stablemax, taylor_softmax
 
+    parser.add_argument(
+        "--seed", type=int, default=42, help="Seed for reproducibility."
+    )
+    parser.add_argument(
+        "--extra_descriptor", type=str, default="", help="Extra descriptor for logging."
+    )
     args = parser.parse_args()
     run_experiment(args)
 
