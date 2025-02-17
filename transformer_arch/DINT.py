@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import math
 import torch.nn.functional as F
-from .components import transformer_block, input_embedding, mha, get_causal_mask
+from .components import input_embedding, get_causal_mask
 from .LLaMa import RoPE, SwiGLU_feed_forward
 
 # added DiffAttn
@@ -95,9 +95,9 @@ class DintGQA(nn.Module):
 
         self.o = nn.Linear(d_model, d_model)
         self.dropout = nn.Dropout(dropout)
-        self.rotary_emb = RoPE(self.head_dim//2)
+        self.rotary_emb = RoPE(self.head_dim // 2)
 
-        self.scaling = 1.0 / math.sqrt(self.head_dim)
+        self.scaling = 1.0 / math.sqrt(self.head_dim)  # //2??
 
         self.lambda_init = lambda_init_fn(depth)
         self.lambda_k1 = nn.Parameter(
@@ -122,7 +122,7 @@ class DintGQA(nn.Module):
         )
 
         self.norm = nn.RMSNorm(self.head_dim, eps=1e-5, elementwise_affine=True)
-        #TODO supposed to be groupnorm, but i dunno how to do that
+        # TODO supposed to be groupnorm, but i dunno how to do that
         # self.num_groups_norm = self.nhead # maybe different numbers??
         # # Now applied *after* attention, so normalize the head_dim
         # self.norm = nn.GroupNorm(self.num_groups_norm, self.nhead * self.head_dim)
@@ -154,9 +154,8 @@ class DintGQA(nn.Module):
         )  # (batch_size, nhead, seq_len, head_dim)
 
         # --- Attention Calculation ---
-        a = (
-            torch.matmul(q, k.transpose(-2, -1)) * self.scaling
-        )  # (batch_size, 2*nhead, seq_len, seq_len)
+        a = torch.matmul(q, k.transpose(-2, -1)) * self.scaling
+        # (batch_size, 2*nhead, seq_len, seq_len)
 
         if mask is not None:
             a = a.masked_fill(mask == 1, -1e9)
@@ -168,15 +167,31 @@ class DintGQA(nn.Module):
         lambda_2 = torch.exp(torch.sum(self.lambda_k2 * self.lambda_q2, dim=-1))
         lambda_full = lambda_1 - lambda_2 + self.lambda_init
         a = a.view(batch_size, self.nhead, 2, seq_len, seq_len)
+        # original code:
         a3 = torch.repeat_interleave(
             torch.mean(a[:, :, 0, :, :], dim=-2, keepdim=True), seq_len, dim=-2
-        )
+        )  # TODO might need to be distributed and calculated only across the ones that are not masked
+        # can do this by multiplying columns by scalar which is seq_len/num_unmasked
+        # then maybe mask a3
+        # alternate:
+        # a3_scaler = torch.sum(mask == 1, dim=-2, keepdim=True).float() / seq_len
+        # a3 = torch.mean(a[:, :, 0, :, :], dim=-2, keepdim=True)
+        # a3 = torch.mul(a3, a3_scaler) # a3 = a3 * a3_scaler
+        # a3 = a3.repeat_interleave(seq_len, dim=-2)
+        # a3 = a3.masked_fill(mask == 1, 0)
+
         a = a[:, :, 0, :, :] - lambda_full * a[:, :, 1, :, :] + a3 * lambda_full
 
         attn_output = torch.matmul(a, v)  # (batch_size, nhead, seq_len, head_dim)
-        attn_output.transpose(1, 2).reshape(batch_size, seq_len, self.nhead * self.head_dim) # TODO: check if this is correct
-        attn_output = self.norm(attn_output.transpose(1,2)).transpose(1,2) # Apply GroupNorm, then put back into right shape
-        attn_output = attn_output.reshape(batch_size, seq_len, self.nhead, self.head_dim).transpose(1,2)
+        attn_output.transpose(1, 2).reshape(
+            batch_size, seq_len, self.nhead * self.head_dim
+        )  # TODO: check if this is correct
+        attn_output = self.norm(attn_output.transpose(1, 2)).transpose(
+            1, 2
+        )  # Apply GroupNorm, then put back into right shape
+        attn_output = attn_output.reshape(
+            batch_size, seq_len, self.nhead, self.head_dim
+        ).transpose(1, 2)
         # attn_output = attn_output * (1 - self.lambda_init)
         # --- Concatenate and Output Projection ---
         attn_output = (
