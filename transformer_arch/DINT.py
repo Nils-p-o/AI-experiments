@@ -168,17 +168,19 @@ class DintGQA(nn.Module):
         lambda_full = lambda_1 - lambda_2 + self.lambda_init
         a = a.view(batch_size, self.nhead, 2, seq_len, seq_len)
         # original code:
-        a3 = torch.repeat_interleave(
-            torch.mean(a[:, :, 0, :, :], dim=-2, keepdim=True), seq_len, dim=-2
-        )  # TODO might need to be distributed and calculated only across the ones that are not masked
+        # a3 = torch.repeat_interleave(
+        #     torch.mean(a[:, :, 0, :, :], dim=-2, keepdim=True), seq_len, dim=-2
+        # )  # TODO might need to be distributed and calculated only across the ones that are not masked
         # can do this by multiplying columns by scalar which is seq_len/num_unmasked
         # then maybe mask a3
         # alternate:
-        # a3_scaler = torch.sum(mask == 1, dim=-2, keepdim=True).float() / seq_len
-        # a3 = torch.mean(a[:, :, 0, :, :], dim=-2, keepdim=True)
-        # a3 = torch.mul(a3, a3_scaler) # a3 = a3 * a3_scaler
-        # a3 = a3.repeat_interleave(seq_len, dim=-2)
-        # a3 = a3.masked_fill(mask == 1, 0)
+        a3_scaler = seq_len / torch.sum(mask == 0, dim=-2, keepdim=True).float()
+        a3_scaler = a3_scaler.view(batch_size, self.nhead,2, 1, seq_len)
+        a3_scaler = a3_scaler[:, :, 0, :, :]
+        a3 = torch.mean(a[:, :, 0, :, :], dim=-2, keepdim=True)
+        a3 = a3 * a3_scaler # a3 = a3 * a3_scaler
+        a3 = a3.repeat_interleave(seq_len, dim=-2)
+        a3 = a3.masked_fill(mask[:,:8,:,:] == 1, 0)
 
         a = a[:, :, 0, :, :] - lambda_full * a[:, :, 1, :, :] + a3 * lambda_full
 

@@ -61,6 +61,8 @@ def proceed(args):
     lr_mult = args.lr_mult
     type = args.type
     cce_fn = args.custom_cross_entropy
+    seed = args.seed
+    extra_descriptor = args.extra_descriptor
 
     print(
         f"type: {type} {architecture}_transformer seq_len:{seq_len} d_model:{d_model} d_ff_mult:{d_ff_mult} num_layers:{num_layers} nhead:{nhead} groups:{groups} dropout:{dropout} lr:{lr} t_total:{t_total} warmup_steps:{warmup_steps} t_0:{t_0} t_mult:{t_mult} lr_mult:{lr_mult} batch_size:{batch_size} cce_fn:{cce_fn}"
@@ -69,7 +71,9 @@ def proceed(args):
     name = f"{type}_{architecture}_transformer_{seq_len}_{d_model}_{d_ff_mult}_{num_layers}_{nhead}_{groups}_{batch_size}"
     if cce_fn == "stablemax" or cce_fn == "taylor_softmax" or cce_fn == "softmax":
         name = name + "_" + cce_fn
-
+    if extra_descriptor != "":
+        name = name + "_" + extra_descriptor
+        
     logger = TensorBoardLogger(
         "lightning_logs",
         name=name,  # seq, d_model, d_ff mult, num_layers, nhead
@@ -230,7 +234,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--architecture",
         type=str,
-        default="LLaMa",
+        default="Dint",
         help="Model architecture (LLaMa, ...)",
     )
     parser.add_argument("--d_model", type=int, default=128, help="Embedding dimension.")
