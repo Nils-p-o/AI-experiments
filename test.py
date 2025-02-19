@@ -12,6 +12,12 @@ import torch.version
 #     a = torch.nn.functional.scaled_dot_product_attention(
 #         torch.rand(2, 3, 4), torch.rand(2, 3, 4), torch.rand(2, 3, 4))
 
+a = torch.rand(2)
+a = a.unsqueeze(0).unsqueeze(0).unsqueeze(-1)
+print(a.shape)
+a = a.repeat_interleave(2, dim=0)
+
+print(a.shape)
 # print(a)
 from torch_lr_finder import LRFinder
 from transformer_arch.LLaMa import LLaMa

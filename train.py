@@ -7,21 +7,31 @@ from pytorch_lightning.callbacks import ModelCheckpoint, EarlyStopping
 from training.experiment import TransformerExperiment
 from transformer_arch.components import ClassicTransformer
 from transformer_arch.LLaMa import LLaMa
-from transformer_arch.nGPT import nGPT, normalize_weights_and_enforce_positive_eigenvalues
+from transformer_arch.nGPT import (
+    nGPT,
+    normalize_weights_and_enforce_positive_eigenvalues,
+)
 from transformer_arch.DIFF import DiffTransformer
 from transformer_arch.DINT import DintTransformer
 from training.utils import (
     count_parameters,
+)
+from training.data_loaders.wikitext import (
+    WikitextDataModule,
+    download_and_split_wikitext,
+)
+from training.data_loaders.tiny_shakespeare import (
     ShakespeareDataModule,
-    download_and_split_shakespeare
+    download_and_split_shakespeare,
 )
 from pytorch_lightning.loggers import TensorBoardLogger
 import torch
 from torch.nn.attention import SDPBackend
 
+
 from transformer_arch.DINT_nGPT import DINT_nGPT
 
-# "the sewage from the city never stops" 
+# "the sewage from the city never stops"
 
 # TODO figure out group norm for DINT and DIFF
 # TODO check attn matrix for DINT, maybe im breaking causality again?
@@ -66,7 +76,6 @@ def proceed(args: argparse.Namespace):
     cce_fn = args.custom_cross_entropy
     seed = args.seed
     extra_descriptor = args.extra_descriptor
-    orthograd = args.orthograd
 
     # pl.seed_everything(seed)
 
@@ -79,21 +88,35 @@ def proceed(args: argparse.Namespace):
         name = name + "_" + cce_fn
     if extra_descriptor != "":
         name = name + "_" + extra_descriptor
-        
+
     logger = TensorBoardLogger(
         "lightning_logs",
         name=name,  # seq, d_model, d_ff mult, num_layers, nhead
     )  # Optional logging
     # --- Data Loading ---
-    download_and_split_shakespeare()  # Download and prepare data if needed
+    if args.dataset == "tiny_shakespeare":
+        download_and_split_shakespeare()  # Download and prepare data if needed
+        data_module = ShakespeareDataModule(
+            train_file="train.txt",
+            val_file="val.txt",
+            test_file="test.txt",
+            seq_len=seq_len,
+            batch_size=batch_size,
+            use_character_encoding=args.use_character_encoding,
+        )
+    elif args.dataset == "wikitext2":
+        download_and_split_wikitext()  # Download and prepare data if needed
+        data_module = WikitextDataModule(
+            train_file="train.txt",
+            val_file="val.txt",
+            test_file="test.txt",
+            seq_len=seq_len,
+            batch_size=batch_size,
+            use_character_encoding=args.use_character_encoding,
+        )
+    else:
+        raise ValueError(f"Unknown dataset: {args.dataset}")
 
-    data_module = ShakespeareDataModule(
-        train_file="train.txt",
-        val_file="val.txt",
-        test_file="test.txt",
-        seq_len=seq_len,
-        batch_size=batch_size,
-    )
     data_module.setup()  # Very important to setup the data
     vocab_size = data_module.get_vocab_size()
 
@@ -118,7 +141,6 @@ def proceed(args: argparse.Namespace):
                 vocab_size=vocab_size,
                 seq_len=seq_len,
                 groups=groups,
-
             )
         case "nGPT":
             model = nGPT(
@@ -150,7 +172,7 @@ def proceed(args: argparse.Namespace):
                 vocab_size=vocab_size,
                 seq_len=seq_len,
                 groups=groups,
-                v1=args.v1
+                v1=args.v1,
             )
         case "DINT_nGPT":
             model = DINT_nGPT(
@@ -183,8 +205,7 @@ def proceed(args: argparse.Namespace):
         t_mult=t_mult,
         lr_mult=lr_mult,
         cce_fn=cce_fn,
-        args=args
-
+        args=args,
     )  # Use vocab_size
 
     # Checkpointing
@@ -304,13 +325,19 @@ if __name__ == "__main__":
     parser.add_argument(
         "--extra_descriptor", type=str, default="", help="Extra descriptor for logging."
     )
-    parser.add_argument(
-        "--orthograd", type=bool, default=True, help="Use OrthoGrad."
-    )
+    parser.add_argument("--orthograd", type=bool, default=True, help="Use OrthoGrad.")
     parser.add_argument(
         "--v1", type=bool, default=True, help="Use V1. (currently only Dint)"
+    )
+    parser.add_argument(
+        "--dataset", type=str, default="tiny_shakespeare", help="Dataset to use."
+    )
+    parser.add_argument(
+        "--use_character_encoding",
+        type=bool,
+        default=False,
+        help="Use character-level encoding instead of the tokenizer.",
     )
 
     args = parser.parse_args()
     run_experiment(args)
-
