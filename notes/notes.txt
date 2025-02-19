@@ -1,0 +1,7 @@
+orthograd
+seems to have no negative or positive effect - gonna keep it just in case
+(choise of loss fn also seems insignificant)
+
+nGPT
+the simpler version seems like it starts converging faster, but ultimately they both perform ~the same
+- gonna keep simpler ver. for now, cuz its faster (~4%)
