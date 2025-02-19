@@ -7,7 +7,7 @@ import math
 from LLaMa import RoPE
 
 # maybe done
-
+# uses v1 of DINT
 class DINT_nGPT(torch.nn.Module):
     def __init__(
         self,
@@ -107,11 +107,12 @@ class DINT_nGPT_GQA(nn.Module): # TODO make sure this makes sense
         self.k_linear = nn.Linear(d_model, self.d_model // self.heads_per_group)
         self.v_linear = nn.Linear(d_model, self.d_model // self.heads_per_group)
 
+        # s_qk might just need one and apply it to both
         self.s_qk1_init = 1.0
         self.s_qk1_scale = 1.0 / math.sqrt(self.head_dim)
         self.s_qk1 = nn.Parameter(
             torch.ones(
-                self.nhead, self.head_dim, device=self.device, requires_grad=True
+                self.nhead, self.head_dim//2, device=self.device, requires_grad=True
             )
             * self.s_qk1_scale
         )
@@ -120,7 +121,7 @@ class DINT_nGPT_GQA(nn.Module): # TODO make sure this makes sense
         self.s_qk2_scale = 1.0 / math.sqrt(self.head_dim)
         self.s_qk2 = nn.Parameter(
             torch.ones(
-                self.nhead, self.head_dim, device=self.device, requires_grad=True
+                self.nhead, self.head_dim//2, device=self.device, requires_grad=True
             )
             * self.s_qk2_scale
         )
@@ -183,17 +184,23 @@ class DINT_nGPT_GQA(nn.Module): # TODO make sure this makes sense
         )  # (batch_size, nhead, seq_len, head_dim)
 
         effective_s_qk1 = self.s_qk1 * (self.s_qk1_init / self.s_qk1_scale)
-        # effective_s_qk2 = self.s_qk2 * (self.s_qk2_init / self.s_qk2_scale)
+        effective_s_qk2 = self.s_qk2 * (self.s_qk2_init / self.s_qk2_scale)
         # maybe s_qk should be "half" of head size and be the same between qk1 and qk2
-        # --- nGPT part ---
+        # --- nGPT part --- # TODO check if the more complicated one is even worth it
+        q1 = cosine_norm(q[:,:self.nhead,:,:]).transpose(1,2) * effective_s_qk1
+        k1 = cosine_norm(k[:,:self.nhead,:,:]).transpose(1,2) * effective_s_qk1
+        q2 = cosine_norm(q[:,self.nhead:,:,:]).transpose(1,2) * effective_s_qk2
+        k2 = cosine_norm(k[:,self.nhead:,:,:]).transpose(1,2) * effective_s_qk2
+        q = torch.cat((q1, q2), dim=1).transpose(1,2)
+        k = torch.cat((k1, k2), dim=1).transpose(1,2)
         # q = cosine_norm(q).transpose(1, 2) * effective_s_qk
         # k = cosine_norm(k).transpose(1, 2) * effective_s_qk
         # q = q.transpose(1, 2)
         # k = k.transpose(1, 2)
-        q = q.transpose(1, 2) * effective_s_qk1
-        k = k.transpose(1, 2) * effective_s_qk1
-        q = q.transpose(1, 2)
-        k = k.transpose(1, 2)
+        # q = q.transpose(1, 2) * effective_s_qk1
+        # k = k.transpose(1, 2) * effective_s_qk1
+        # q = q.transpose(1, 2)
+        # k = k.transpose(1, 2)
 
         # --- Attention Calculation ---
         # common part
