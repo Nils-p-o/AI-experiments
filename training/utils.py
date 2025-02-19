@@ -2,78 +2,13 @@ from torch.utils.data import DataLoader, TensorDataset, Dataset
 import torch
 import pytorch_lightning as pl
 
+import re
+from typing import List, Optional, Union
+from sentencepiece import SentencePieceProcessor
 
 def count_parameters(model):
     return sum(p.numel() for p in model.parameters() if p.requires_grad)
 
-
-def dummy_dataloader(
-    batch_size=32,
-    seq_length=128,
-    num_samples=1000,
-    model_type="TransformerEncoder",
-    config=None,
-):
-    # Adjust dummy data creation based on model type
-    if model_type == "EncoderDecoder" or (
-        model_type == "MultiTransformer" and "decoder" in config
-    ):
-        encoder_input_ids = torch.randint(0, 30000, (num_samples, seq_length))
-        encoder_attention_mask = torch.ones(num_samples, seq_length)
-        decoder_input_ids = torch.randint(0, 30000, (num_samples, seq_length))
-        decoder_attention_mask = torch.ones(num_samples, seq_length)
-        labels = torch.randint(
-            0, 10, (num_samples, seq_length)
-        )  # Assuming sequence classification
-        dataset = TensorDataset(
-            (encoder_input_ids, encoder_attention_mask),
-            (decoder_input_ids, decoder_attention_mask),
-            labels,
-        )
-    elif model_type == "DualEncoder":
-        # Create dummy data for two encoders
-        input_ids1 = torch.randint(0, 30000, (num_samples, seq_length))
-        attention_mask1 = torch.ones(num_samples, seq_length)
-        input_ids2 = torch.randint(0, 30000, (num_samples, seq_length))
-        attention_mask2 = torch.ones(num_samples, seq_length)
-        labels = torch.randint(0, 2, (num_samples,))
-        dataset = TensorDataset(
-            (input_ids1, attention_mask1), (input_ids2, attention_mask2), labels
-        )
-    elif model_type == "MultiTransformer":
-        # Create dummy data for multiple encoders
-        encoders_data = []
-        for _ in config["encoders"]:
-            input_ids = torch.randint(0, 30000, (num_samples, seq_length))
-            attention_mask = torch.ones(num_samples, seq_length)
-            encoders_data.append((input_ids, attention_mask))
-
-        # If there's a decoder, create decoder data
-        if "decoder" in config:
-            decoder_input_ids = torch.randint(0, 30000, (num_samples, seq_length))
-            decoder_attention_mask = torch.ones(num_samples, seq_length)
-            labels = torch.randint(
-                0, 10, (num_samples, seq_length)
-            )  # Example for sequence generation
-            dataset = TensorDataset(
-                encoders_data, (decoder_input_ids, decoder_attention_mask), labels
-            )
-        else:
-            labels = torch.randint(0, 2, (num_samples,))  # Example for classification
-            dataset = TensorDataset(encoders_data, labels)
-    else:
-        # Default case (e.g., single TransformerEncoder)
-        input_ids = torch.randint(0, 30000, (num_samples, seq_length))
-        attention_mask = torch.ones(num_samples, seq_length)
-        labels = torch.randint(0, 2, (num_samples,))  # Binary classification
-        dataset = TensorDataset(input_ids, attention_mask, labels)
-
-    return DataLoader(dataset, batch_size=batch_size)
-
-
-# def dataloader(batch_size, data, shuffle=True):
-#     dataset = TensorDataset(*data)
-#     return DataLoader(dataset, batch_size=batch_size, shuffle=shuffle)
 
 
 class ShakespeareDataset(Dataset):
@@ -167,7 +102,7 @@ class ShakespeareDataModule(pl.LightningDataModule):
             self.test_dataset,
             batch_size=self.batch_size,
             shuffle=False,
-            num_workers=8,
+            num_workers=4,
             pin_memory=True,
             persistent_workers=True,
         )
@@ -210,17 +145,6 @@ def download_and_split_shakespeare(input_file_path="input.txt"):
     with open("test.txt", "w") as f:
         f.write(test_data)
 
-
-def export_model(model, dummy_input, model_path):
-    torch.onnx.export(
-        model,
-        dummy_input,
-        model_path,
-        verbose=True,
-        input_names=["input"],
-        output_names=["output"],
-        opset_version=12,
-    )
 
 
 class OrthoGrad(torch.optim.Optimizer):
@@ -279,7 +203,6 @@ class OrthoGrad(torch.optim.Optimizer):
         return self.base_optimizer.step(closure)
 
 
-# TODO implement and test this
 def stablemax(x, epsilon=1e-30, dim=-1):
     return torch.where(x < 0, 1 / (1 - x + epsilon), x + 1)
 
@@ -289,7 +212,6 @@ def log_stablemax(x, dim=-1):
     return torch.log(s_x / torch.sum(s_x, dim=dim, keepdim=True))
 
 
-# TODO check importance of precision
 def stablemax_cross_entropy(logits, labels, reduction="mean"):
     labels = labels.to(torch.int64)
     logprobs = log_stablemax(logits.to(torch.float64), dim=-1)
@@ -316,21 +238,6 @@ def log_taylor_softmax(x, dim=-1):
     return torch.log(t_x / torch.sum(t_x, dim=dim, keepdim=True))
 
 
-def taylor_cross_entropy(logits, labels, reduction="mean"):
-    labels = labels.to(torch.int64)
-    logprobs = log_taylor_softmax(logits.to(torch.float64), dim=-1)
-    prediction_logprobs = torch.gather(logprobs, index=labels[:, None], dim=-1).to(
-        torch.float64
-    )
-
-    loss = (
-        -torch.mean(prediction_logprobs)
-        if reduction == "mean"
-        else -prediction_logprobs
-    )
-    return loss
-
-
 class custom_cross_entropy(torch.nn.Module):
     def __init__(self, reduction="mean", softmax_fn=torch.nn.functional.softmax):
         super(custom_cross_entropy, self).__init__()
@@ -355,3 +262,329 @@ class custom_cross_entropy(torch.nn.Module):
         )
         return loss
 
+
+class WikitextDataset(Dataset):
+    def __init__(
+        self,
+        text_file: str,
+        seq_len: int,
+        preload: bool = True,
+        tokenizer_model_path: Optional[str] = None,
+        use_character_encoding: bool = False,
+    ):
+        """
+        Args:
+            text_file: Path to the wikitext file.
+            seq_len: Length of the input sequences.
+            preload: Whether to load the entire file into memory.
+            tokenizer_model_path: Path to a SentencePiece tokenizer model (e.g., LLaMA tokenizer.model).
+            use_character_encoding: Use character-level encoding instead of the tokenizer.
+        """
+        self.seq_len = seq_len
+        self.preload = preload
+        self.use_character_encoding = use_character_encoding
+        self.tokenizer = None
+
+        if not use_character_encoding:
+            if tokenizer_model_path is None:
+                raise ValueError(
+                    "tokenizer_model_path must be provided if use_character_encoding is False."
+                )
+            self.tokenizer = SentencePieceProcessor(model_file=tokenizer_model_path)
+            self.vocab_size = self.tokenizer.vocab_size()  # Pre-calculate for efficiency.
+            self.bos_id = self.tokenizer.bos_id()
+            self.eos_id = self.tokenizer.eos_id()
+            self.pad_id = self.tokenizer.pad_id()
+
+        if preload:
+            with open(text_file, "r", encoding="utf-8") as f:
+                self.text = self.clean_wikitext(f.read())
+            if use_character_encoding:
+                self.chars = sorted(list(set(self.text)))
+                self.char_to_idx = {ch: i for i, ch in enumerate(self.chars)}
+                self.idx_to_char = {i: ch for i, ch in enumerate(self.chars)}
+                self.encoded_text = [self.char_to_idx[ch] for ch in self.text]
+            else:
+                self.encoded_text = self.tokenizer.encode(self.text)  # Encode the whole text
+
+        else:  # not preload
+            self.text_file = text_file
+            if use_character_encoding:
+                self.chars = set()
+                self.char_to_idx = {}
+                self.idx_to_char = {}
+                self._build_vocab()
+                # Don't load self.encoded_text if not preloading
+                self.encoded_text = None
+
+            else:  # Tokenizer, no preload:  vocab is known from tokenizer.
+               self.encoded_text = None
+
+    def _build_vocab(self):
+        """Builds the vocabulary from the text file (for character encoding, when not preloading)."""
+        temp_chars = set()
+        with open(self.text_file, "r", encoding="utf-8") as f:
+            for chunk in iter(lambda: f.read(1024 * 1024), ""):  # Read in 1MB chunks
+                cleaned_chunk = self.clean_wikitext(chunk)
+                temp_chars.update(cleaned_chunk)
+        self.chars = sorted(list(temp_chars))
+        self.char_to_idx = {ch: i for i, ch in enumerate(self.chars)}
+        self.idx_to_char = {i: ch for i, ch in enumerate(self.chars)}
+
+    def clean_wikitext(self, text: str) -> str:
+        """
+        Cleans wikitext formatting.  Keeps some basic formatting.
+
+        Args:
+            text: The raw wikitext string.
+
+        Returns:
+            The cleaned string.
+        """
+        # Remove lines starting with = (headers) and empty lines
+        text = re.sub(r"^=.+?=<span class="math-inline">\\n?", "", text, flags\=re\.MULTILINE\)
+text \= re\.sub\(r"^\\s\*</span>", "", text, flags=re.MULTILINE)
+
+        # Remove HTML comments
+        text = re.sub(r"", "", text, flags=re.DOTALL)
+
+        # Remove or simplify other common Wikitext elements
+        text = re.sub(r"\[\[File:.*?\]\]", "", text)  # Remove file links
+        text = re.sub(r"\[\[Image:.*?\]\]", "", text)  # Remove image links
+        text = re.sub(r"&ndash;", "-", text)  # Replace en-dash
+        text = re.sub(r"&mdash;", "--", text)  # Replace em-dash
+        text = re.sub(r"&nbsp;", " ", text)  # Replace non breaking spaces
+
+        # Basic handling of links (keeping the text, removing the link)
+        text = re.sub(r"\[\[(.*?)\|(.*?)\]\]", r"\2", text)  # [[link|text]] -> text
+        text = re.sub(r"\[\[(.*?)\]\]", r"\1", text)  # [[link]] -> link
+
+        # Remove remaining brackets
+        text = re.sub(r"[\[\]]", "", text)
+        return text.strip()
+
+    def __len__(self):
+        if self.preload:
+            return len(self.encoded_text) - self.seq_len
+        else:
+            # Approximate length - accurate enough for most training purposes.
+            if self.use_character_encoding:
+                approx_len = 0
+                with open(self.text_file, "r", encoding="utf-8") as f:
+                    for chunk in iter(lambda: f.read(1024 * 1024), ''):  #Read 1MB chunk at the time
+                      cleaned_chunk = self.clean_wikitext(chunk)
+                      approx_len += len(cleaned_chunk)
+                return approx_len - self.seq_len
+
+            else: # Tokenizer, no preload
+                # Even more approximate, since tokenization changes length.
+                approx_len = 0
+                with open(self.text_file, "r", encoding="utf-8") as f:
+                    for chunk in iter(lambda: f.read(1024 * 1024), ''):  #Read 1MB chunk at the time
+                        cleaned_chunk = self.clean_wikitext(chunk)
+                        approx_len += len(self.tokenizer.encode(cleaned_chunk))
+                return approx_len- self.seq_len
+    def __getitem__(self, idx):
+      if self.preload:
+        if self.use_character_encoding:
+            input_sequence = self.encoded_text[idx: idx + self.seq_len]
+            target_sequence = self.encoded_text[idx + 1: idx + self.seq_len + 1]
+        else:
+            input_sequence = self.encoded_text[idx: idx + self.seq_len]
+            target_sequence = self.encoded_text[idx + 1: idx + self.seq_len + 1]
+        return torch.tensor(input_sequence, dtype=torch.long), torch.tensor(target_sequence, dtype=torch.long)
+
+      else:  # Not preloading
+        if self.use_character_encoding:
+          # Read only the necessary chunk from the file
+          input_sequence = []
+          target_sequence = []
+          with open(self.text_file, 'r', encoding="utf-8") as f:
+              f.seek(0) # Ensure we're at the beginning of the file.  Important!
+
+              # Optimization: Read a larger chunk than just seq_len to minimize file reads
+              chunk_size = self.seq_len * 10  # Adjust as needed
+              current_pos = 0
+
+              while current_pos <= idx:
+                  chunk = f.read(chunk_size)
+                  if not chunk:
+                      break # End of file
+                  cleaned_chunk = self.clean_wikitext(chunk)
+
+                  start_index = max(0, idx-current_pos)
+                  if len(cleaned_chunk) > start_index:
+                      encoded_chunk = [self.char_to_idx.get(ch, 0) for ch in cleaned_chunk[start_index:]] #Use .get for unknown characters
+
+                      needed = self.seq_len + 1  # +1 for the target
+                      if len(input_sequence) < needed:
+                          input_sequence.extend(encoded_chunk)
+                  current_pos += len(chunk)
+
+
+          input_sequence = input_sequence[:self.seq_len]
+          target_sequence = input_sequence[1:self.seq_len+1] #Offset of 1
+          #Pad if necessary
+          padding_needed = self.seq_len - len(input_sequence)
+          if padding_needed > 0:
+            input_sequence.extend([0] * padding_needed)  # Pad with a valid index (e.g., 0)
+            target_sequence.extend([0] * padding_needed)
+          return torch.tensor(input_sequence,dtype=torch.long), torch.tensor(target_sequence,dtype=torch.long)
+
+        else:  # Tokenizer, no preload -  CRUCIAL, corrected logic
+            input_ids = []
+            target_ids = []
+
+            with open(self.text_file, "r", encoding="utf-8") as f:
+                f.seek(0)  # Start from the beginning
+                file_text = ""  # Accumulate cleaned text
+                for chunk in iter(lambda: f.read(1024 * 1024), ""): #Read by chunks
+                    file_text += self.clean_wikitext(chunk)
+                    all_tokens = self.tokenizer.encode(file_text)
+
+                    if len(all_tokens) > idx + self.seq_len:
+                        input_ids = all_tokens[idx : idx + self.seq_len]
+                        target_ids = all_tokens[idx + 1 : idx + self.seq_len + 1]
+                        break #Exit when target and input are full
+
+            # Padding (if necessary)
+            padding_needed = self.seq_len - len(input_ids)
+            if padding_needed > 0:
+                input_ids.extend([self.pad_id] * padding_needed)
+                target_ids.extend([self.pad_id] * padding_needed)
+
+            return torch.tensor(input_ids, dtype=torch.long), torch.tensor(target_ids, dtype=torch.long)
+
+    def get_vocab_size(self):
+        if self.use_character_encoding:
+            return len(self.chars)
+        else:
+            return self.vocab_size  # Use pre-calculated vocab size
+
+    def decode(self, token_ids: List[int]) -> str:
+        """Decodes a list of token IDs to a string."""
+        if self.use_character_encoding:
+            return "".join([self.idx_to_char.get(i, "") for i in token_ids])
+        else:
+            return self.tokenizer.decode(token_ids)
+
+    def encode(self, text_string: str) -> List[int]:
+        """Encodes a string to a list of token IDs"""
+        if self.use_character_encoding:
+            return [self.char_to_idx.get(ch, 0) for ch in text_string]
+        else:
+            return self.tokenizer.encode(text_string)
+
+
+
+class WikitextDataModule(pl.LightningDataModule):
+    def __init__(
+        self,
+        train_file: str,
+        val_file: str,
+        test_file: str,
+        seq_len: int,
+        batch_size: int,
+        num_workers: int = 8,
+        preload: bool = True,
+        tokenizer_model_path: Optional[str] = None,
+        use_character_encoding: bool = False,
+    ):
+        super().__init__()
+        self.train_file = train_file
+        self.val_file = val_file
+        self.test_file = test_file
+        self.seq_len = seq_len
+        self.batch_size = batch_size
+        self.num_workers = num_workers
+        self.preload = preload
+        self.tokenizer_model_path = tokenizer_model_path
+        self.use_character_encoding = use_character_encoding
+
+    def setup(self, stage=None):
+        # Assign train/val datasets
+        if stage == "fit" or stage is None:
+            self.train_dataset = WikitextDataset(
+                self.train_file,
+                self.seq_len,
+                preload=self.preload,
+                tokenizer_model_path=self.tokenizer_model_path,
+                use_character_encoding=self.use_character_encoding,
+            )
+            self.val_dataset = WikitextDataset(
+                self.val_file,
+                self.seq_len,
+                preload=self.preload,
+                tokenizer_model_path=self.tokenizer_model_path,
+                use_character_encoding=self.use_character_encoding,
+            )
+
+        # Assign test dataset
+        if stage == "test" or stage is None:
+            self.test_dataset = WikitextDataset(
+                self.test_file,
+                self.seq_len,
+                preload=self.preload,
+                tokenizer_model_path=self.tokenizer_model_path,
+                use_character_encoding=self.use_character_encoding,
+            )
+
+    def train_dataloader(self):
+        return DataLoader(
+            self.train_dataset,
+            batch_size=self.batch_size,
+            shuffle=True,
+            num_workers=self.num_workers,
+            pin_memory=True,
+            persistent_workers=True,
+        )
+
+    def val_dataloader(self):
+        return DataLoader(
+            self.val_dataset,
+            batch_size=self.batch_size,
+            shuffle=False,
+            num_workers=self.num_workers,
+            pin_memory=True,
+            persistent_workers=True,
+        )
+
+    def test_dataloader(self):
+        return DataLoader(
+            self.test_dataset,
+            batch_size=self.batch_size,
+            shuffle=False,
+            num_workers=self.num_workers,
+            pin_memory=True,
+            persistent_workers=True,
+        )
+
+    def get_vocab_size(self):
+        return self.train_dataset.get_vocab_size()
+
+
+
+def download_and_split_wikitext(output_dir="wikitext_data"):
+    """Downloads and preprocesses a subset of Wikitext-2."""
+    import requests
+    import os
+    import tarfile
+    from io import BytesIO  # Import BytesIO
+
+    url = "https://s3.amazonaws.com/research.metamind.io/wikitext/wikitext-2-v1.zip"
+    if not os.path.exists(output_dir):
+        os.makedirs(output_dir)
+
+    if not os.path.exists(os.path.join(output_dir, "wikitext-2")):
+        response = requests.get(url, stream=True)
+        response.raise_for_status()
+
+        with BytesIO(response.content) as f, tarfile.open(fileobj=f, mode='r:gz') as tar:
+            tar.extractall(path=output_dir)
+
+    # Define train, validation, and test file paths
+    train_file = os.path.join(output_dir, "wikitext-2", "wiki.train.tokens")
+    val_file = os.path.join(output_dir, "wikitext-2", "wiki.valid.tokens")
+    test_file = os.path.join(output_dir, "wikitext-2", "wiki.test.tokens")
+
+    return train_file, val_file, test_file
