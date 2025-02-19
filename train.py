@@ -19,6 +19,8 @@ from pytorch_lightning.loggers import TensorBoardLogger
 import torch
 from torch.nn.attention import SDPBackend
 
+from transformer_arch.DINT_nGPT import DINT_nGPT
+
 # "the sewage from the city never stops" 
 
 # TODO figure out group norm for DINT and DIFF
@@ -150,6 +152,17 @@ def proceed(args: argparse.Namespace):
                 groups=groups,
                 v1=args.v1
             )
+        case "DINT_nGPT":
+            model = DINT_nGPT(
+                d_model=d_model,
+                nhead=nhead,
+                num_layers=num_layers,
+                d_ff=d_model * d_ff_mult,
+                dropout=dropout,
+                vocab_size=vocab_size,
+                seq_len=seq_len,
+                groups=groups,
+            )
         case _:
             raise ValueError(f"Architecture {architecture} not supported")
     # Print parameter count:
@@ -157,7 +170,7 @@ def proceed(args: argparse.Namespace):
     print(f"The model has {num_params:,} trainable parameters.")
 
     # --- Training Setup ---
-    if model.__class__.__name__ == "nGPT":
+    if model.__class__.__name__ == "nGPT" or model.__class__.__name__ == "DINT_nGPT":
         normalize_weights_and_enforce_positive_eigenvalues(model)
 
     experiment = TransformerExperiment(

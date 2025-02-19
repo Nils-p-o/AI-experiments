@@ -1,10 +1,10 @@
 import torch
 import torch.nn as nn
-from nGPT import  cosine_norm, get_causal_mask, nGPT_SwiGLU_ff
-from DINT import lambda_init_fn
-from components import input_embedding
+from transformer_arch.nGPT import  cosine_norm, get_causal_mask, nGPT_SwiGLU_ff
+from transformer_arch.DINT import lambda_init_fn
+from transformer_arch.components import input_embedding
 import math
-from LLaMa import RoPE
+from transformer_arch.LLaMa import RoPE
 
 # maybe done
 # uses v1 of DINT
@@ -58,7 +58,7 @@ class DINT_nGPT_block(nn.Module):
         self.d_model = d_model
         self.nhead = nhead
         self.d_ff = d_ff
-        self.mha = DINT_nGPT_GQA(d_model, nhead, depth)
+        self.mha = DINT_nGPT_GQA(d_model, nhead, depth=depth, groups=groups)
         self.ff = nGPT_SwiGLU_ff(d_model, d_ff, dropout)
         self.eigen_a_init = 1.0
         self.eigen_a_scale = 1.0 / math.sqrt(d_model)
@@ -76,7 +76,7 @@ class DINT_nGPT_block(nn.Module):
     def forward(self, x):
         batch_size, seq_len, _ = x.size()
         mask = get_causal_mask(seq_len)
-        mask = mask.repeat(batch_size, self.nhead, 1, 1)
+        mask = mask.repeat(batch_size, 2*self.nhead, 1, 1)
         x_a = cosine_norm(self.mha(x, mask))  # (batch_size, seq_len, d_model)
         x = cosine_norm(
             x + self.eigen_a * (self.eigen_a_init / self.eigen_a_scale) * (x_a - x)
@@ -130,7 +130,7 @@ class DINT_nGPT_GQA(nn.Module): # TODO make sure this makes sense
 
         self.o = nn.Linear(d_model, d_model)
         self.dropout = nn.Dropout(dropout)
-        self.rotary_emb = RoPE(self.head_dim)
+        self.rotary_emb = RoPE(self.head_dim//2)
 
         self.lambda_init = lambda_init_fn(depth)
         self.lambda_k1 = nn.Parameter(
@@ -191,8 +191,8 @@ class DINT_nGPT_GQA(nn.Module): # TODO make sure this makes sense
         k1 = cosine_norm(k[:,:self.nhead,:,:]).transpose(1,2) * effective_s_qk1
         q2 = cosine_norm(q[:,self.nhead:,:,:]).transpose(1,2) * effective_s_qk2
         k2 = cosine_norm(k[:,self.nhead:,:,:]).transpose(1,2) * effective_s_qk2
-        q = torch.cat((q1, q2), dim=1).transpose(1,2)
-        k = torch.cat((k1, k2), dim=1).transpose(1,2)
+        q = torch.cat((q1, q2), dim=2).transpose(1,2)
+        k = torch.cat((k1, k2), dim=2).transpose(1,2)
         # q = cosine_norm(q).transpose(1, 2) * effective_s_qk
         # k = cosine_norm(k).transpose(1, 2) * effective_s_qk
         # q = q.transpose(1, 2)
@@ -224,11 +224,14 @@ class DINT_nGPT_GQA(nn.Module): # TODO make sure this makes sense
         # can do this by multiplying columns by scalar which is seq_len/num_unmasked
         # then maybe mask a3
         # alternate:
-        # a3_scaler = torch.sum(mask == 1, dim=-2, keepdim=True).float() / seq_len
+        # a3_scaler = seq_len / torch.sum(mask == 0, dim=-2, keepdim=True).float()
+        # a3_scaler = a3_scaler.view(batch_size, self.nhead,2, 1, seq_len)
+        # a3_scaler = a3_scaler[:, :, 0, :, :]
+        
         # a3 = torch.mean(a[:, :, 0, :, :], dim=-2, keepdim=True)
-        # a3 = a3 * a3_scaler
+        # a3 = a3 * a3_scaler # a3 = a3 * a3_scaler
         # a3 = a3.repeat_interleave(seq_len, dim=-2)
-        # a3 = a3.masked_fill(mask == 1, 0)
+        # a3 = a3.masked_fill(mask[:,:8,:,:] == 1, 0)
 
         a = a[:, :, 0, :, :] - lambda_full * a[:, :, 1, :, :] + a3 * lambda_full
 
