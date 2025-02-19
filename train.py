@@ -88,6 +88,11 @@ def proceed(args: argparse.Namespace):
         name = name + "_" + cce_fn
     if extra_descriptor != "":
         name = name + "_" + extra_descriptor
+    
+    if args.use_character_encoding:
+        name = args.dataset + "_char/" + name
+    else:
+        name = args.dataset + "/" + name
 
     logger = TensorBoardLogger(
         "lightning_logs",
