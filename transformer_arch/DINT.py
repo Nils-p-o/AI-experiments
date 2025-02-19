@@ -19,6 +19,7 @@ class DintTransformer(nn.Module):
         vocab_size=10000,
         seq_len=128,
         groups=8,
+        v1: bool = True,
     ):
         super(DintTransformer, self).__init__()
         self.d_model = d_model
@@ -31,7 +32,7 @@ class DintTransformer(nn.Module):
         self.dropout = nn.Dropout(dropout)
         self.layers = nn.ModuleList(
             [
-                Dint_block(d_model, nhead, d_ff, dropout, depth, groups)
+                Dint_block(d_model, nhead, d_ff, dropout, depth, groups, v1)
                 for depth in range(num_layers)
             ]
         )
@@ -50,14 +51,14 @@ class DintTransformer(nn.Module):
 
 
 class Dint_block(nn.Module):
-    def __init__(self, d_model, nhead, d_ff=None, dropout=0.1, depth=0, groups=4):
+    def __init__(self, d_model, nhead, d_ff=None, dropout=0.1, depth=0, groups=4, v1: bool = True):
         super(Dint_block, self).__init__()
         self.d_model = d_model
         self.nhead = nhead
         self.d_ff = d_ff
         self.dropout = dropout
         self.mha = DintGQA(
-            d_model=d_model, nhead=nhead, dropout=dropout, depth=depth, groups=groups
+            d_model=d_model, nhead=nhead, dropout=dropout, depth=depth, groups=groups, v1=v1
         )
         self.norm1 = nn.RMSNorm(d_model)
         self.norm2 = nn.RMSNorm(d_model)
@@ -73,7 +74,7 @@ class Dint_block(nn.Module):
 
 
 class DintGQA(nn.Module):
-    def __init__(self, d_model, nhead, groups=4, dropout=0.1, depth=0):
+    def __init__(self, d_model, nhead, groups=4, dropout=0.1, depth=0, v1: bool = True):
         super().__init__()
         self.d_model = d_model
         self.nhead = nhead
@@ -127,6 +128,8 @@ class DintGQA(nn.Module):
         # # Now applied *after* attention, so normalize the head_dim
         # self.norm = nn.GroupNorm(self.num_groups_norm, self.nhead * self.head_dim)
 
+        self.v1 = v1
+
     def forward(self, x, mask=None):
         batch_size, seq_len, _ = x.shape
 
@@ -167,20 +170,21 @@ class DintGQA(nn.Module):
         lambda_2 = torch.exp(torch.sum(self.lambda_k2 * self.lambda_q2, dim=-1))
         lambda_full = lambda_1 - lambda_2 + self.lambda_init
         a = a.view(batch_size, self.nhead, 2, seq_len, seq_len)
+        if self.v1:
         # original code:
-        # a3 = torch.repeat_interleave(
-        #     torch.mean(a[:, :, 0, :, :], dim=-2, keepdim=True), seq_len, dim=-2
-        # )  # TODO might need to be distributed and calculated only across the ones that are not masked
-        # can do this by multiplying columns by scalar which is seq_len/num_unmasked
-        # then maybe mask a3
+            a3 = torch.repeat_interleave(
+                torch.mean(a[:, :, 0, :, :], dim=-2, keepdim=True), seq_len, dim=-2
+            )  
+        else:
         # alternate:
-        a3_scaler = seq_len / torch.sum(mask == 0, dim=-2, keepdim=True).float()
-        a3_scaler = a3_scaler.view(batch_size, self.nhead,2, 1, seq_len)
-        a3_scaler = a3_scaler[:, :, 0, :, :]
-        a3 = torch.mean(a[:, :, 0, :, :], dim=-2, keepdim=True)
-        a3 = a3 * a3_scaler # a3 = a3 * a3_scaler
-        a3 = a3.repeat_interleave(seq_len, dim=-2)
-        a3 = a3.masked_fill(mask[:,:8,:,:] == 1, 0)
+            a3_scaler = seq_len / torch.sum(mask == 0, dim=-2, keepdim=True).float()
+            a3_scaler = a3_scaler.view(batch_size, self.nhead,2, 1, seq_len)
+            a3_scaler = a3_scaler[:, :, 0, :, :]
+            
+            a3 = torch.mean(a[:, :, 0, :, :], dim=-2, keepdim=True)
+            a3 = a3 * a3_scaler # a3 = a3 * a3_scaler
+            a3 = a3.repeat_interleave(seq_len, dim=-2)
+            a3 = a3.masked_fill(mask[:,:8,:,:] == 1, 0)
 
         a = a[:, :, 0, :, :] - lambda_full * a[:, :, 1, :, :] + a3 * lambda_full
 

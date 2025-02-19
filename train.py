@@ -21,7 +21,8 @@ from torch.nn.attention import SDPBackend
 
 # "the sewage from the city never stops" 
 
-# TODO make orthograd part of the config (Dint and Diff, and nGPT)
+# TODO figure out group norm for DINT and DIFF
+# TODO check attn matrix for DINT, maybe im breaking causality again?
 
 # change how args get passed to model, should use args instead
 # update older code (maybe, idk)
@@ -43,7 +44,7 @@ from torch.nn.attention import SDPBackend
 #         torch.nn.init.normal_(p, mean=0.0, std=config.base_scale/math.sqrt(2 * config.n_layer))
 
 
-def proceed(args):
+def proceed(args: argparse.Namespace):
     architecture = args.architecture
     seq_len = args.seq_len
     batch_size = args.batch_size
@@ -63,6 +64,9 @@ def proceed(args):
     cce_fn = args.custom_cross_entropy
     seed = args.seed
     extra_descriptor = args.extra_descriptor
+    orthograd = args.orthograd
+
+    # pl.seed_everything(seed)
 
     print(
         f"type: {type} {architecture}_transformer seq_len:{seq_len} d_model:{d_model} d_ff_mult:{d_ff_mult} num_layers:{num_layers} nhead:{nhead} groups:{groups} dropout:{dropout} lr:{lr} t_total:{t_total} warmup_steps:{warmup_steps} t_0:{t_0} t_mult:{t_mult} lr_mult:{lr_mult} batch_size:{batch_size} cce_fn:{cce_fn}"
@@ -144,6 +148,7 @@ def proceed(args):
                 vocab_size=vocab_size,
                 seq_len=seq_len,
                 groups=groups,
+                v1=args.v1
             )
         case _:
             raise ValueError(f"Architecture {architecture} not supported")
@@ -165,6 +170,7 @@ def proceed(args):
         t_mult=t_mult,
         lr_mult=lr_mult,
         cce_fn=cce_fn,
+        args=args
 
     )  # Use vocab_size
 
@@ -200,7 +206,7 @@ def proceed(args):
     return
 
 
-def run_experiment(args):
+def run_experiment(args: argparse.Namespace):
     torch.set_float32_matmul_precision(
         "medium"
     )  # turns out this is not exclusive to gpu(~20% faster), cpu(~0% faster, maybe even slower)
@@ -285,6 +291,13 @@ if __name__ == "__main__":
     parser.add_argument(
         "--extra_descriptor", type=str, default="", help="Extra descriptor for logging."
     )
+    parser.add_argument(
+        "--orthograd", type=bool, default=True, help="Use OrthoGrad."
+    )
+    parser.add_argument(
+        "--v1", type=bool, default=True, help="Use V1. (currently only Dint)"
+    )
+
     args = parser.parse_args()
     run_experiment(args)
 

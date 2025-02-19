@@ -8,6 +8,7 @@ import math
 from torch.optim.lr_scheduler import LambdaLR
 from .utils import OrthoGrad, custom_cross_entropy, stablemax, taylor_softmax
 from transformer_arch.nGPT import normalize_weights_and_enforce_positive_eigenvalues
+import argparse
 
 
 class TransformerExperiment(pl.LightningModule):
@@ -22,6 +23,7 @@ class TransformerExperiment(pl.LightningModule):
         t_mult=1.5,
         lr_mult=0.5, # maybe higher?
         cce_fn=None,
+        args: argparse.Namespace = None
     ):
         super().__init__()
         self.model = model
@@ -48,6 +50,7 @@ class TransformerExperiment(pl.LightningModule):
         self.save_hyperparameters(
             ignore=["model"]
         )
+        self.args = args
 
     def forward(self, *args, **kwargs):
         return self.model(*args, **kwargs)
@@ -126,8 +129,10 @@ class TransformerExperiment(pl.LightningModule):
 
 
     def configure_optimizers(self):
-        # optimizer = optim.Adam(self.parameters(), lr=self.learning_rate)
-        optimizer = OrthoGrad(params=self.parameters(), base_optimizer_cls=optim.Adam, lr=self.learning_rate)
+        if self.args.orthograd:
+            optimizer = OrthoGrad(params=self.parameters(), base_optimizer_cls=optim.Adam, lr=self.learning_rate)
+        else:
+            optimizer = optim.Adam(self.parameters(), lr=self.learning_rate)
 
         def lr_lambda(current_step):
             min_lr = 1e-8 / self.learning_rate
