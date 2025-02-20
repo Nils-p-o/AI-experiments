@@ -182,6 +182,13 @@ class nGPT_GQA(nn.Module):
 
         a = torch.softmax(a, dim=-1)
         a = self.dropout(a)
+
+        # visualizing attention for debugging purposes
+        # import matplotlib.pyplot as plt
+        # a_weights = a.detach().cpu()
+        # plt.imshow(torch.sum(torch.sum(a_weights, dim=1), dim=0))
+        # plt.show()
+
         attn_output = torch.matmul(a, v)  # (batch_size, nhead, seq_len, head_dim)
 
         # --- Concatenate and Output Projection ---

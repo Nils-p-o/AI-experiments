@@ -105,9 +105,9 @@ def proceed(args: argparse.Namespace):
     if args.dataset == "tiny_shakespeare":
         download_and_split_shakespeare()  # Download and prepare data if needed
         data_module = ShakespeareDataModule(
-            train_file="train.txt",
-            val_file="val.txt",
-            test_file="test.txt",
+            train_file="tiny_shakespeare/train.txt",
+            val_file="tiny_shakespeare/val.txt",
+            test_file="tiny_shakespeare/test.txt",
             seq_len=seq_len,
             batch_size=batch_size,
             use_character_encoding=args.use_character_encoding,
@@ -282,7 +282,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--architecture",
         type=str,
-        default="DINT",
+        default="DINT_nGPT",#"DINT",
         help="Model architecture (LLaMa, ...)",
     )
     parser.add_argument("--d_model", type=int, default=128, help="Embedding dimension.")
@@ -323,7 +323,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--custom_cross_entropy",
         type=str,
-        default="stablemax",
+        default="false",
         help="Use custom cross entropy.",
     )  # stablemax, taylor_softmax
 
@@ -335,7 +335,7 @@ if __name__ == "__main__":
     )
     parser.add_argument("--orthograd", type=bool, default=True, help="Use OrthoGrad.")
     parser.add_argument(
-        "--v1", type=bool, default=True, help="Use V1. (currently only Dint)"
+        "--v1", type=bool, default=False, help="Use V1. (currently only Dint)"
     )
     parser.add_argument(
         "--dataset", type=str, default="tiny_shakespeare", help="Dataset to use."

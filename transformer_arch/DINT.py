@@ -187,6 +187,14 @@ class DintGQA(nn.Module):
             a3 = a3.masked_fill(mask[:,:8,:,:] == 1, 0)
 
         a = a[:, :, 0, :, :] - lambda_full * a[:, :, 1, :, :] + a3 * lambda_full
+        
+        # visualizing attention for debugging purposes
+        # import matplotlib.pyplot as plt
+        # a_weights = a.detach().cpu()
+        # plt.imshow(torch.sum(torch.sum(a_weights, dim=1), dim=0))
+        # plt.show()
+
+
 
         attn_output = torch.matmul(a, v)  # (batch_size, nhead, seq_len, head_dim)
         attn_output.transpose(1, 2).reshape(

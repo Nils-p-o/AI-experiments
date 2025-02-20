@@ -235,7 +235,11 @@ class DINT_nGPT_GQA(nn.Module): # TODO make sure this makes sense
 
         a = a[:, :, 0, :, :] - lambda_full * a[:, :, 1, :, :] + a3 * lambda_full
 
-
+        # visualizing attention for debugging purposes
+        # import matplotlib.pyplot as plt
+        # a_weights = a.detach().cpu()
+        # plt.imshow(torch.sum(torch.sum(a_weights, dim=1), dim=0))
+        # plt.show()
 
         attn_output = torch.matmul(a, v)  # (batch_size, nhead, seq_len, head_dim)
 
