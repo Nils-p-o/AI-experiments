@@ -2,7 +2,7 @@ import torch
 from torch.utils.data import Dataset, DataLoader
 import pytorch_lightning as pl
 from typing import List
-import tiktoken  # Install: pip install tiktoken
+import tiktoken
 import requests
 import os
 
@@ -255,20 +255,21 @@ class ShakespeareDataModule(pl.LightningDataModule):
 
 
 
-def download_and_split_shakespeare(input_file_path="input.txt"):
+def download_and_split_shakespeare(output_dir="tiny_shakespeare", input_file_path="tiny_shakespeare/input.txt"): 
     import requests
     import os
 
-    if not os.path.exists(input_file_path):
+    if not os.path.exists(output_dir):
+        os.makedirs(output_dir)
         # Download the tiny shakespeare dataset
         url = "https://raw.githubusercontent.com/karpathy/char-rnn/master/data/tinyshakespeare/input.txt"
         response = requests.get(url)
         response.raise_for_status()  # Raise an exception for bad status codes
 
-        with open(input_file_path, "w", encoding="utf-8") as f:  # Added encoding
+        with open(input_file_path, "w", encoding="utf-8") as f:
             f.write(response.text)
 
-    with open(input_file_path, "r", encoding="utf-8") as f: # Added encoding
+    with open(input_file_path, "r", encoding="utf-8") as f:
         text = f.read()
 
     # Split the dataset (simple split for demonstration)
@@ -277,15 +278,20 @@ def download_and_split_shakespeare(input_file_path="input.txt"):
     val_data = text[int(n * 0.8) : int(n * 0.9)]
     test_data = text[int(n * 0.9) :]
 
+
+    train_file = os.path.join(output_dir, "train.txt")
+    val_file = os.path.join(output_dir, "val.txt")
+    test_file = os.path.join(output_dir, "test.txt")
+
     # Write to files 
-    with open("tiny_shakespeare/train.txt", "w", encoding="utf-8") as f:  # Added encoding
+    with open(train_file, "w", encoding="utf-8") as f:
         f.write(train_data)
-    with open("tiny_shakespeare/val.txt", "w", encoding="utf-8") as f:    # Added encoding
+    with open(val_file, "w", encoding="utf-8") as f:
         f.write(val_data)
-    with open("tiny_shakespeare/test.txt", "w", encoding="utf-8") as f:   # Added encoding
+    with open(test_file, "w", encoding="utf-8") as f: 
         f.write(test_data)
 
-    return "tiny_shakespeare/train.txt", "tiny_shakespeare/val.txt", "tiny_shakespeare/test.txt"
+    return train_file, val_file, test_file
 
 
 

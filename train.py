@@ -1,6 +1,9 @@
 # dataleakage, ignore all results pre ~nGPT architecture, as this is when i found out
 # TODO implement flashattention (doesn't work, compile fails)
 
+
+# TODO add weight sharing for embeddings, holy moly 100M parameters just for embeddings!!!!
+
 import argparse
 import pytorch_lightning as pl
 from pytorch_lightning.callbacks import ModelCheckpoint, EarlyStopping
@@ -112,9 +115,9 @@ def proceed(args: argparse.Namespace):
     elif args.dataset == "wikitext2":
         download_and_split_wikitext()  # Download and prepare data if needed
         data_module = WikitextDataModule(
-            train_file="train.txt",
-            val_file="val.txt",
-            test_file="test.txt",
+            train_file="wikitext_data/wiki.train.tokens",
+            val_file="wikitext_data/wiki.valid.tokens",
+            test_file="wikitext_data/wiki.test.tokens",
             seq_len=seq_len,
             batch_size=batch_size,
             use_character_encoding=args.use_character_encoding,
@@ -156,7 +159,7 @@ def proceed(args: argparse.Namespace):
                 vocab_size=vocab_size,
                 seq_len=seq_len,
             )
-        case "Diff":
+        case "DIFF":
             model = DiffTransformer(
                 d_model=d_model,
                 nhead=nhead,
@@ -167,7 +170,7 @@ def proceed(args: argparse.Namespace):
                 seq_len=seq_len,
                 groups=groups,
             )
-        case "Dint":
+        case "DINT":
             model = DintTransformer(
                 d_model=d_model,
                 nhead=nhead,
@@ -279,7 +282,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--architecture",
         type=str,
-        default="Dint",
+        default="DINT",
         help="Model architecture (LLaMa, ...)",
     )
     parser.add_argument("--d_model", type=int, default=128, help="Embedding dimension.")
@@ -340,7 +343,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--use_character_encoding",
         type=bool,
-        default=False,
+        default=True,
         help="Use character-level encoding instead of the tokenizer.",
     )
 

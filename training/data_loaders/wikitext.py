@@ -285,25 +285,30 @@ class WikitextDataModule(pl.LightningDataModule):
 
 
 
-def download_and_split_wikitext(output_dir="wikitext_data"):
+def download_and_split_wikitext(output_dir="wikitext_data"): 
     """Downloads and preprocesses Wikitext-2 using Hugging Face Datasets."""
 
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
 
-    # Use Hugging Face Datasets
-    dataset = load_dataset("wikitext", "wikitext-2-v1")
+        # Use Hugging Face Datasets
+        dataset = load_dataset("wikitext", "wikitext-2-v1")
 
-    train_file = os.path.join(output_dir, "wiki.train.tokens")
-    val_file = os.path.join(output_dir, "wiki.valid.tokens")
-    test_file = os.path.join(output_dir, "wiki.test.tokens")
+        train_file = os.path.join(output_dir, "wiki.train.tokens")
+        val_file = os.path.join(output_dir, "wiki.valid.tokens")
+        test_file = os.path.join(output_dir, "wiki.test.tokens")
 
-    with open(train_file, "w", encoding="utf-8") as f:
-        f.write("\n".join(dataset["train"]["text"]))
-    with open(val_file, "w", encoding="utf-8") as f:
-        f.write("\n".join(dataset["validation"]["text"]))
-    with open(test_file, "w", encoding="utf-8") as f:
-        f.write("\n".join(dataset["test"]["text"]))
+        with open(train_file, "w", encoding="utf-8") as f:
+            f.write("\n".join(dataset["train"]["text"]))
+        with open(val_file, "w", encoding="utf-8") as f:
+            f.write("\n".join(dataset["validation"]["text"]))
+        with open(test_file, "w", encoding="utf-8") as f:
+            f.write("\n".join(dataset["test"]["text"]))
+
+    else:
+        train_file = os.path.join(output_dir, "wiki.train.tokens")
+        val_file = os.path.join(output_dir, "wiki.valid.tokens")
+        test_file = os.path.join(output_dir, "wiki.test.tokens")
 
     return train_file, val_file, test_file
 
