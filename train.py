@@ -3,7 +3,8 @@
 
 
 # TODO add weight sharing for embeddings, holy moly 100M parameters just for embeddings!!!!
-
+# TODO make encoding an argument
+import os
 import argparse
 import pytorch_lightning as pl
 from pytorch_lightning.callbacks import ModelCheckpoint, EarlyStopping
@@ -37,7 +38,6 @@ from transformer_arch.DINT_nGPT import DINT_nGPT
 # "the sewage from the city never stops"
 
 # TODO figure out group norm for DINT and DIFF
-# TODO check attn matrix for DINT, maybe im breaking causality again?
 
 # change how args get passed to model, should use args instead
 # update older code (maybe, idk)
@@ -121,6 +121,7 @@ def proceed(args: argparse.Namespace):
             seq_len=seq_len,
             batch_size=batch_size,
             use_character_encoding=args.use_character_encoding,
+            encoding_name="r50k_base",
         )
     else:
         raise ValueError(f"Unknown dataset: {args.dataset}")
@@ -243,8 +244,12 @@ def proceed(args: argparse.Namespace):
     )
 
     trainer.fit(experiment, datamodule=data_module)
-    # torch.save(model, "result_model.pth")
-    # print("Model saved.")
+
+    model_dir = f"models"
+    if not os.path.exists(model_dir):
+        os.makedirs(model_dir)
+    torch.save(experiment.model, f"{model_dir}/{args.architecture}_{args.dataset}.pth") # TODO make this more specific
+    print("Model saved.")
     return
 
 
@@ -343,7 +348,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--use_character_encoding",
         type=bool,
-        default=True,
+        default=False,
         help="Use character-level encoding instead of the tokenizer.",
     )
 
