@@ -10,6 +10,7 @@ from transformer_arch.DIFF import DiffTransformer
 from transformer_arch.DINT import DintTransformer
 
 # TODO modify after syncing changes
+# TODO rewrite to work with current code
 
 
 class ShakespeareDataModule_inference(pl.LightningDataModule):
