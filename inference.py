@@ -11,27 +11,27 @@ from transformer_arch.DINT import DintTransformer
 
 import tiktoken
 from typing import List
+import re
+from torch.utils.data import Dataset
 
-# TODO modify after syncing changes
-# TODO rewrite to work with current code
 
-
-class ShakespeareDataModule_inference(pl.LightningDataModule):
+class WikitextDataset_inference(Dataset):
     def __init__(
         self,
         text_file: str,
         seq_len: int,
         preload: bool = True,
         encoding_name: str = "cl100k_base",  # Default to GPT-4 tokenizer
-        use_character_encoding: bool = True,  # Default to character encoding
+        use_character_encoding: bool = False,
     ):
         """
         Args:
-            text_file: Path to the text file.
+            text_file: Path to the wikitext file.
             seq_len: Length of the input sequences.
-            preload: Whether to load entire file into memory
-            encoding_name: Tiktoken encoding name (e.g. "cl100k_base", "p50k_base").
-            use_character_encoding: Whether to use character encoding.
+            preload: Whether to load the entire file into memory.
+            encoding_name: Name of the tiktoken encoding to use (e.g., "cl100k_base", "p50k_base", "r50k_base").
+                           See https://github.com/openai/tiktoken for a list.
+            use_character_encoding: Use character-level encoding instead of the tokenizer.
         """
         self.seq_len = seq_len
         self.preload = preload
@@ -44,13 +44,13 @@ class ShakespeareDataModule_inference(pl.LightningDataModule):
             except KeyError:
                 print(f"Encoding '{encoding_name}' not found.  Falling back to 'cl100k_base'.")
                 self.tokenizer = tiktoken.get_encoding("cl100k_base")
-            self.vocab_size = self.tokenizer.n_vocab  # Get vocab size
-            self.pad_id = 0  # Use 0 for padding.  Verify this is appropriate for your encoding!
+            self.vocab_size = self.tokenizer.n_vocab  # Get vocab size directly
+            #Tiktoken does not have pad, bos, or eos tokens.
+            self.pad_id = 0  # Use 0 as a default padding token (ensure it's in your vocab)
 
         if preload:
-            with open(text_file, "r", encoding="utf-8") as f: # Added encoding
-                self.text = f.read()
-
+            with open(text_file, "r", encoding="utf-8") as f:
+                self.text = self.clean_wikitext(f.read())
             if use_character_encoding:
                 self.chars = sorted(list(set(self.text)))
                 self.char_to_idx = {ch: i for i, ch in enumerate(self.chars)}
@@ -59,42 +59,69 @@ class ShakespeareDataModule_inference(pl.LightningDataModule):
             else:
                 self.encoded_text = self.tokenizer.encode(self.text)
 
-        else: # No preload
+        else:  # not preload
             self.text_file = text_file
             if use_character_encoding:
                 self.chars = set()
                 self.char_to_idx = {}
                 self.idx_to_char = {}
                 self._build_vocab()
-                self.encoded_text = None # Not loaded yet
+                self.encoded_text = None
             else:
-                self.encoded_text = None #Not loaded yet
+                self.encoded_text = None
 
     def _build_vocab(self):
-      """Builds character vocab (for no preload, character encoding)."""
-      temp_chars = set()
-      with open(self.text_file, 'r', encoding="utf-8") as f:
-          for chunk in iter(lambda: f.read(1024*1024), ''):
-              temp_chars.update(chunk)
-          self.chars = sorted(list(temp_chars))
-          self.char_to_idx = {ch:i for i, ch in enumerate(self.chars)}
-          self.idx_to_char = {i:ch for i, ch in enumerate(self.chars)}
+        """Builds vocab for char encoding (no preload)."""
+        temp_chars = set()
+        with open(self.text_file, "r", encoding="utf-8") as f:
+            for chunk in iter(lambda: f.read(1024 * 1024), ""):
+                cleaned_chunk = self.clean_wikitext(chunk)
+                temp_chars.update(cleaned_chunk)
+        self.chars = sorted(list(temp_chars))
+        self.char_to_idx = {ch: i for i, ch in enumerate(self.chars)}
+        self.idx_to_char = {i: ch for i, ch in enumerate(self.chars)}
+
+    def clean_wikitext(self, text: str) -> str:
+        """Cleans wikitext."""
+        # Remove lines starting with = (headers) and empty lines
+        text = re.sub(r"^=.+?=$\n?", "", text, flags=re.MULTILINE)  # Corrected regex
+        text = re.sub(r"^\s*$", "", text, flags=re.MULTILINE)  # Corrected regex
+
+        # Remove HTML comments
+        text = re.sub(r"", "", text, flags=re.DOTALL)
+
+        # Remove or simplify other common Wikitext elements
+        text = re.sub(r"\[\[File:.*?\]\]", "", text)  # Remove file links
+        text = re.sub(r"\[\[Image:.*?\]\]", "", text)  # Remove image links
+        text = re.sub(r"&ndash;", "-", text)  # Replace en-dash
+        text = re.sub(r"&mdash;", "--", text)  # Replace em-dash
+        text = re.sub(r"&nbsp;", " ", text)  # Replace non breaking spaces
+
+        # Basic handling of links (keeping the text, removing the link)
+        text = re.sub(r"\[\[(.*?)\|(.*?)\]\]", r"\2", text)  # [[link|text]] -> text
+        text = re.sub(r"\[\[(.*?)\]\]", r"\1", text)  # [[link]] -> link
+
+        # Remove remaining brackets
+        text = re.sub(r"[\[\]]", "", text)
+        return text.strip()
+
     def __len__(self):
         if self.preload:
-          return len(self.encoded_text) - self.seq_len
+            return len(self.encoded_text) - self.seq_len
         else:
             if self.use_character_encoding:
-              approx_len = 0
-              with open(self.text_file, 'r', encoding="utf-8") as f:
-                  for chunk in iter(lambda: f.read(1024*1024), ''):
-                      approx_len += len(chunk)
-              return approx_len - self.seq_len
+                approx_len = 0
+                with open(self.text_file, "r", encoding="utf-8") as f:
+                    for _ in iter(lambda: f.read(1024*1024), ''):
+                        approx_len+= len(self.clean_wikitext(_))
+                return approx_len - self.seq_len
             else:
-              approx_len = 0
-              with open(self.text_file, "r", encoding="utf-8") as f:
-                for chunk in iter(lambda: f.read(1024 * 1024), ""):
-                    approx_len += len(self.tokenizer.encode(chunk))
-              return approx_len - self.seq_len
+                approx_len = 0
+                with open(self.text_file, "r", encoding="utf-8") as f:
+                    for chunk in iter(lambda: f.read(1024 * 1024), ""):
+                        approx_len += len(self.tokenizer.encode(self.clean_wikitext(chunk)))
+                return approx_len - self.seq_len
+
 
     def __getitem__(self, idx):
         if self.preload:
@@ -104,61 +131,61 @@ class ShakespeareDataModule_inference(pl.LightningDataModule):
             else:
                 input_sequence = self.encoded_text[idx : idx + self.seq_len]
                 target_sequence = self.encoded_text[idx + 1 : idx + self.seq_len + 1]
-
             return torch.tensor(input_sequence, dtype=torch.long), torch.tensor(target_sequence, dtype=torch.long)
 
-        else: # No preload
+        else:  # No preload
             if self.use_character_encoding:
                 input_sequence = []
                 target_sequence = []
                 with open(self.text_file, "r", encoding="utf-8") as f:
-                    f.seek(0)  # IMPORTANT: Reset file pointer
+                    f.seek(0)
                     current_pos = 0
-                    chunk_size = self.seq_len * 10  # Read larger chunks
+                    chunk_size = self.seq_len * 10
 
                     while current_pos <= idx:
                         chunk = f.read(chunk_size)
                         if not chunk:
-                            break  # End of file
+                            break
+                        cleaned_chunk = self.clean_wikitext(chunk)
                         start_index = max(0, idx - current_pos)
 
-                        if len(chunk) > start_index:
-                            encoded_chunk = [self.char_to_idx.get(ch, 0) for ch in chunk[start_index:]] #Handle missing chars
-                            needed = self.seq_len + 1 #+1 for the target sequence
+                        if len(cleaned_chunk) > start_index:
+                            encoded_chunk = [self.char_to_idx.get(ch, 0) for ch in cleaned_chunk[start_index:]]
+                            needed = self.seq_len+1
                             if len(input_sequence) < needed:
                                 input_sequence.extend(encoded_chunk)
                         current_pos += len(chunk)
 
                 input_sequence = input_sequence[:self.seq_len]
-                target_sequence = input_sequence[1 : self.seq_len+1] #Offset by one
+                target_sequence = input_sequence[1:self.seq_len + 1]
                 padding_needed = self.seq_len - len(input_sequence)
 
                 if padding_needed > 0:
-                  input_sequence.extend([0] * padding_needed) # Pad
-                  target_sequence.extend([0] * padding_needed) # Pad
-                return torch.tensor(input_sequence,dtype=torch.long), torch.tensor(target_sequence,dtype=torch.long)
+                    input_sequence.extend([0] * padding_needed)
+                    target_sequence.extend([0] * padding_needed)
+                return torch.tensor(input_sequence, dtype=torch.long), torch.tensor(target_sequence, dtype=torch.long)
 
-            else:  # tiktoken, no preload.  Very similar to Wikitext.
+            else: #Tiktoken, no preload
                 input_ids = []
                 target_ids = []
-
                 with open(self.text_file, "r", encoding="utf-8") as f:
-                    f.seek(0)  # Start from the beginning
+                    f.seek(0)
                     file_text = ""
                     for chunk in iter(lambda: f.read(1024 * 1024), ""):
-                        file_text += chunk # No cleaning needed here
+                        file_text += self.clean_wikitext(chunk)
                         all_tokens = self.tokenizer.encode(file_text)
-
                         if len(all_tokens) > idx + self.seq_len:
                             input_ids = all_tokens[idx : idx + self.seq_len]
-                            target_ids = all_tokens[idx + 1 : idx + self.seq_len + 1]
+                            target_ids = all_tokens[idx+1 : idx + self.seq_len + 1]
                             break
 
                 padding_needed = self.seq_len - len(input_ids)
                 if padding_needed > 0:
                     input_ids.extend([self.pad_id] * padding_needed)
                     target_ids.extend([self.pad_id] * padding_needed)
+
                 return torch.tensor(input_ids, dtype=torch.long), torch.tensor(target_ids, dtype=torch.long)
+
 
     def get_vocab_size(self):
         if self.use_character_encoding:
@@ -168,15 +195,17 @@ class ShakespeareDataModule_inference(pl.LightningDataModule):
 
     def decode(self, token_ids: List[int]) -> str:
         if self.use_character_encoding:
-            return "".join([self.idx_to_char.get(i, "") for i in token_ids])  # Handle potential missing
+            return "".join([self.idx_to_char.get(i, "") for i in token_ids])
         else:
             return self.tokenizer.decode(token_ids)
 
     def encode(self, text_string: str) -> List[int]:
         if self.use_character_encoding:
-            return [self.char_to_idx.get(ch, 0) for ch in text_string]  # Handle missing chars
+            return [self.char_to_idx.get(ch, 0) for ch in text_string]
         else:
             return self.tokenizer.encode(text_string)
+
+
 
 class TransformerExperiment(pl.LightningModule):
     #  Dummy version, just needs to exist
@@ -193,7 +222,7 @@ def load_model(model_path, architecture, d_model, nhead, num_layers, dropout, vo
     elif architecture == "LLaMa":
         model = LLaMa(d_model, nhead, num_layers, d_model * d_ff_mult, dropout, vocab_size, seq_len, groups)
     elif architecture == "nGPT":
-        model = nGPT(d_model, nhead, num_layers, dropout, vocab_size, seq_len)
+        model = nGPT(d_model, nhead, num_layers, d_model * d_ff_mult, dropout, vocab_size, seq_len)
     elif architecture == "DIFF":
         model = DiffTransformer(d_model, nhead, num_layers, d_model * d_ff_mult, dropout, vocab_size, seq_len, groups)
     elif architecture == "DINT":
@@ -202,7 +231,7 @@ def load_model(model_path, architecture, d_model, nhead, num_layers, dropout, vo
         raise ValueError(f"Unsupported architecture: {architecture}")
 
     # Load the state dict
-    model.load_state_dict(torch.load(model_path, map_location=torch.device('cpu')))  # Load to CPU; add .to('cuda') if needed
+    model.load_state_dict(torch.load(model_path, map_location=torch.device('cpu'), weights_only=False).state_dict())  # Load to CPU; add .to('cuda') if needed
     model.eval()  # Set to evaluation mode
     return model
 
@@ -211,7 +240,7 @@ def load_model(model_path, architecture, d_model, nhead, num_layers, dropout, vo
 
 def prepare_input(text, data_module):
   """Converts text to a model-ready tensor."""
-  tensor = data_module.encode(text)
+  tensor = torch.tensor(data_module.encode(text)).to('cuda' if torch.cuda.is_available() else 'cpu')
   # Add batch dimension (batch_size=1)
   tensor = tensor.unsqueeze(0)
   return tensor
@@ -234,7 +263,7 @@ def generate_text(model, data_module, start_text, max_length=200, temperature=1.
             # Sample from the probabilities
             next_token_id = torch.multinomial(probabilities, num_samples=1).item()
             # Convert the token ID back to text
-            next_token = data_module.decode(torch.tensor([next_token_id]))
+            next_token = data_module.decode([next_token_id])
             generated_text += next_token
 
             if len(generated_text) >= data_module.seq_len:
@@ -249,7 +278,6 @@ def main(args):
     model_path = args.model_path
     start_text = args.prompt
     max_length = args.max_length
-    architecture = args.architecture
     d_model = args.d_model
     nhead = args.nhead
     num_layers = args.num_layers
@@ -259,15 +287,16 @@ def main(args):
     groups = args.groups
     temperature = args.temperature
 
+    architecture = model_path.split("/")[1].split("_")[0]
+
     # Create a dummy data module to get the vocab
-    data_module = ShakespeareDataModule_inference(
+    data_module = WikitextDataset_inference(
         text_file="shakespeare.txt",
         use_character_encoding=False,
         seq_len=seq_len,  # Use the sequence length from your model
         preload=False,
         encoding_name="r50k_base",
     )
-    data_module.setup() #Very important, creates vocab
     vocab_size = data_module.get_vocab_size()
 
     # Load the model
@@ -276,25 +305,25 @@ def main(args):
     # Check for CUDA availability and move model to GPU if available
     if torch.cuda.is_available():
         model = model.to('cuda')
-        print("Model moved to CUDA.")
+        # print("Model moved to CUDA.")
 
     # Generate text
     generated_text = generate_text(model, data_module, start_text, max_length, temperature)
     print(generated_text)
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Inference script for Transformer model.")
-    parser.add_argument("--model_path", type=str, required=True, help="Path to the saved .pth model file.")
-    parser.add_argument("--prompt", type=str, default="The ", help="Starting text for generation.")
+    parser.add_argument("--model_path", type=str, help="Path to the saved .pth model file.", default="models/nGPT_wikitext2.pth")
+    parser.add_argument("--prompt", type=str, default="The sharks ate", help="Starting text for generation.")
     parser.add_argument("--max_length", type=int, default=200, help="Maximum length of generated text.")
     # parser.add_argument("--architecture", type=str, required=True, help="Model architecture (Classic, LLaMa, nGPT, Diff, Dint).")
-    parser.add_argument("--d_model", type=int, required=True, help="Embedding dimension.")
-    parser.add_argument("--nhead", type=int, required=True, help="Number of attention heads.")
-    parser.add_argument("--num_layers", type=int, required=True, help="Number of layers.")
-    parser.add_argument("--dropout", type=float, required=True, help="Dropout probability.")
-    parser.add_argument("--seq_len", type=int, required=True, help="Sequence length.")
+    parser.add_argument("--d_model", type=int, help="Embedding dimension.", default=512)
+    parser.add_argument("--nhead", type=int, help="Number of attention heads.", default=8)
+    parser.add_argument("--num_layers", type=int, help="Number of layers.", default=6)
+    parser.add_argument("--dropout", type=float, help="Dropout probability.", default=0.1)
+    parser.add_argument("--seq_len", type=int, help="Sequence length.", default=128)
     parser.add_argument("--d_ff_mult", type=int, default=4, help="Multiplier for d_ff (if applicable).")
-    parser.add_argument("--groups", type=int, default=4, help="Number of groups for GQA (if applicable).")
-    parser.add_argument("--temperature", type=float, default=1.0, help="Temperature for sampling.")
+    parser.add_argument("--groups", type=int, default=8, help="Number of groups for GQA (if applicable).")
+    parser.add_argument("--temperature", type=float, default=1.2, help="Temperature for sampling.")
 
 
     args = parser.parse_args()
