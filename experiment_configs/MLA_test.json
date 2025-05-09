@@ -1,0 +1,23 @@
+{
+    "architecture": "MLA",
+    "d_model": 128,
+    "nhead": 4,
+    "dropout": 0.1,
+    "num_layers": 3,
+    "d_ff": 512,
+    "lr": 2e-4,
+    "warmup_steps": 5000,
+    "t_0": 45000,
+    "t_mult": 1.5,
+    "lr_mult": 0.5,
+    "seq_len": 128,
+    "batch_size": 8,
+    "t_total": 15000,
+    "custom_cross_entropy": false,
+    "type": "test",
+    "use_character_encoding":true,
+    "extra_descriptor":"",
+    "orthograd":true,
+    "dataset":"tiny_shakespeare",
+    "qk_rope_dim": 16
+}
