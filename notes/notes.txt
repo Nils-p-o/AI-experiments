@@ -1,3 +1,8 @@
+MLA
+apparently grants a speed up based on compression ratio (but attention isnt that costly at my levels of seq len)
+do not know yet how well it compares
+need to run it on wikitext for baseline
+
 orthograd
 seems to have no negative or positive effect - gonna keep it just in case
 (choise of loss fn also seems insignificant)
@@ -22,7 +27,11 @@ but will see how it does on more complex tasks
 seemingly becomes invariant to when it starts converging in train acc
 
 
-General note:
+General notes:
 it seems that all models except DINT containing ones perform better on validation when
 the dataset is more complex. (could be that DINT removes noise from attn which usually promotes memorization/overfitting)
 
+TODO
+need to rewrite most of the code to work by passing args namespace
+DINT + nGPT + MLA??? (could be lit) (gotta remember to check which parts would need to be cos normed though)
+try hand at predicting markets (trading view for data?)
