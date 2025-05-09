@@ -8,7 +8,6 @@ from .components import (
     get_causal_mask,
 )
 
-# TODO check if bias in linear layers matters/is worth it
 # TODO efficient inference?? (probably not)
 
 
@@ -304,10 +303,12 @@ class MLA(nn.Module): # done right and "optimised" TODO missing norms for q and 
         self.kv_up = nn.Linear(self.kv_compression_dim, self.head_dim * self.nhead * 2)
         self.q_up = nn.Linear(self.q_compression_dim, (self.head_dim + self.rope_dim) * self.nhead)
 
-
         self.o = nn.Linear(self.d_model, self.d_model)
         self.dropout = nn.Dropout(args.dropout)
         self.rotary_emb = RoPE(self.rope_dim)
+
+        self.kv_norm = nn.RMSNorm(self.kv_compression_dim)
+        self.q_norm = nn.RMSNorm(self.q_compression_dim)
 
 
     def forward(self, x, mask=None):
@@ -316,17 +317,16 @@ class MLA(nn.Module): # done right and "optimised" TODO missing norms for q and 
         # --- Q, K, V Projections ---
         c_kv = self.kv_down(x)
         c_kv, k_rope = c_kv.split([self.kv_compression_dim, self.rope_dim], dim=-1)
-        c_q = self.q_down(x)
 
         kv = (
-            self.kv_up(c_kv)
+            self.kv_up(self.kv_norm(c_kv))
             .view(batch_size, seq_len, self.nhead, self.head_dim * 2)
             .transpose(1, 2)
         )
         k, v = kv.split([self.head_dim, self.head_dim], dim=-1)
 
         q = (
-            self.q_up(c_q)
+            self.q_up(self.q_norm(self.q_down(x)))
             .view(batch_size, seq_len, self.nhead, (self.head_dim + self.rope_dim))
             .transpose(1, 2)
         )

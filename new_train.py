@@ -1,6 +1,6 @@
 # dataleakage, ignore all results pre ~nGPT architecture, as this is when i found out
 # TODO implement flashattention (doesn't work, compile fails)
-
+# TODO better RoPE (not very efficient rn, maybe)
 
 # TODO add weight sharing for embeddings, holy moly 100M parameters just for embeddings!!!!
 # TODO make encoding an argument
