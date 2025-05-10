@@ -1,6 +1,6 @@
-# dataleakage, ignore all results pre ~nGPT architecture, as this is when i found out
 # TODO implement flashattention (doesn't work, compile fails)
 # TODO better RoPE (not very efficient rn, maybe)
+# TODO reformat architectures to take in args + dtype (+ fix RoPE and redo baselines, ig?)
 
 # TODO add weight sharing for embeddings, holy moly 100M parameters just for embeddings!!!!
 # TODO make encoding an argument
@@ -80,8 +80,23 @@ def proceed(args: argparse.Namespace):
     # seed = args.seed
     extra_descriptor = args.extra_descriptor
 
-    # pl.seed_everything(seed)
+    match args.dtype: # TODO add fp8 and other precissions
+        case "fp32":
+            torch_dtype_for_params = torch.float32
+            trainer_precision = "32-true"
+        case "fp16":
+            torch_dtype_for_params = torch.float16
+            trainer_precision = "16-mixed"
+        case "bf16":
+            torch_dtype_for_params = torch.bfloat16
+            trainer_precision = "bf16-mixed"
+        case _:
+            # logger.error("dtype must be fp32, fp16, or bf16, defaulting to fp32")
+            args.dtype = "fp32"
+            torch_dtype_for_params = torch.float32
+            trainer_precision = "32-true"
 
+    # pl.seed_everything(seed)
     print(
         f"type: {type} {architecture}_transformer seq_len:{seq_len} d_model:{d_model} d_ff_mult:{d_ff} num_layers:{num_layers} nhead:{nhead} dropout:{dropout} lr:{lr} t_total:{t_total} warmup_steps:{warmup_steps} t_0:{t_0} t_mult:{t_mult} lr_mult:{lr_mult} batch_size:{batch_size} cce_fn:{cce_fn}"
     )
@@ -197,17 +212,26 @@ def proceed(args: argparse.Namespace):
         case "MLA":
             model = LLaMa_MLA(
                 args=args,
-                vocab_size=vocab_size
+                vocab_size=vocab_size,
+                dtype=torch_dtype_for_params
             )
         case _:
             raise ValueError(f"Architecture {architecture} not supported")
     # Print parameter count:
     num_params = count_parameters(model)
-    print(f"The model has {num_params:,} trainable parameters.")
+    print(f"The model has {num_params:,} trainable parameters. Parameter dtype: {torch_dtype_for_params}")
 
     # --- Training Setup ---
     if model.__class__.__name__ == "nGPT" or model.__class__.__name__ == "DINT_nGPT":
         normalize_weights_and_enforce_positive_eigenvalues(model)
+
+    match args.dtype:
+        case torch.float32:
+            args.dtype = "fp32"
+        case torch.float16:
+            args.dtype = "fp16"
+        case torch.bfloat16:
+            args.dtype = "bf16"
 
     experiment = TransformerExperiment(
         model,
@@ -220,12 +244,13 @@ def proceed(args: argparse.Namespace):
         lr_mult=lr_mult,
         cce_fn=cce_fn,
         args=args,
+        # dtype=torch_dtype_for_params
     )  # Use vocab_size
 
     # Checkpointing
     checkpoint_callback = ModelCheckpoint(
         dirpath="checkpoints/",
-        filename="{epoch}-{val_loss:.2f}-{val_perplexity:.2f}",
+        filename="{name}-{epoch}-{val_loss:.2f}-{val_perplexity:.2f}",
         save_top_k=3,
         monitor="val_loss",
         mode="min",
@@ -246,6 +271,7 @@ def proceed(args: argparse.Namespace):
         logger=logger,
         log_every_n_steps=30,
         val_check_interval=500,
+        precision=trainer_precision
     )
 
     trainer.fit(experiment, datamodule=data_module)
@@ -289,7 +315,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Train a Transformer model.")
 
     parser.add_argument(
-        "--config", type=str, default="", help="Path to config file."
+        "--config", type=str, default="./experiment_configs/MLA_test.json", help="Path to config file."
     )
     if parser.parse_known_args()[0].config != "":
         with open(parser.parse_known_args()[0].config, "r") as f:

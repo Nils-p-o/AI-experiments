@@ -16,8 +16,9 @@
     "custom_cross_entropy": false,
     "type": "test",
     "use_character_encoding":true,
-    "extra_descriptor":"",
+    "extra_descriptor":"fp16",
     "orthograd":true,
     "dataset":"tiny_shakespeare",
+    "dtype":"fp16",
     "qk_rope_dim": 16
 }
