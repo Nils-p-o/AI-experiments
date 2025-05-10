@@ -3,13 +3,9 @@ import torch.nn as nn
 import math
 import torch.nn.functional as F
 from .components import (
-    input_embedding,
     mha,
     get_causal_mask,
 )
-
-# TODO rewrite input embedding and get causal mask (may be slightly faster)
-# there is no need for the abstraction with input_embedding
 
 # TODO efficient inference?? (probably not)
 
@@ -29,17 +25,19 @@ class LLaMa_MLA(nn.Module):
         self.layers = nn.ModuleList(
             [LLaMa_MLA_block(args) for _ in range(self.num_layers)]
         )
-        self.input_embedding = input_embedding(
-            self.d_model, vocab_size
-        )
+        self.input = nn.Embedding(vocab_size, self.d_model) # input embedding
         self.norm = nn.RMSNorm(self.d_model)
         self.out = nn.Linear(self.d_model, vocab_size)
 
+        self.register_buffer("freqs_cis", precompute_freqs_cis(args), persistent=False)
+
     def forward(self, x):
-        x = self.input_embedding(x)  # (batch_size, seq_len, d_model)
+        x = self.input(x) / math.sqrt(self.d_model)  # (batch_size, seq_len, d_model)
         x = self.dropout(x)
+        seq_len = x.size(1)
+        freqs_cis = self.freqs_cis[0:0+seq_len]
         for layer in self.layers:
-            x = layer(x)
+            x = layer(x, freqs_cis)
         x = self.norm(x)  # (batch_size, seq_len, d_model)
         x = self.out(x)
         return x  # (batch_size, seq_len, vocab_size) logits
@@ -54,144 +52,70 @@ class LLaMa_MLA_block(nn.Module):
         self.norm2 = nn.RMSNorm(args.d_model)
         self.ff = SwiGLU_feed_forward(args)
 
-    def forward(self, x):
+    def forward(self, x, freqs_cis):
         batch_size, seq_len, _ = x.size()
         mask = get_causal_mask(seq_len)
         mask = mask.repeat(batch_size, self.nhead, 1, 1)
-        x = x + self.mha(self.norm1(x), mask)  # (batch_size, seq_len, d_model)
+        x = x + self.mha(self.norm1(x), mask, freqs_cis)  # (batch_size, seq_len, d_model)
         x = x + self.ff(self.norm2(x))
         return x
 
 
-class RoPE(nn.Module):
-    def __init__(self, d: int, base: int = 10_000):
-        super().__init__()
-        self.base = base
-        self.d = d
-        self.cos_cached = None
-        self.sin_cached = None
 
-    def _build_cache(self, seq_len: int, x_device: torch.device):
+def precompute_freqs_cis(args) -> torch.Tensor:
+    # original values in deepseek V3 inference (https://github.com/deepseek-ai/DeepSeek-V3/blob/main/inference/model.py#L766)
+    # seq_len: int = 4096
+    # rope_theta: float = 10000.0
+    # rope_factor: float = 40
+    # beta_fast: int = 32
+    # beta_slow: int = 1
+    # mscale: float = 1.
 
-        if self.cos_cached is not None and seq_len <= self.cos_cached.shape[0]:
-            return
+    dim = args.qk_rope_dim
+    max_seqlen = args.seq_len * 4 # might need to look at this, currently just the same as V3 so hopefully works fine
+    beta_fast = 32
+    beta_slow = 1
+    base = 10000.0
+    factor = 40
 
-        theta = 1.0 / (
-            self.base
-            ** (
-                torch.arange(0, self.d, 2, device=x_device)
-                / self.d
-            )
-        )  # THETA = 10,000^(-2*i/d) or 1/10,000^(2i/d)
+    def find_correction_dim(num_rotations, dim, base, max_seq_len):
+        return dim * math.log(max_seq_len / (num_rotations * 2 * math.pi)) / (2 * math.log(base))
 
-        seq_idx = torch.arange(
-            seq_len, device=x_device
-        )  # Position Index -> [0,1,2...seq-1]
+    def find_correction_range(low_rot, high_rot, dim, base, max_seq_len):
+        low = math.floor(find_correction_dim(low_rot, dim, base, max_seq_len))
+        high = math.ceil(find_correction_dim(high_rot, dim, base, max_seq_len))
+        return max(low, 0), min(high, dim-1)
 
-        idx_theta = torch.einsum(
-            "n,d->nd", seq_idx, theta
-        )  # Calculates m*(THETA) = [ [0, 0...], [THETA_1, THETA_2...THETA_d/2], ... [seq-1*(THETA_1), seq-1*(THETA_2)...] ]
+    def linear_ramp_factor(min, max, dim):
+        if min == max:
+            max += 0.001
+        linear_func = (torch.arange(dim, dtype=torch.float32) - min) / (max - min)
+        ramp_func = torch.clamp(linear_func, 0, 1)
+        return ramp_func
 
-        idx_theta2 = torch.cat(
-            [idx_theta, idx_theta], dim=1
-        )  # [THETA_1, THETA_2...THETA_d/2] -> [THETA_1, THETA_2...THETA_d]
+    freqs = 1.0 / (base ** (torch.arange(0, dim, 2, dtype=torch.float32) / dim))
+    if max_seqlen > args.seq_len:
+        low, high = find_correction_range(beta_fast, beta_slow, dim, base, args.seq_len)
+        smooth = 1 - linear_ramp_factor(low, high, dim // 2)
+        freqs = freqs / factor * (1 - smooth) + freqs * smooth
 
-        self.cos_cached = idx_theta2.cos()[
-            :, None, None, :
-        ].float()  # Cache [cosTHETA_1, cosTHETA_2...cosTHETA_d]
-        self.sin_cached = idx_theta2.sin()[
-            :, None, None, :
-        ].float()  # cache [sinTHETA_1, sinTHETA_2...sinTHETA_d]
-
-    def _neg_half(self, x: torch.Tensor):
-
-        d_2 = self.d // 2  #
-
-        return torch.cat(
-            [-x[:, :, :, d_2:], x[:, :, :, :d_2]], dim=-1
-        )  # [x_1, x_2,...x_d] -> [-x_d/2, ... -x_d, x_1, ... x_d/2]
-
-    def forward(self, x: torch.Tensor):
-
-        seq_len = x.shape[2]
-
-        self._build_cache(seq_len, x.device)
-
-        neg_half_x = self._neg_half(x)
-
-        cos_ = self.cos_cached[: seq_len].view(1,1,seq_len,-1)
-        sin_ = self.sin_cached[: seq_len].view(1,1,seq_len,-1)
-
-        x_rope = (x * cos_) + (neg_half_x * sin_)  # [x_1*cosTHETA_1 - x_d/2*sinTHETA_d/2, ....]
-
-        return x_rope
+    t = torch.arange(max_seqlen)
+    freqs = torch.outer(t, freqs)
+    freqs_cis = torch.polar(torch.ones_like(freqs), freqs)
+    return freqs_cis
 
 
-class GQA(nn.Module):
-    def __init__(self, d_model, nhead, groups=4, dropout=0.1):
-        super().__init__()
-        self.d_model = d_model
-        self.nhead = nhead
-        self.groups = groups
-        self.head_dim = d_model // nhead
-        assert self.head_dim * nhead == d_model
-        assert (
-            nhead % groups == 0
-        ), "Number of heads must be divisible by number of groups"
-        self.heads_per_group = nhead // groups
-
-        # Separate Q projections for each head
-        self.q_linear = nn.Linear(d_model, d_model)
-        # Shared K and V projections for each group
-        self.k_linear = nn.Linear(d_model, self.head_dim * self.groups)
-        self.v_linear = nn.Linear(d_model, self.head_dim * self.groups)
-
-        self.o = nn.Linear(d_model, d_model)
-        self.dropout = nn.Dropout(dropout)
-        self.rotary_emb = RoPE(self.head_dim)
-
-    def forward(self, x, mask=None):
-        batch_size, seq_len, _ = x.shape
-
-        # --- Q, K, V Projections ---
-        q = (
-            self.q_linear(x)
-            .view(batch_size, seq_len, self.nhead, self.head_dim)
-            .transpose(1, 2)
-        )
-        k = (
-            self.k_linear(x)
-            .view(batch_size, seq_len, self.groups, self.head_dim)
-            .transpose(1, 2)
-        )
-        v = (
-            self.v_linear(x)
-            .view(batch_size, seq_len, self.groups, self.head_dim)
-            .transpose(1, 2)
-        )
-
-        # --- RoPE ---
-        q = self.rotary_emb(q)
-        k = self.rotary_emb(k)
-
-        attn_output = F.scaled_dot_product_attention(
-            q, k, v, is_causal=True, dropout_p=0.1, enable_gqa=True
-        )
-
-        # --- Concatenate and Output Projection ---
-        attn_output = (
-            attn_output.transpose(1, 2)
-            .contiguous()
-            .view(batch_size, seq_len, self.d_model)
-        )
-        output = self.dropout(self.o(attn_output))
-
-        return output
+def apply_rotary_emb(x: torch.Tensor, freqs_cis: torch.Tensor) -> torch.Tensor:
+    dtype = x.dtype
+    x = torch.view_as_complex(x.float().view(*x.shape[:-1], -1, 2))
+    freqs_cis = freqs_cis.view(1, x.size(1), 1, x.size(-1))
+    y = torch.view_as_real(x * freqs_cis).flatten(3)
+    return y.to(dtype)
 
 
 class MLA_simple(
     nn.Module
-):  # TODO make optimised version with "absorbed" weights + qkv norm
+):
     def __init__(self, args):
         super().__init__()
         self.d_model = args.d_model
@@ -201,13 +125,11 @@ class MLA_simple(
 
         self.kv_compression_dim = (
             self.d_model // 4
-        )  # TODO check how much this matters, should be a hyperparameter (roughly what R1 has)
-        # probably stops mattering after some point
+        )
         self.q_compression_dim = (
-            self.kv_compression_dim * 2
-        )  # TODO check how much this matters, should be a hyperparameter (roughly what R1 has)
+            self.kv_compression_dim * 2)
 
-        self.rope_dim = args.qk_rope_dim  # TODO (i really have no clue my guy)
+        self.rope_dim = args.qk_rope_dim  
 
         # MLA part
         self.kv_down = nn.Linear(self.d_model, self.kv_compression_dim)
@@ -291,7 +213,7 @@ class MLA_simple(
         return output
 
 
-class MLA(nn.Module):  # done right and "optimised" TODO missing norms for q and k
+class MLA(nn.Module):
     def __init__(self, args):
         super().__init__()
         self.d_model = args.d_model
@@ -320,12 +242,12 @@ class MLA(nn.Module):  # done right and "optimised" TODO missing norms for q and
 
         self.o = nn.Linear(self.d_model, self.d_model)
         self.dropout = nn.Dropout(args.dropout)
-        self.rotary_emb = RoPE(self.rope_dim)
+        # self.rotary_emb = RoPE(self.rope_dim)
 
         self.kv_norm = nn.RMSNorm(self.kv_compression_dim)
         self.q_norm = nn.RMSNorm(self.q_compression_dim)
 
-    def forward(self, x, mask=None):
+    def forward(self, x, mask=None, freqs_cis=None):
         batch_size, seq_len, _ = x.shape
 
         # --- Q, K, V Projections ---
@@ -349,11 +271,10 @@ class MLA(nn.Module):  # done right and "optimised" TODO missing norms for q and
         k_rope = (
             k_rope.view(batch_size, seq_len, 1, self.rope_dim)
             .tile(1, 1, self.nhead, 1)
-            .transpose(1, 2)
         )
 
-        k_rope = self.rotary_emb(k_rope)
-        q_rope = self.rotary_emb(q_rope)
+        k_rope = apply_rotary_emb(k_rope, freqs_cis=freqs_cis).transpose(1,2)
+        q_rope = apply_rotary_emb(q_rope.transpose(1,2), freqs_cis=freqs_cis).transpose(1,2)
 
         k = torch.concat([k, k_rope], dim=-1)
         q = torch.concat([q, q_rope], dim=-1)
@@ -386,83 +307,35 @@ class MLA(nn.Module):  # done right and "optimised" TODO missing norms for q and
 class SwiGLU_feed_forward(nn.Module):
     def __init__(self, args):
         super().__init__()
-        # d_ff is now the "intermediate" dimension.  The SwiGLU layer
-        # will project to d_ff, and then the output projection will go back to d_model.
-        # self.swiglu = SwiGLU(d_model, d_ff)
         self.linear_in_gate = nn.Linear(args.d_model, args.d_ff * 2)
         self.linear_out = nn.Linear(args.d_ff, args.d_model)
         self.dropout = nn.Dropout(args.dropout)
         self.d_model = args.d_model
 
     def forward(self, x):
-        # x = self.swiglu(x) #
-
         u, v = self.linear_in_gate(x).chunk(
             2, dim=-1
-        )  # * self.d_model ** 0.5)  # Apply SwiGLU with scaling
-        x = u * F.silu(v)
+        )   
+        x = u * F.silu(v)# * self.d_model ** 0.5) # Apply SwiGLU with scaling (not worth it)
         x = self.linear_out(x)
         x = self.dropout(x)  # Apply dropout *after* the output projection
         return x
 
+# class Latent_SwiGLU_feed_forward(nn.Module):
+#     def __init__(self, args):
+#         super().__init__()
+#         self.linear_in_gate_down = nn.Linear(args.d_model, args.ff_compression_dim * 2)
+#         self.linear_in_gate_up = nn.Linear(args.ff_compression_dim * 2, args.d_ff * 2)
+#         self.linear_out_down = nn.Linear(args.d_ff, args.ff_compression_dim)
+#         self.linear_out_up = nn.Linear(args.ff_compression_dim, args.d_model)
+#         self.dropout = nn.Dropout(args.dropout)
+#         self.d_model = args.d_model
 
-class RoPE_mha(nn.Module):
-    def __init__(self, d_model, nhead, dropout=0.1):
-        super(mha, self).__init__()
-        self.d_model = d_model
-        self.nhead = nhead
-        self.head_dim = d_model // nhead
-        assert self.head_dim * nhead == d_model
-
-        self.q_linear = nn.Linear(d_model, d_model)
-        self.k_linear = nn.Linear(d_model, d_model)
-        self.v_linear = nn.Linear(d_model, d_model)
-
-        self.o = nn.Linear(d_model, d_model)
-        self.dropout = nn.Dropout(dropout)
-
-        self.rotary_emb = RoPE(self.head_dim)
-
-    def forward(self, x, mask=None):
-        batch_size, seq_len, _ = x.shape
-
-        # Project and split x into multiple heads
-        q = (
-            self.q_linear(x)
-            .view(batch_size, seq_len, self.nhead, self.head_dim)
-            .transpose(1, 2)
-        )
-        k = (
-            self.k_linear(x)
-            .view(batch_size, seq_len, self.nhead, self.head_dim)
-            .transpose(1, 2)
-        )
-        v = (
-            self.v_linear(x)
-            .view(batch_size, seq_len, self.nhead, self.head_dim)
-            .transpose(1, 2)
-        )  # (batch_size, nhead, seq_len, head_dim)
-
-        q = self.rotary_emb(q, seq_dim=-2)
-        k = self.rotary_emb(k, seq_dim=-2)
-
-        a = torch.matmul(q, k.transpose(-2, -1)) / math.sqrt(self.head_dim)
-
-        # Apply mask if provided
-        if mask is not None:
-            a = a.masked_fill(mask == 1, -1e9)
-
-        a = torch.softmax(a, dim=-1)
-        a = self.dropout(a)
-
-        # Apply attention to values
-        attn_output = torch.matmul(a, v)
-
-        # Concatenate heads and project
-        attn_output = (
-            attn_output.transpose(1, 2)
-            .contiguous()
-            .view(batch_size, seq_len, self.d_model)
-        )
-
-        return self.dropout(self.o(attn_output))
+#     def forward(self, x):
+#         u, v = self.linear_in_gate_up(self.linear_in_gate_down(x)).chunk(
+#             2, dim=-1
+#         )  # * self.d_model ** 0.5)  # Apply SwiGLU with scaling
+#         x = u * F.silu(v)
+#         x = self.linear_out_up(self.linear_out_down(x))
+#         x = self.dropout(x)  # Apply dropout *after* the output projection
+#         return x

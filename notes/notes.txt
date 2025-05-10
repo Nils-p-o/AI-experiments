@@ -30,12 +30,18 @@ seemingly becomes invariant to when it starts converging in train acc
 General notes:
 it seems that all models except DINT containing ones perform better on validation when
 the dataset is more complex. (could be that DINT removes noise from attn which usually promotes memorization/overfitting)
+at <10M params, fp32 is faster, or equivalent
 
 TODO
 need to rewrite most of the code to work by passing args namespace
 DINT + nGPT + MLA??? (could be lit) (gotta remember to check which parts would need to be cos normed though)
 try hand at predicting markets (trading view for data?)
 
+true fp16 training (basically ground up rewrite)
+flash attn 2 (fails compile)
+
+add code for comparing different modules speeds (two ways to write the same thing)
+check whether ff layer can have compression in the middle (similar to MLA?) could be a good speed up if yes 
 
 
 
@@ -43,3 +49,5 @@ try hand at predicting markets (trading view for data?)
 
 breaking causality ~till nGPT (used the future to predict the present)
 doing RoPE wrong ~till MLA (using wrong dim size to get seq len and multiply, basically was all just multiplied by the same rotation vec)
+
+was multiplying input embeddings by sqrt(d_model) instead of dividing them, fml
