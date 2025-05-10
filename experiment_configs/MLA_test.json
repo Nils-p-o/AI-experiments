@@ -1,10 +1,10 @@
 {
     "architecture": "MLA",
-    "d_model": 128,
-    "nhead": 4,
+    "d_model": 256,
+    "nhead": 8,
     "dropout": 0.1,
-    "num_layers": 3,
-    "d_ff": 512,
+    "num_layers": 5,
+    "d_ff": 1024,
     "lr": 2e-4,
     "warmup_steps": 5000,
     "t_0": 45000,
@@ -16,9 +16,12 @@
     "custom_cross_entropy": false,
     "type": "test",
     "use_character_encoding":true,
-    "extra_descriptor":"fp16",
+    "extra_descriptor":"bf16",
     "orthograd":true,
     "dataset":"tiny_shakespeare",
-    "dtype":"fp16",
-    "qk_rope_dim": 16
+    "dtype":"bf16",
+    "qk_rope_dim": 16,
+    "kv_compression_dim": 64,
+    "q_compression_dim": 128
+
 }

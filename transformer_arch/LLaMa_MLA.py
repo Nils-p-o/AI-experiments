@@ -15,9 +15,9 @@ from .components import (
 
 
 class LLaMa_MLA(nn.Module):
-    def __init__(self, args, vocab_size=10000, dtype=torch.float32):
+    def __init__(self, args, vocab_size=10000): #, dtype=torch.float32):
         super(LLaMa_MLA, self).__init__()
-        args.dtype = dtype
+        # args.dtype = dtype
         self.d_model = args.d_model
         self.nhead = args.nhead
         self.num_layers = args.num_layers
@@ -30,10 +30,10 @@ class LLaMa_MLA(nn.Module):
             [LLaMa_MLA_block(args) for _ in range(self.num_layers)]
         )
         self.input_embedding = input_embedding(
-            self.d_model, vocab_size, dtype=args.dtype
+            self.d_model, vocab_size
         )
-        self.norm = nn.RMSNorm(self.d_model, dtype=args.dtype)
-        self.out = nn.Linear(self.d_model, vocab_size, dtype=args.dtype)
+        self.norm = nn.RMSNorm(self.d_model)
+        self.out = nn.Linear(self.d_model, vocab_size)
 
     def forward(self, x):
         x = self.input_embedding(x)  # (batch_size, seq_len, d_model)
@@ -50,8 +50,8 @@ class LLaMa_MLA_block(nn.Module):
         super(LLaMa_MLA_block, self).__init__()
         self.nhead = args.nhead
         self.mha = MLA(args)
-        self.norm1 = nn.RMSNorm(args.d_model, dtype=args.dtype)
-        self.norm2 = nn.RMSNorm(args.d_model, dtype=args.dtype)
+        self.norm1 = nn.RMSNorm(args.d_model)
+        self.norm2 = nn.RMSNorm(args.d_model)
         self.ff = SwiGLU_feed_forward(args)
 
     def forward(self, x):
@@ -71,23 +71,21 @@ class RoPE(nn.Module):
         self.cos_cached = None
         self.sin_cached = None
 
-    def _build_cache(self, seq_len: int, x_dtype: torch.dtype, x_device: torch.device):
+    def _build_cache(self, seq_len: int, x_device: torch.device):
 
         if self.cos_cached is not None and seq_len <= self.cos_cached.shape[0]:
             return
 
-        theta_calc_dtype = torch.float32
-
         theta = 1.0 / (
             self.base
             ** (
-                torch.arange(0, self.d, 2, device=x_device, dtype=theta_calc_dtype)
+                torch.arange(0, self.d, 2, device=x_device)
                 / self.d
             )
         )  # THETA = 10,000^(-2*i/d) or 1/10,000^(2i/d)
 
         seq_idx = torch.arange(
-            seq_len, device=x_device, dtype=theta_calc_dtype
+            seq_len, device=x_device
         )  # Position Index -> [0,1,2...seq-1]
 
         idx_theta = torch.einsum(
@@ -100,10 +98,10 @@ class RoPE(nn.Module):
 
         self.cos_cached = idx_theta2.cos()[
             :, None, None, :
-        ].to(x_dtype)  # Cache [cosTHETA_1, cosTHETA_2...cosTHETA_d]
+        ].float()  # Cache [cosTHETA_1, cosTHETA_2...cosTHETA_d]
         self.sin_cached = idx_theta2.sin()[
             :, None, None, :
-        ].to(x_dtype)  # cache [sinTHETA_1, sinTHETA_2...sinTHETA_d]
+        ].float()  # cache [sinTHETA_1, sinTHETA_2...sinTHETA_d]
 
     def _neg_half(self, x: torch.Tensor):
 
@@ -117,7 +115,7 @@ class RoPE(nn.Module):
 
         seq_len = x.shape[2]
 
-        self._build_cache(seq_len, x.dtype, x.device)
+        self._build_cache(seq_len, x.device)
 
         neg_half_x = self._neg_half(x)
 
@@ -301,37 +299,31 @@ class MLA(nn.Module):  # done right and "optimised" TODO missing norms for q and
         self.head_dim = self.d_model // self.nhead
         assert self.head_dim * self.nhead == self.d_model
 
-        self.kv_compression_dim = (
-            self.d_model // 4
-        )  # TODO check how much this matters, should be a hyperparameter (roughly what R1 has)
-        # probably stops mattering after some point
-        self.q_compression_dim = (
-            self.kv_compression_dim * 2
-        )  # TODO check how much this matters, should be a hyperparameter (roughly what R1 has)
+        self.kv_compression_dim = args.kv_compression_dim 
+        self.q_compression_dim = args.q_compression_dim
 
         self.rope_dim = args.qk_rope_dim
 
         # MLA part
         self.kv_down = nn.Linear(
-            self.d_model, self.kv_compression_dim + self.rope_dim, dtype=args.dtype
+            self.d_model, self.kv_compression_dim + self.rope_dim
         )
-        self.q_down = nn.Linear(self.d_model, self.q_compression_dim, dtype=args.dtype)
+        self.q_down = nn.Linear(self.d_model, self.q_compression_dim)
 
         self.kv_up = nn.Linear(
-            self.kv_compression_dim, self.head_dim * self.nhead * 2, dtype=args.dtype
+            self.kv_compression_dim, self.head_dim * self.nhead * 2
         )
         self.q_up = nn.Linear(
             self.q_compression_dim,
-            (self.head_dim + self.rope_dim) * self.nhead,
-            dtype=args.dtype,
+            (self.head_dim + self.rope_dim) * self.nhead
         )
 
-        self.o = nn.Linear(self.d_model, self.d_model, dtype=args.dtype)
+        self.o = nn.Linear(self.d_model, self.d_model)
         self.dropout = nn.Dropout(args.dropout)
         self.rotary_emb = RoPE(self.rope_dim)
 
-        self.kv_norm = nn.RMSNorm(self.kv_compression_dim, dtype=args.dtype)
-        self.q_norm = nn.RMSNorm(self.q_compression_dim, dtype=args.dtype)
+        self.kv_norm = nn.RMSNorm(self.kv_compression_dim)
+        self.q_norm = nn.RMSNorm(self.q_compression_dim)
 
     def forward(self, x, mask=None):
         batch_size, seq_len, _ = x.shape
@@ -397,8 +389,8 @@ class SwiGLU_feed_forward(nn.Module):
         # d_ff is now the "intermediate" dimension.  The SwiGLU layer
         # will project to d_ff, and then the output projection will go back to d_model.
         # self.swiglu = SwiGLU(d_model, d_ff)
-        self.linear_in_gate = nn.Linear(args.d_model, args.d_ff * 2, dtype=args.dtype)
-        self.linear_out = nn.Linear(args.d_ff, args.d_model, dtype=args.dtype)
+        self.linear_in_gate = nn.Linear(args.d_model, args.d_ff * 2)
+        self.linear_out = nn.Linear(args.d_ff, args.d_model)
         self.dropout = nn.Dropout(args.dropout)
         self.d_model = args.d_model
 

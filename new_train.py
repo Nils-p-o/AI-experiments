@@ -1,9 +1,12 @@
 # TODO implement flashattention (doesn't work, compile fails)
 # TODO better RoPE (not very efficient rn, maybe)
 # TODO reformat architectures to take in args + dtype (+ fix RoPE and redo baselines, ig?)
+# TODO make weights be real fp16 (stored in it)
 
 # TODO add weight sharing for embeddings, holy moly 100M parameters just for embeddings!!!!
 # TODO make encoding an argument
+
+# TODO check rope, attn (maybe smth weird is going on)
 import json
 import os
 import argparse
@@ -82,23 +85,22 @@ def proceed(args: argparse.Namespace):
 
     match args.dtype: # TODO add fp8 and other precissions
         case "fp32":
-            torch_dtype_for_params = torch.float32
+            # torch_dtype_for_params = torch.float32
             trainer_precision = "32-true"
         case "fp16":
-            torch_dtype_for_params = torch.float16
+            # torch_dtype_for_params = torch.float16
             trainer_precision = "16-mixed"
         case "bf16":
-            torch_dtype_for_params = torch.bfloat16
+            # torch_dtype_for_params = torch.bfloat16
             trainer_precision = "bf16-mixed"
         case _:
-            # logger.error("dtype must be fp32, fp16, or bf16, defaulting to fp32")
             args.dtype = "fp32"
-            torch_dtype_for_params = torch.float32
+            # torch_dtype_for_params = torch.float32
             trainer_precision = "32-true"
 
     # pl.seed_everything(seed)
     print(
-        f"type: {type} {architecture}_transformer seq_len:{seq_len} d_model:{d_model} d_ff_mult:{d_ff} num_layers:{num_layers} nhead:{nhead} dropout:{dropout} lr:{lr} t_total:{t_total} warmup_steps:{warmup_steps} t_0:{t_0} t_mult:{t_mult} lr_mult:{lr_mult} batch_size:{batch_size} cce_fn:{cce_fn}"
+        f"type: {type} {architecture}_transformer seq_len:{seq_len} d_model:{d_model} d_ff:{d_ff} num_layers:{num_layers} nhead:{nhead} dropout:{dropout} lr:{lr} t_total:{t_total} warmup_steps:{warmup_steps} t_0:{t_0} t_mult:{t_mult} lr_mult:{lr_mult} batch_size:{batch_size} cce_fn:{cce_fn}"
     )
 
     name = f"{type}_{architecture}_transformer_{seq_len}_{d_model}_{d_ff}_{num_layers}_{nhead}_{batch_size}"
@@ -212,26 +214,17 @@ def proceed(args: argparse.Namespace):
         case "MLA":
             model = LLaMa_MLA(
                 args=args,
-                vocab_size=vocab_size,
-                dtype=torch_dtype_for_params
+                vocab_size=vocab_size
             )
         case _:
             raise ValueError(f"Architecture {architecture} not supported")
     # Print parameter count:
     num_params = count_parameters(model)
-    print(f"The model has {num_params:,} trainable parameters. Parameter dtype: {torch_dtype_for_params}")
+    print(f"The model has {num_params:,} trainable parameters. Parameter dtype: {args.dtype}")
 
     # --- Training Setup ---
     if model.__class__.__name__ == "nGPT" or model.__class__.__name__ == "DINT_nGPT":
         normalize_weights_and_enforce_positive_eigenvalues(model)
-
-    match args.dtype:
-        case torch.float32:
-            args.dtype = "fp32"
-        case torch.float16:
-            args.dtype = "fp16"
-        case torch.bfloat16:
-            args.dtype = "bf16"
 
     experiment = TransformerExperiment(
         model,
@@ -269,7 +262,7 @@ def proceed(args: argparse.Namespace):
         # limit_train_batches=1000,
         limit_val_batches=50,
         logger=logger,
-        log_every_n_steps=30,
+        log_every_n_steps=100,
         val_check_interval=500,
         precision=trainer_precision
     )

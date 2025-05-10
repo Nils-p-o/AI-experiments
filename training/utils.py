@@ -4,7 +4,7 @@ import pytorch_lightning as pl
 
 import re
 from typing import List, Optional, Union
-from sentencepiece import SentencePieceProcessor
+# from sentencepiece import SentencePieceProcessor
 
 def count_parameters(model):
     return sum(p.numel() for p in model.parameters() if p.requires_grad)
