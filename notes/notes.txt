@@ -35,3 +35,11 @@ TODO
 need to rewrite most of the code to work by passing args namespace
 DINT + nGPT + MLA??? (could be lit) (gotta remember to check which parts would need to be cos normed though)
 try hand at predicting markets (trading view for data?)
+
+
+
+
+##########   hustorical mistakes ############
+
+breaking causality ~till nGPT (used the future to predict the present)
+doing RoPE wrong ~till MLA (using wrong dim size to get seq len and multiply, basically was all just multiplied by the same rotation vec)

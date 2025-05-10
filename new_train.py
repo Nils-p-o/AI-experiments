@@ -2,6 +2,7 @@
 # TODO better RoPE (not very efficient rn, maybe)
 # TODO reformat architectures to take in args + dtype (+ fix RoPE and redo baselines, ig?)
 # TODO make weights be real fp16 (stored in it)
+# TODO DINT_nGPT has no normalization (weights and eigenvalues) missing in experiment class
 
 # TODO add weight sharing for embeddings, holy moly 100M parameters just for embeddings!!!!
 # TODO make encoding an argument
