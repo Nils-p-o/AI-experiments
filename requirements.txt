@@ -1,0 +1,4 @@
+datasets==3.6.0
+tensorboard==2.19.0
+pytorch-lightning==2.5.1.post0
+torch==2.7.0
