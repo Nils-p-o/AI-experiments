@@ -33,6 +33,7 @@ the dataset is more complex. (could be that DINT removes noise from attn which u
 at <10M params, fp32 is faster, or equivalent
 
 TODO
+take things from here (https://github.com/evintunador/gpt-lab)
 need to rewrite most of the code to work by passing args namespace
 DINT + nGPT + MLA??? (could be lit) (gotta remember to check which parts would need to be cos normed though)
 try hand at predicting markets (trading view for data?)

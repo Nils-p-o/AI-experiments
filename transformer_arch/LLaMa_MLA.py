@@ -143,7 +143,7 @@ class MLA_simple(
 
         self.o = nn.Linear(self.d_model, self.d_model)
         self.dropout = nn.Dropout(args.dropout)
-        self.rotary_emb = RoPE(self.rope_dim)
+        # self.rotary_emb = RoPE(self.rope_dim)
 
         self.k_up_rope = nn.Linear(self.d_model, self.rope_dim)
         self.q_up_rope = nn.Linear(self.q_compression_dim, self.rope_dim * self.nhead)
@@ -316,7 +316,7 @@ class SwiGLU_feed_forward(nn.Module):
         u, v = self.linear_in_gate(x).chunk(
             2, dim=-1
         )   
-        x = u * F.silu(v)# * self.d_model ** 0.5) # Apply SwiGLU with scaling (not worth it)
+        x = u * F.silu(v)# * self.d_model ** 0.5) # Apply SwiGLU with scaling
         x = self.linear_out(x)
         x = self.dropout(x)  # Apply dropout *after* the output projection
         return x

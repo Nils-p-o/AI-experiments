@@ -1,67 +1,27 @@
-# TODO implement flashattention (doesn't work, compile fails)
-# TODO reformat architectures to take in args + dtype (+ fix RoPE and redo baselines, ig?)
+# TODO use NLL for std dev in v2 loss
 
-# TODO DINT_nGPT has no normalization (weights and eigenvalues) missing in experiment class
 
-# TODO add weight sharing for embeddings, holy moly 100M parameters just for embeddings!!!!
-# TODO make encoding an argument
-# TODO custom tokenizer per dataset (gpt-lab)
 
-# TODO check attn (maybe smth weird is going on)
 import json
 import os
 import argparse
 import pytorch_lightning as pl
 from pytorch_lightning.callbacks import ModelCheckpoint, EarlyStopping
-from training.experiment import TransformerExperiment
-from transformer_arch.components import ClassicTransformer
-from transformer_arch.LLaMa import LLaMa
-from transformer_arch.nGPT import (
-    nGPT,
-    normalize_weights_and_enforce_positive_eigenvalues,
-)
-from transformer_arch.DIFF import DiffTransformer
-from transformer_arch.DINT import DintTransformer
+from training.money_experiment import TransformerExperiment
+
 from training.utils import (
     count_parameters,
 )
-from training.data_loaders.wikitext import (
-    WikitextDataModule,
-    download_and_split_wikitext,
+from training.data_loaders.stocks_time_series import (
+    FinancialNumericalDataModule,
+    download_and_process_numerical_financial_data
 )
-from training.data_loaders.tiny_shakespeare import (
-    ShakespeareDataModule,
-    download_and_split_shakespeare,
-)
+
 from pytorch_lightning.loggers import TensorBoardLogger
 import torch
 from torch.nn.attention import SDPBackend
 
-
-from transformer_arch.DINT_nGPT import DINT_nGPT
-
-from transformer_arch.LLaMa_MLA import LLaMa_MLA
-
-# TODO figure out group norm for DINT and DIFF
-
-# change how args get passed to model, should use args instead
-# update older code (maybe, idk)
-
-# TODO from nGPT implementation
-# def _init_weights(self, module):
-#     if isinstance(module, nn.Linear):
-#         torch.nn.init.normal_(module.weight, mean=0.0, std=self.config.base_scale)
-#         if module.bias is not None:
-#             torch.nn.init.zeros_(module.bias)
-#     elif isinstance(module, nn.Embedding):
-#         torch.nn.init.normal_(module.weight, mean=0.0, std=self.config.base_scale)
-
-# # init all weights
-# self.apply(self._init_weights)
-# # apply special scaled init to the residual projections, per GPT-2 paper
-# for pn, p in self.named_parameters():
-#     if pn.endswith('c_proj.weight'):
-#         torch.nn.init.normal_(p, mean=0.0, std=config.base_scale/math.sqrt(2 * config.n_layer))
+from transformer_arch.money_former import Money_former
 
 
 def proceed(args: argparse.Namespace):
@@ -100,7 +60,7 @@ def proceed(args: argparse.Namespace):
         f"type: {type} {architecture}_transformer seq_len:{seq_len} d_model:{d_model} d_ff:{d_ff} num_layers:{num_layers} nhead:{nhead} dropout:{dropout} lr:{lr} t_total:{t_total} warmup_steps:{warmup_steps} t_0:{t_0} t_mult:{t_mult} lr_mult:{lr_mult} batch_size:{batch_size} cce_fn:{cce_fn}"
     )
 
-    name = f"{type}_{architecture}_transformer_{seq_len}_{d_model}_{d_ff}_{num_layers}_{nhead}_{batch_size}"
+    name = f"money_{type}_{architecture}_transformer_{seq_len}_{d_model}_{d_ff}_{num_layers}_{nhead}_{batch_size}"
     if cce_fn == "stablemax" or cce_fn == "taylor_softmax" or cce_fn == "softmax":
         name = name + "_" + cce_fn
     if extra_descriptor != "":
@@ -116,100 +76,19 @@ def proceed(args: argparse.Namespace):
         name=name,  # seq, d_model, d_ff mult, num_layers, nhead
     )  # Optional logging
     # --- Data Loading ---
-    if args.dataset == "tiny_shakespeare":
-        download_and_split_shakespeare()  # Download and prepare data if needed
-        data_module = ShakespeareDataModule(
-            train_file="tiny_shakespeare/train.txt",
-            val_file="tiny_shakespeare/val.txt",
-            test_file="tiny_shakespeare/test.txt",
-            seq_len=seq_len,
-            batch_size=batch_size,
-            use_character_encoding=args.use_character_encoding,
+    if args.dataset == "stocks_yf": # yahoo finance stock data
+        download_and_process_numerical_financial_data(...) # TODO
+        data_module = FinancialNumericalDataModule(
+            ...
         )
-    elif args.dataset == "wikitext2":
-        download_and_split_wikitext()  # Download and prepare data if needed
-        data_module = WikitextDataModule(
-            train_file="wikitext_data/wiki.train.tokens",
-            val_file="wikitext_data/wiki.valid.tokens",
-            test_file="wikitext_data/wiki.test.tokens",
-            seq_len=seq_len,
-            batch_size=batch_size,
-            use_character_encoding=args.use_character_encoding,
-            encoding_name="r50k_base",
-        )
-    else:
-        raise ValueError(f"Unknown dataset: {args.dataset}")
 
     data_module.setup()  # Very important to setup the data
     vocab_size = data_module.get_vocab_size()
 
     # --- Model Definition ---
     match architecture:
-        case "Classic":
-            model = ClassicTransformer(
-                d_model=d_model,
-                nhead=nhead,
-                num_layers=num_layers,
-                dropout=dropout,
-                vocab_size=vocab_size,
-                seq_len=seq_len,
-            )
-        case "LLaMa":
-            model = LLaMa(
-                d_model=d_model,
-                nhead=nhead,
-                num_layers=num_layers,
-                d_ff=d_model * d_ff_mult,
-                dropout=dropout,
-                vocab_size=vocab_size,
-                seq_len=seq_len,
-                groups=groups,
-            )
-        case "nGPT":
-            model = nGPT(
-                d_model=d_model,
-                nhead=nhead,
-                num_layers=num_layers,
-                dropout=dropout,
-                vocab_size=vocab_size,
-                seq_len=seq_len,
-            )
-        case "DIFF":
-            model = DiffTransformer(
-                d_model=d_model,
-                nhead=nhead,
-                num_layers=num_layers,
-                d_ff=d_model * d_ff_mult,
-                dropout=dropout,
-                vocab_size=vocab_size,
-                seq_len=seq_len,
-                groups=groups,
-            )
-        case "DINT":
-            model = DintTransformer(
-                d_model=d_model,
-                nhead=nhead,
-                num_layers=num_layers,
-                d_ff=d_model * d_ff_mult,
-                dropout=dropout,
-                vocab_size=vocab_size,
-                seq_len=seq_len,
-                groups=groups,
-                v1=args.v1,
-            )
-        case "DINT_nGPT":
-            model = DINT_nGPT(
-                d_model=d_model,
-                nhead=nhead,
-                num_layers=num_layers,
-                d_ff=d_model * d_ff_mult,
-                dropout=dropout,
-                vocab_size=vocab_size,
-                seq_len=seq_len,
-                groups=groups,
-            )
-        case "MLA":
-            model = LLaMa_MLA(
+        case "Money_former":
+            model = Money_former( # TODO
                 args=args,
                 vocab_size=vocab_size
             )
@@ -221,8 +100,6 @@ def proceed(args: argparse.Namespace):
     args.num_params = num_params
 
     # --- Training Setup ---
-    if model.__class__.__name__ == "nGPT" or model.__class__.__name__ == "DINT_nGPT":
-        normalize_weights_and_enforce_positive_eigenvalues(model)
 
     experiment = TransformerExperiment(
         model,
@@ -270,7 +147,7 @@ def proceed(args: argparse.Namespace):
     model_dir = f"models"
     if not os.path.exists(model_dir):
         os.makedirs(model_dir)
-    torch.save(experiment.model, f"{model_dir}/{args.architecture}_{args.dataset}.pth") # TODO make this more specific
+    torch.save(experiment.model, f"{model_dir}/money_{args.architecture}_{args.dataset}.pth") # TODO make this more specific
     print("Model saved.")
     return
 
