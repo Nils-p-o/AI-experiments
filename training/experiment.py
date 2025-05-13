@@ -58,7 +58,7 @@ class TransformerExperiment(pl.LightningModule):
 
     def _shared_step(self, batch, batch_idx, stage="train"):
         inputs, labels = batch
-        inputs = inputs[:, :-1] # shifted
+        inputs = inputs[:, :-1] # shifted # TODO but why though??????????????????????????????????????????? TODO TODO TODO TODO TODO TODO
         labels = labels[:, 1:]
 
         outputs = self(inputs).transpose(-1, -2) # (batch_size, seq_len, vocab_size) 

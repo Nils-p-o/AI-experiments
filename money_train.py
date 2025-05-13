@@ -1,20 +1,19 @@
 # TODO use NLL for std dev in v2 loss
-
-
+# TODO, maybe pass mean and std to model?
 
 import json
 import os
 import argparse
 import pytorch_lightning as pl
 from pytorch_lightning.callbacks import ModelCheckpoint, EarlyStopping
-from training.money_experiment import TransformerExperiment
+from training.money_experiment import MoneyExperiment
 
 from training.utils import (
     count_parameters,
 )
 from training.data_loaders.stocks_time_series import (
     FinancialNumericalDataModule,
-    download_and_process_numerical_financial_data
+    download_numerical_financial_data
 )
 
 from pytorch_lightning.loggers import TensorBoardLogger
@@ -40,9 +39,10 @@ def proceed(args: argparse.Namespace):
     t_mult = args.t_mult
     lr_mult = args.lr_mult
     type = args.type
-    cce_fn = args.custom_cross_entropy
+    # TODO add loss functions
     # seed = args.seed
     extra_descriptor = args.extra_descriptor
+    pred_indices = args.indices_to_predict # how many datapoints in the future to predict (workdays, not regular days, because market no work weekend)
 
     match args.dtype:
         case "fp32":
@@ -57,40 +57,42 @@ def proceed(args: argparse.Namespace):
 
     # pl.seed_everything(seed)
     print(
-        f"type: {type} {architecture}_transformer seq_len:{seq_len} d_model:{d_model} d_ff:{d_ff} num_layers:{num_layers} nhead:{nhead} dropout:{dropout} lr:{lr} t_total:{t_total} warmup_steps:{warmup_steps} t_0:{t_0} t_mult:{t_mult} lr_mult:{lr_mult} batch_size:{batch_size} cce_fn:{cce_fn}"
+        f"type: {type} LLaMa seq_len:{seq_len} d_model:{d_model} d_ff:{d_ff} num_layers:{num_layers} nhead:{nhead} dropout:{dropout} lr:{lr} t_total:{t_total} warmup_steps:{warmup_steps} t_0:{t_0} t_mult:{t_mult} lr_mult:{lr_mult} batch_size:{batch_size}"
     )
 
-    name = f"money_{type}_{architecture}_transformer_{seq_len}_{d_model}_{d_ff}_{num_layers}_{nhead}_{batch_size}"
-    if cce_fn == "stablemax" or cce_fn == "taylor_softmax" or cce_fn == "softmax":
-        name = name + "_" + cce_fn
+    name = f"{args.dataset}/{type}_LLaMa_{seq_len}_{d_model}_{d_ff}_{num_layers}_{nhead}_{batch_size}"
     if extra_descriptor != "":
         name = name + "_" + extra_descriptor
     
-    if args.use_character_encoding:
-        name = args.dataset + "_char/" + name
-    else:
-        name = args.dataset + "/" + name
 
     logger = TensorBoardLogger(
         "lightning_logs",
         name=name,  # seq, d_model, d_ff mult, num_layers, nhead
     )  # Optional logging
     # --- Data Loading ---
-    if args.dataset == "stocks_yf": # yahoo finance stock data
-        download_and_process_numerical_financial_data(...) # TODO
+    if args.dataset == "Money": # yahoo finance stock data
+        download_numerical_financial_data(
+            tickers=["AAPL"],
+            seq_len=seq_len
+        )
         data_module = FinancialNumericalDataModule(
-            ...
+            train_file="time_series_data/train.pt",
+            val_file="time_series_data/val.pt",
+            test_file="time_series_data/test.pt",
+            metadata_file="time_series_data/metadata.json",
+            seq_len=seq_len + max(pred_indices)-1,
+            batch_size=batch_size
         )
 
     data_module.setup()  # Very important to setup the data
-    vocab_size = data_module.get_vocab_size()
+    # vocab_size = data_module.get_vocab_size()
 
     # --- Model Definition ---
     match architecture:
         case "Money_former":
-            model = Money_former( # TODO
-                args=args,
-                vocab_size=vocab_size
+            model = Money_former(
+                args=args
+                # vocab_size=vocab_size
             )
         case _:
             raise ValueError(f"Architecture {architecture} not supported")
@@ -101,16 +103,14 @@ def proceed(args: argparse.Namespace):
 
     # --- Training Setup ---
 
-    experiment = TransformerExperiment(
+    experiment = MoneyExperiment(
         model,
         learning_rate=lr,
         batch_size=batch_size,
-        vocab_size=vocab_size,
         warmup_steps=warmup_steps,
         t_0=t_0,
         t_mult=t_mult,
         lr_mult=lr_mult,
-        cce_fn=cce_fn,
         args=args,
         # dtype=torch_dtype_for_params
     )  # Use vocab_size
@@ -120,13 +120,13 @@ def proceed(args: argparse.Namespace):
         dirpath="checkpoints/",
         filename="{name}-{epoch}-{val_loss:.2f}-{val_perplexity:.2f}",
         save_top_k=3,
-        monitor="val_loss",
+        monitor="Loss/val_loss",
         mode="min",
     )
 
     # Early Stopping
     early_stopping_callback = EarlyStopping(
-        monitor="val_loss", patience=1000, verbose=True, mode="min"
+        monitor="Loss/val_loss", patience=1000, verbose=True, mode="min"
     )
 
     trainer = pl.Trainer(
@@ -177,7 +177,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Train a Transformer model.")
 
     parser.add_argument(
-        "--config", type=str, default="./experiment_configs/MLA_test.json", help="Path to config file."
+        "--config", type=str, default="./experiment_configs/Money_test.json", help="Path to config file."
     )
     if parser.parse_known_args()[0].config != "":
         with open(parser.parse_known_args()[0].config, "r") as f:
@@ -189,7 +189,7 @@ if __name__ == "__main__":
         parser.add_argument(
             "--architecture",
             type=str,
-            default="DINT_nGPT",#"DINT",
+            default="Money_former",#"DINT",
             help="Model architecture (LLaMa, ...)",
         )
         parser.add_argument("--d_model", type=int, default=128, help="Embedding dimension.")
@@ -197,10 +197,8 @@ if __name__ == "__main__":
             "--nhead", type=int, default=8, help="Number of attention heads."
         )
         parser.add_argument("--num_layers", type=int, default=4, help="Number of layers.")
-        parser.add_argument("--d_ff_mult", type=int, default=4, help="Multiplier for d_ff")
-        parser.add_argument(
-            "--groups", type=int, default=4, help="Number of groups for GQA."
-        )
+        parser.add_argument("--d_ff", type=int, default=512, help="dimension in d_ff")
+
         parser.add_argument(
             "--dropout", type=float, default=0.1, help="Dropout probability."
         )
@@ -226,33 +224,43 @@ if __name__ == "__main__":
         parser.add_argument("--seq_len", type=int, default=128, help="Sequence length.")
         parser.add_argument("--batch_size", type=int, default=16, help="Batch size.")
 
-        # for custor_cross_entropy
-        parser.add_argument(
-            "--custom_cross_entropy",
-            type=str,
-            default="false",
-            help="Use custom cross entropy.",
-        )  # stablemax, taylor_softmax
 
-        parser.add_argument(
-            "--seed", type=int, default=42, help="Seed for reproducibility."
-        )
+        # parser.add_argument(
+        #     "--seed", type=int, default=42, help="Seed for reproducibility."
+        # )
         parser.add_argument(
             "--extra_descriptor", type=str, default="", help="Extra descriptor for logging."
         )
         parser.add_argument("--orthograd", type=bool, default=True, help="Use OrthoGrad.")
         parser.add_argument(
-            "--v1", type=bool, default=False, help="Use V1. (currently only Dint)"
+            "--dataset", type=str, default="Money", help="Dataset to use."
         )
-        parser.add_argument(
-            "--dataset", type=str, default="tiny_shakespeare", help="Dataset to use."
-        )
-        parser.add_argument(
-            "--use_character_encoding",
-            type=bool,
-            default=False,
-            help="Use character-level encoding instead of the tokenizer.",
-        )
+
 
     args = parser.parse_args()
     run_experiment(args)
+
+
+# What to do now:
+# Your focus needs to shift entirely away from minimizing MSE and towards demonstrating value above and beyond the persistence model.
+# Switch Primary Evaluation Metrics: Stop optimizing for MSE. Start focusing on:
+# Directional Accuracy: How often does your model correctly predict whether the price will go UP or DOWN compared to the previous day? Calculate this using the function provided earlier. The persistence model often has a directional accuracy near 50% (or slightly biased by the overall market trend). Can your model significantly beat this (e.g., >55% or 60% consistently)?
+# MASE (Mean Absolute Scaled Error): Calculate this properly. MASE = MAE_model / MAE_persistence. Your goal is a MASE consistently less than 1. Given your MSE results, your MASE is likely very close to 1 right now.
+# (Optional) Information Coefficient (IC) / Correlation: Calculate the correlation between your predicted returns (e.g., predicted[t+1] / predicted[t] - 1) and the actual returns (actual[t+1] / actual[t] - 1). A consistently positive IC shows some predictive alignment.
+# Try Predicting Returns Instead of Prices: This is often more effective:
+# Why: Price series are strongly persistent (non-stationary). Daily returns (price[t]/price[t-1] - 1) or log returns (log(price[t]/price[t-1])) are generally less persistent and closer to stationary, making them potentially easier to model meaningfully. Persistence in returns is much weaker than persistence in prices.
+# How: Modify your model to predict the next day's return. Your target variable (y) becomes the actual return. Calculate loss (e.g., MSE) between predicted return and actual return.
+# Benchmark: The naive benchmark for returns is often predicting 0% return. Compare your return-predicting model against this.
+# Feature Engineering: The model defaulting to persistence suggests your current input features might not contain sufficient signal to predict changes effectively. Revisit your features:
+# Are you using standard technical indicators (moving averages, RSI, MACD, Bollinger Bands)?
+# Volume data?
+# Volatility measures (e.g., ATR)?
+# Time-based features (day of week, month)?
+# Model Complexity and Regularization:
+# Is the model complex enough to capture non-linear patterns (if they exist)?
+# Is it too complex and overfitting to noise, effectively cancelling out any real signal and defaulting to persistence? Try adjusting model size, dropout rates, weight decay.
+# Address the Time Gap: That 1980-2013 vs 2020-2024 gap is still a major hurdle. Patterns learned pre-2014 might be entirely irrelevant. The model might be implicitly learning this irrelevance and correctly defaulting to persistence as the most robust strategy across the gap. Consider:
+# Training on more recent data (e.g., 2010-2019) to validate on 2020-2024.
+# Using techniques designed for time series with distribution shifts (though this is advanced).
+# Conclusion:
+# You've successfully identified that your model isn't outperforming the simplest baseline. Stop focusing on the absolute value of MSE. Start measuring relative improvement using metrics like Directional Accuracy and MASE. Strongly consider predicting returns instead of prices, as this often forces the model to learn more than just persistence. Good luck!

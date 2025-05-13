@@ -54,7 +54,7 @@ class Money_former(nn.Module):
         )
         self.value_input = nn.Linear(1, self.d_model) # encodes numerical input
         self.norm = nn.RMSNorm(self.d_model)
-        self.out = nn.Linear(self.d_model, 1) # decodes to target(s)
+        self.out = nn.Linear(self.d_model, len(args.indices_to_predict)) # decodes to target(s)
 
         self.register_buffer("freqs_cis", precompute_freqs_cis(args), persistent=False)
 
