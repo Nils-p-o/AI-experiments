@@ -36,13 +36,35 @@ TODO
 take things from here (https://github.com/evintunador/gpt-lab)
 need to rewrite most of the code to work by passing args namespace
 DINT + nGPT + MLA??? (could be lit) (gotta remember to check which parts would need to be cos normed though)
-try hand at predicting markets (trading view for data?)
 
 true fp16 training (basically ground up rewrite)
 flash attn 2 (fails compile)
 
 add code for comparing different modules speeds (two ways to write the same thing)
 check whether ff layer can have compression in the middle (similar to MLA?) could be a good speed up if yes 
+
+
+Money former
+(from training on one stock and 3 points in time for prediction)
+NLL (gaussian) is a bad idea, horribly overfits, even with orthograd
+SGD is just worse than Adam
+
+Returns are the way to go!!! (much better than z normed prices)
+finally beats persistence model (kind of an achievement?)
+With returns, seems to learns everything within the first ~300 steps (makes sense, not really the most complicated dataset)
+
+means and stds dont seem bad? to feed as additonal input features, as the acc went down, but it seems more stable?
+
+#########current flaws, that need fixing asap##########
+returns are not relative, but absolute (should be relative)
+targets need to be calculated differently, currently only the return in regards to day-1, but should be relative to the day that gets passed into model
+
+
+
+TODOs
+add more data to time_series_data
+convert money_former to be able to take multiple sequences (hella custom embeddings)
+
 
 
 
@@ -52,3 +74,5 @@ breaking causality ~till nGPT (used the future to predict the present)
 doing RoPE wrong ~till MLA (using wrong dim size to get seq len and multiply, basically was all just multiplied by the same rotation vec)
 
 was multiplying input embeddings by sqrt(d_model) instead of dividing them, fml
+
+was calculating returns for volume

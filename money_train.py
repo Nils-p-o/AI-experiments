@@ -1,5 +1,6 @@
-# TODO use NLL for std dev in v2 loss
-# TODO, maybe pass mean and std to model?
+# TODO add more features, add more indicators (quarterly reports, EPS, etc.)
+# TODO upgrade model architecture to be what i envisioned
+# plus, add more metrics/engineered features
 
 import json
 import os
@@ -72,8 +73,9 @@ def proceed(args: argparse.Namespace):
     # --- Data Loading ---
     if args.dataset == "Money": # yahoo finance stock data
         download_numerical_financial_data(
-            tickers=["AAPL"],
-            seq_len=seq_len
+            tickers=args.tickers,
+            seq_len=seq_len,
+            check_if_already_downloaded=False
         )
         data_module = FinancialNumericalDataModule(
             train_file="time_series_data/train.pt",
@@ -137,8 +139,8 @@ def proceed(args: argparse.Namespace):
         # limit_train_batches=1000,
         limit_val_batches=50,
         logger=logger,
-        log_every_n_steps=100,
-        val_check_interval=500,
+        log_every_n_steps=100, # 100
+        val_check_interval=400,
         precision=trainer_precision
     )
 
@@ -147,7 +149,7 @@ def proceed(args: argparse.Namespace):
     model_dir = f"models"
     if not os.path.exists(model_dir):
         os.makedirs(model_dir)
-    torch.save(experiment.model, f"{model_dir}/money_{args.architecture}_{args.dataset}.pth") # TODO make this more specific
+    torch.save(experiment.model, f"{model_dir}/money_{args.architecture}_{args.dataset}_{name.split('/')[-1]}.pth") # TODO make this more specific
     print("Model saved.")
     return
 
@@ -244,13 +246,13 @@ if __name__ == "__main__":
 # What to do now:
 # Your focus needs to shift entirely away from minimizing MSE and towards demonstrating value above and beyond the persistence model.
 # Switch Primary Evaluation Metrics: Stop optimizing for MSE. Start focusing on:
-# Directional Accuracy: How often does your model correctly predict whether the price will go UP or DOWN compared to the previous day? Calculate this using the function provided earlier. The persistence model often has a directional accuracy near 50% (or slightly biased by the overall market trend). Can your model significantly beat this (e.g., >55% or 60% consistently)?
-# MASE (Mean Absolute Scaled Error): Calculate this properly. MASE = MAE_model / MAE_persistence. Your goal is a MASE consistently less than 1. Given your MSE results, your MASE is likely very close to 1 right now.
+# Directional Accuracy: How often does your model correctly predict whether the price will go UP or DOWN compared to the previous day?. The persistence model often has a directional accuracy near 50%. Can your model significantly beat this (e.g., >55% or 60% consistently)?
+# Your goal is a MASE consistently less than 1.
+
 # (Optional) Information Coefficient (IC) / Correlation: Calculate the correlation between your predicted returns (e.g., predicted[t+1] / predicted[t] - 1) and the actual returns (actual[t+1] / actual[t] - 1). A consistently positive IC shows some predictive alignment.
-# Try Predicting Returns Instead of Prices: This is often more effective:
-# Why: Price series are strongly persistent (non-stationary). Daily returns (price[t]/price[t-1] - 1) or log returns (log(price[t]/price[t-1])) are generally less persistent and closer to stationary, making them potentially easier to model meaningfully. Persistence in returns is much weaker than persistence in prices.
-# How: Modify your model to predict the next day's return. Your target variable (y) becomes the actual return. Calculate loss (e.g., MSE) between predicted return and actual return.
-# Benchmark: The naive benchmark for returns is often predicting 0% return. Compare your return-predicting model against this.
+# Try Predicting Returns Instead of Prices: 
+# Price series are strongly persistent (non-stationary). Daily returns (price[t]/price[t-1] - 1) or log returns (log(price[t]/price[t-1])) are generally closer to stationary, making them potentially easier to model meaningfully.
+
 # Feature Engineering: The model defaulting to persistence suggests your current input features might not contain sufficient signal to predict changes effectively. Revisit your features:
 # Are you using standard technical indicators (moving averages, RSI, MACD, Bollinger Bands)?
 # Volume data?
@@ -262,5 +264,57 @@ if __name__ == "__main__":
 # Address the Time Gap: That 1980-2013 vs 2020-2024 gap is still a major hurdle. Patterns learned pre-2014 might be entirely irrelevant. The model might be implicitly learning this irrelevance and correctly defaulting to persistence as the most robust strategy across the gap. Consider:
 # Training on more recent data (e.g., 2010-2019) to validate on 2020-2024.
 # Using techniques designed for time series with distribution shifts (though this is advanced).
-# Conclusion:
-# You've successfully identified that your model isn't outperforming the simplest baseline. Stop focusing on the absolute value of MSE. Start measuring relative improvement using metrics like Directional Accuracy and MASE. Strongly consider predicting returns instead of prices, as this often forces the model to learn more than just persistence. Good luck!
+
+
+# The IC is essentially a correlation coefficient (typically Pearson or Spearman) calculated between your model's predictions for a set of assets at a given time and the actual subsequent realized outcomes for those assets.
+# Here's a breakdown of how to calculate and interpret it:
+# 1. Gather Your Data:
+# Model Predictions (Signals or Alphas):
+# For each time step t (e.g., end of day), your model generates a prediction for each asset i in your universe (e.g., all stocks in the S&P 500).
+# This prediction P_i,t is for a future outcome, say at time t+k (e.g., prediction for next day's return, next week's return).
+# So, at each time t, you'll have a vector of predictions: Predictions_t = [P_1,t, P_2,t, ..., P_N,t] for N assets.
+# Actual Realized Outcomes:
+# For each asset i and prediction made at time t for period t+k, you need the actual outcome A_i,t+k that occurred.
+# If predicting returns, this would be the actual realized forward return for each asset over the period k (e.g., next day's open-to-close return, or close-to-close return).
+# So, corresponding to Predictions_t, you'll have a vector of actuals: Actuals_t+k = [A_1,t+k, A_2,t+k, ..., A_N,t+k].
+# 2. Calculate the IC for Each Period (Cross-Sectional IC):
+# At each time step t, you calculate the correlation between the vector of predictions Predictions_t made at that time and the vector of corresponding actual future outcomes Actuals_t+k.
+# IC_t = Correlation(Predictions_t, Actuals_t+k)
+# Types of Correlation:
+# Pearson IC: Measures linear correlation. Use scipy.stats.pearsonr or numpy.corrcoef.
+# Spearman Rank IC: Measures the correlation between the ranks of predictions and the ranks of actuals. This is often preferred because it's less sensitive to outliers and doesn't assume a linear relationship (only monotonic). Use scipy.stats.spearmanr.
+# 3. Analyze the Time Series of ICs:
+# You will now have a time series of IC values (IC_1, IC_2, ..., IC_T). Analyzing this series tells you about the quality and consistency of your predictive signal:
+# Mean IC (Average IC):
+# The average of all your calculated IC_t values.
+# A positive mean IC suggests your model has, on average, predictive power in the desired direction (higher predictions correspond to higher actual outcomes).
+# A negative mean IC suggests your model has predictive power but in the opposite direction (your signal might need to be inverted).
+# Standard Deviation of IC:
+# Measures the volatility or consistency of your ICs over time. A lower standard deviation is generally better, indicating a more stable signal.
+
+# Information Ratio (IR):
+# IR = Mean(IC) / StdDev(IC)
+# This is a crucial metric, similar to a Sharpe ratio for a trading strategy. It tells you how much predictive power you get per unit of risk (volatility of the IC). Higher is better. A common rule of thumb is that an IR > 0.5 is considered good.
+# IC Skewness and Kurtosis: Provides insights into the distribution of your ICs.
+# Percentage of Positive ICs (Hit Rate):
+# The proportion of periods where IC_t > 0.
+# t-statistic for Mean IC:
+# t_stat = Mean(IC) * sqrt(Number of Periods) / StdDev(IC)
+# This tests the statistical significance of your mean IC (i.e., how likely is it that your mean IC is different from zero by chance). A t-stat > 2 (or < -2) is often considered statistically significant.
+# Example Scenario:
+# Predictions: At the end of Day D, your model predicts the next day's return for 100 stocks. You get a list of 100 predicted returns.
+# Actuals: At the end of Day D+1, you record the actual returns for those 100 stocks that occurred during Day D+1. You get a list of 100 actual returns.
+# Calculate IC_D: You compute the Spearman correlation between your list of 100 predictions and the list of 100 actual returns. This gives you one IC value for Day D.
+# Repeat: You do this every day for a year. You now have ~252 daily IC values.
+# Analyze: Calculate the mean, std dev, IR, and t-stat of these ~252 ICs.
+# What do IC values mean (heuristics for daily stock return prediction):
+# |IC| > 0.02 - 0.03: Might be interesting if very consistent.
+# |IC| > 0.05: Generally considered good.
+# |IC| > 0.10: Very good.
+# |IC| > 0.15: Excellent (rarely sustained).
+# Important Considerations:
+# Forward-Looking Nature: Ensure your actual outcomes are strictly after your predictions are made. No look-ahead bias.
+# Alignment: Predictions and actuals must be perfectly aligned by asset and by the prediction/outcome period.
+# Universe Consistency: The set of assets used for IC calculation should be consistent or handled carefully if it changes (e.g., stocks entering/leaving an index).
+# Transaction Costs: IC measures raw predictive power. It doesn't account for transaction costs, liquidity, or portfolio construction constraints that would affect a real trading strategy.
+# Decay: Signals can decay. The IC might be stronger for 1-day forward returns than for 5-day forward returns using the same prediction.

@@ -1,20 +1,12 @@
 # tries to predict movements in the stock market
 """ first version TODO list:
 
-set up data from time series:
-extract data from definitiv
-put it in readable format
-seperate into test and train (set up data loader)
-
 create model architecture:
 start with MLA?
-normalized inputs (if required)
+
 myb additional encoding for sequence type? (stock or general market trend, etc.) (probably for later ver)
 Embeddings for specific stock tickers?
 decide on target outputs
-
-set up loss, metrics
-train
 
 
 
@@ -39,9 +31,9 @@ import torch.nn.functional as F
 from .components import get_causal_mask # TODO at v2
 
 # LLaMa architecture for now
-
+ # money former is the issue, somehow?
 class Money_former(nn.Module):
-    def __init__(self, args, vocab_size=10000): #, dtype=torch.float32):
+    def __init__(self, args): #, dtype=torch.float32):
         super().__init__()
         # args.dtype = dtype
         self.d_model = args.d_model
@@ -52,14 +44,53 @@ class Money_former(nn.Module):
         self.layers = nn.ModuleList(
             [Money_former_block(args) for _ in range(self.num_layers)]
         )
-        self.value_input = nn.Linear(1, self.d_model) # encodes numerical input
+        self.input_features = args.input_features
+        self.value_input = nn.Linear(self.input_features, self.d_model) # encodes numerical input
         self.norm = nn.RMSNorm(self.d_model)
-        self.out = nn.Linear(self.d_model, len(args.indices_to_predict)) # decodes to target(s)
+        
+        self.predict_distribution = args.predict_gaussian
+        if self.predict_distribution:
+            self.out = nn.Linear(self.d_model, len(args.indices_to_predict) * 2) # decodes to mean and std
+        else:
+            self.out = nn.Linear(self.d_model, len(args.indices_to_predict)) # decodes to target(s)
 
         self.register_buffer("freqs_cis", precompute_freqs_cis(args), persistent=False)
 
+        # time embedding shenanigans
+        # self.day_of_week = nn.Embedding(5, 3)
+        # self.day_of_month = nn.Embedding(32, 6)
+        # # self.day_of_year = nn.Embedding(367, 10)
+        # self.month_of_year = nn.Embedding(13, 5)
+        # self.quarter_of_year = nn.Embedding(5, 3)
+        # # self.is_leap_year = nn.Embedding(2, 2)
+        # self.is_month_start = nn.Embedding(2, 2)
+        # self.is_month_end = nn.Embedding(2, 2)
+        # self.is_quarter_start = nn.Embedding(2, 2)
+        # self.is_quarter_end = nn.Embedding(2, 2)
+        # # self.is_year_start = nn.Embedding(2, self.d_model)
+        # # self.is_year_end = nn.Embedding(2, self.d_model)
+
+        # self.project = nn.Linear(self.d_model+25, self.d_model)
+
     def forward(self, x):
-        x = self.value_input(x) / math.sqrt(self.d_model)  # (batch_size, seq_len, d_model)
+        x_time, x = torch.split(x,[10,self.input_features], dim=-1)
+        # x_time = x_time.int()
+        # time_embeded = torch.cat([
+        #     self.day_of_week(x_time[:, :, 0]),
+        #     self.day_of_month(x_time[:, :, 1]),
+        #     # self.day_of_year(x_time[:, :, 2]),
+        #     self.month_of_year(x_time[:, :, 3]),
+        #     self.quarter_of_year(x_time[:, :, 4]),
+        #     # self.is_leap_year(x_time[:, :, 5]),
+        #     self.is_month_start(x_time[:, :, 6]),
+        #     self.is_month_end(x_time[:, :, 7]),
+        #     self.is_quarter_start(x_time[:, :, 8]),
+        #     self.is_quarter_end(x_time[:, :, 9]),
+        # ], dim=-1)
+
+        x = self.value_input(x)  # (batch_size, seq_len, d_model)
+        # x = self.project(torch.cat([x, time_embeded], dim=-1)) / math.sqrt(self.d_model) # TODO potentially add act fn + layer norm after this?
+        x = x / math.sqrt(self.d_model)
         x = self.dropout(x)
         seq_len = x.size(1)
         freqs_cis = self.freqs_cis[0:0+seq_len]
@@ -67,7 +98,10 @@ class Money_former(nn.Module):
             x = layer(x, freqs_cis)
         x = self.norm(x)  # (batch_size, seq_len, d_model)
         x = self.out(x)
-        return x  # (batch_size, seq_len, vocab_size) logits
+        if self.predict_distribution:
+            x = x.view(x.size(0), x.size(1), -1, 2) # (batch_size, seq_len, points in future, (mean and std) or target)
+            return x
+        return x  # (batch_size, seq_len, targets) logits
 
 class Money_former_block(nn.Module):
     def __init__(self, args):

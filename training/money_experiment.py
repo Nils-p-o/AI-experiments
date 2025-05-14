@@ -8,10 +8,13 @@ from .utils import OrthoGrad, custom_cross_entropy, stablemax, taylor_softmax
 from transformer_arch.nGPT import normalize_weights_and_enforce_positive_eigenvalues
 import argparse
 import numpy as np
+from scipy import stats
 
 def log_cosh_loss(y_pred, y_true):
     x = y_pred - y_true
     return torch.mean(torch.abs(x) + torch.log1p(torch.exp(-2. * torch.abs(x))) - np.log(2.0))
+
+# TODO rewrite direction to work with returns
 
 def get_direction_vectorized_torch(current_prices, previous_prices, threshold=0.01):
     """
@@ -132,6 +135,43 @@ def get_movement_directions(actual_prices, predicted_values, movement_threshold=
 
     return actual_up, actual_down, actual_flat, predicted_up, predicted_down, predicted_flat
 
+def get_direction_accuracy_returns(actual_returns, predicted_returns, thresholds=0.01): # for one target?
+    actual_up = actual_returns > thresholds
+    actual_down = actual_returns < -thresholds
+    actual_flat = torch.abs(actual_returns) < thresholds
+
+    predicted_up = predicted_returns > thresholds
+    predicted_down = predicted_returns < -thresholds
+    predicted_flat = torch.abs(predicted_returns) < thresholds
+    
+    acc_up = (actual_up * predicted_up).sum() / actual_up.sum()
+    acc_down = (actual_down * predicted_down).sum() / actual_down.sum()
+    acc_flat = (actual_flat * predicted_flat).sum() / actual_flat.sum()
+
+    total_acc = ((actual_up * predicted_up).sum() + (actual_down * predicted_down).sum() + (actual_flat * predicted_flat).sum())/ actual_up.numel()
+
+    expected_acc = torch.max(torch.tensor([actual_up.sum(), actual_down.sum(), actual_flat.sum()])) / actual_up.numel()
+    expected_strat = torch.tensor([actual_up.sum(), actual_down.sum(), actual_flat.sum()]).square().sum() / actual_up.numel()**2
+
+    return total_acc, acc_up, acc_down, acc_flat, expected_acc, expected_strat
+
+def z_normalize_additional_inputs(additional_inputs):
+    for i in range(additional_inputs.shape[1]):
+        additional_inputs[:, i, :] = (additional_inputs[:, i, :] - additional_inputs[:, i, :].mean(dim=-1, keepdim=True).tile(1, 1, additional_inputs.shape[2])) / additional_inputs[:, i, :].std(dim=-1, keepdim=True).tile(1, 1, additional_inputs.shape[2])
+    return additional_inputs
+
+def get_spearmanr_correlations(actual_prices, predicted_values):
+    batch_size, seq_len, num_targets = actual_prices.shape
+    ICs = torch.zeros((batch_size, num_targets))
+
+    for i in range(batch_size):
+        for j in range(seq_len):
+            for k in range(num_targets):
+                ICs[i,j,k] = stats.spearmanr(actual_prices[i,j,k], predicted_values[i,j,k]).correlation # only do when you have more than one data point per time/prediction
+
+    return ICs
+        
+
 class MoneyExperiment(pl.LightningModule):
     def __init__(
         self,
@@ -157,7 +197,6 @@ class MoneyExperiment(pl.LightningModule):
         self.loss_fn = nn.MSELoss() # MASE (NLL for distribution)
         self.MSE = nn.MSELoss()
         self.MAE = nn.L1Loss()
-        # self.huber = nn.HuberLoss()
         self.normalized_threshold = normalized_threshold
         self.pred_indices = args.indices_to_predict
         self.save_hyperparameters(
@@ -171,63 +210,99 @@ class MoneyExperiment(pl.LightningModule):
 
     def _shared_step(self, batch, batch_idx, stage="train"):
         inputs, labels = batch
-        # select price to predict from columns
-        # currently just the first column (adj close)
         furthest_date = max(self.pred_indices)
 
-        known_inputs = inputs[:, 0, :-(furthest_date-1)].unsqueeze(-1)
+        if furthest_date != 1:
+            time_inputs = inputs[:, :10, :-(furthest_date-1)].transpose(-1, -2)
+        else:
+            time_inputs = inputs[:, :10, :].transpose(-1, -2)
+        inputs = inputs[:, 10:, :]
+        labels = labels[:, 10:, :]
+        # select price to predict from columns
+        # currently just the first column (adj close)
+        if furthest_date != 1:
+            known_inputs = inputs[:, 0, :-(furthest_date-1)].unsqueeze(-1)
+        else:
+            known_inputs = inputs[:, 0, :].unsqueeze(-1)
         labels = labels[:, 0, :].unsqueeze(-1)
-        targets = labels[:, :-(furthest_date-1)]
+        if furthest_date != 1:
+            targets = labels[:, :-(furthest_date-1)].unsqueeze(-1)
+        else:
+            targets = labels
         for i in range(1, len(self.pred_indices)):
             if self.pred_indices[i] == furthest_date:
                 targets = torch.cat([targets, labels[:, self.pred_indices[i]-1:]], dim=-1)
             else:
                 targets = torch.cat([targets, labels[:, self.pred_indices[i]-1:-(furthest_date-self.pred_indices[i])]], dim=-1)
     
-        means = known_inputs.mean(dim=1).tile(1, known_inputs.shape[1]).unsqueeze(-1)
-        stds = known_inputs.std(dim=1).tile(1, known_inputs.shape[1]).unsqueeze(-1)
+        known_input_means = known_inputs.mean(dim=1).tile(1, known_inputs.shape[1]).unsqueeze(-1)
+        known_input_stds = known_inputs.std(dim=1).tile(1, known_inputs.shape[1]).unsqueeze(-1)
 
-        norm_inputs = (known_inputs - means) / stds
-        norm_labels = (labels[:, (furthest_date-1):] - means) / stds # Important!!! notice how norm_labels is not the full vector of labels (because this works just fine)
+        norm_inputs = (known_inputs - known_input_means) / known_input_stds
+        norm_labels = (labels[:, (furthest_date-1):] - known_input_means) / known_input_stds # Important!!! notice how norm_labels is not the full vector of labels (because this works just fine)
+        if furthest_date != 1:
+            additional_inputs = inputs[:, 1:, :-(furthest_date-1)]
+        else:
+            additional_inputs = inputs[:, 1:, :]
+        additional_inputs = additional_inputs.transpose(-1, -2)
+        means_of_additonal_inputs = additional_inputs.mean(dim=1, keepdim=True).tile(1, additional_inputs.shape[1],1)
+        stds_of_additonal_inputs = additional_inputs.std(dim=1, keepdim=True).tile(1, additional_inputs.shape[1],1)
+        full_norm_inputs = torch.cat([norm_inputs, additional_inputs-means_of_additonal_inputs/stds_of_additonal_inputs], dim=-1)
 
+        full_inputs = torch.cat([time_inputs, full_norm_inputs], dim=-1)
+        outputs = self(full_inputs)#.transpose(-1, -2) # (batch_size, seq_len, vocab_size) 
 
-        outputs = self(norm_inputs)#.transpose(-1, -2) # (batch_size, seq_len, vocab_size) 
+        # for debugging reasons
+        if torch.isnan(outputs).any():
+            print("NAN IN OUTPUTS")
 
         if isinstance(outputs, torch.Tensor):
-            logits = outputs
+            raw_logits = outputs
         else:
-            logits = outputs.logits
+            raw_logits = outputs.logits
+        
+        if self.args.predict_gaussian:
+            raw_logits, raw_pred_variance = raw_logits.split([1,1], dim=-1)
+            raw_logits = raw_logits.squeeze(-1)
+            raw_pred_variance = raw_pred_variance.squeeze(-1)
+
+        preds = raw_logits * known_input_stds.tile(1, 1, len(self.pred_indices)) + known_input_means.tile(1, 1, len(self.pred_indices))
 
         # direction part of loss
-        norm_full_seq_true_prices = torch.cat([norm_inputs, norm_labels[:,-(furthest_date+1):,:]], dim=1)
-        norm_true_price_targets = norm_full_seq_true_prices[:, :-(furthest_date)]
-        for i in range(1, len(self.pred_indices)):
-            if self.pred_indices[i] == furthest_date:
-                norm_true_price_targets = torch.cat([norm_true_price_targets, norm_full_seq_true_prices[:, self.pred_indices[i]:]], dim=-1)
-            else:
-                norm_true_price_targets = torch.cat([norm_true_price_targets, norm_full_seq_true_prices[:, self.pred_indices[i]:-(furthest_date-self.pred_indices[i])]], dim=-1)
-        direction_accuracy, direction_accuracy_per_target = calculate_directional_accuracy(norm_true_price_targets, logits, movement_threshold=self.normalized_threshold)
+        # norm_full_seq_true_prices = torch.cat([norm_inputs, norm_labels[:,-(furthest_date+1):,:]], dim=1)
+        # norm_true_price_targets = norm_full_seq_true_prices[:, :-(furthest_date)]
+        # for i in range(1, len(self.pred_indices)):
+        #     if self.pred_indices[i] == furthest_date:
+        #         norm_true_price_targets = torch.cat([norm_true_price_targets, norm_full_seq_true_prices[:, self.pred_indices[i]:]], dim=-1)
+        #     else:
+        #         norm_true_price_targets = torch.cat([norm_true_price_targets, norm_full_seq_true_prices[:, self.pred_indices[i]:-(furthest_date-self.pred_indices[i])]], dim=-1)
+        # direction_accuracy, direction_accuracy_per_target = calculate_directional_accuracy(norm_true_price_targets, raw_logits, movement_threshold=self.normalized_threshold)
 
-        # just for seeing what the data looks like, and if there is some bias in predictions
-        real_up, real_down, real_flat, pred_up, pred_down, pred_flat = get_movement_directions(
-            norm_true_price_targets, logits, movement_threshold=self.normalized_threshold
-        )
-
-        logits = logits * stds.tile(1, 1, len(self.pred_indices)) + means.tile(1, 1, len(self.pred_indices))
+        # # just for seeing what the data looks like, and if there is some bias in predictions
+        # real_up, real_down, real_flat, pred_up, pred_down, pred_flat = get_movement_directions(
+        #     norm_true_price_targets, raw_logits, movement_threshold=self.normalized_threshold
+        # )
+        # correct way to do directions
+        thresholds = self.normalized_threshold * known_input_stds
+        direction_total_acc, direction_acc_up, direction_acc_down, direction_acc_flat, expected_max_acc, expected_strat_acc = get_direction_accuracy_returns(targets, preds, thresholds=thresholds)
 
         # reference loss of naive model
-        naive_MSE = self.MSE(known_inputs.tile(1,1,len(self.pred_indices)), targets)
-        naive_MAE = self.MAE(known_inputs.tile(1,1,len(self.pred_indices)), targets)
+        naive_MSE = self.MSE(torch.zeros_like(targets), targets) 
+        naive_MAE = self.MAE(torch.zeros_like(targets), targets) # known_inputs.tile(1,1,len(self.pred_indices))
 
-        loss = self.loss_fn(logits, targets)
+
+        if self.args.predict_gaussian:
+            pred_variance = nn.functional.softplus(raw_pred_variance)
+            loss = self.loss_fn(preds, targets, pred_variance)
+        else:
+            loss = self.loss_fn(preds, targets)
+        
         # adjusting loss to be scaled relative to persistance model
         loss = loss / (naive_MSE + 1e-6)
+        loss = loss / (direction_total_acc + 1e-6) 
 
-
-        loss = loss / (direction_accuracy + 1e-6)
-
-        MSSE = self.MSE(logits, targets) / (naive_MSE + 1e-6)
-        MASE = self.MAE(logits, targets) / (naive_MAE + 1e-6)
+        MSSE = self.MSE(preds, targets) / (naive_MSE + 1e-6)
+        MASE = self.MAE(preds, targets) / (naive_MAE + 1e-6)
 
 
         # TODO try to get similar metrics into one graph (without a million logs)
@@ -235,7 +310,14 @@ class MoneyExperiment(pl.LightningModule):
 
         # Log main loss and accuracy
         self.log(f"Loss/{stage}_loss", loss, prog_bar=True, **log_opts)
-        self.log(f"Accuracy/{stage}_accuracy", direction_accuracy, **log_opts)
+        self.log(f"Accuracy/{stage}_accuracy", direction_total_acc, **log_opts)
+        self.log(f"Accuracy_finer/{stage}_up_accuracy", direction_acc_up, **log_opts)
+        self.log(f"Accuracy_finer/{stage}_down_accuracy", direction_acc_down, **log_opts)
+        self.log(f"Accuracy_finer/{stage}_flat_accuracy", direction_acc_flat, **log_opts)
+
+        if stage=="val":
+            self.log(f"Accuracy_finer/{stage}_expected_max", expected_max_acc, **log_opts)
+            self.log(f"Accuracy_finer/{stage}_expected_strat", expected_strat_acc, **log_opts)
 
         # Log Naive Losses under a common group
         self.log(f"Naive_Losses/{stage}_MSE", naive_MSE, **log_opts)
@@ -246,16 +328,22 @@ class MoneyExperiment(pl.LightningModule):
         self.log(f"Relative_Losses/{stage}_MASE", MASE, **log_opts)
 
 
-        self.log(f"Directions_Real/{stage}_Up", real_up, **log_opts)
-        self.log(f"Directions_Real/{stage}_Down", real_down, **log_opts)
-        self.log(f"Directions_Real/{stage}_Flat", real_flat, **log_opts)
-        self.log(f"Directions_Pred/{stage}_Up", pred_up, **log_opts)
-        self.log(f"Directions_Pred/{stage}_Down", pred_down, **log_opts)
-        self.log(f"Directions_Pred/{stage}_Flat", pred_flat, **log_opts)
+        # self.log(f"Directions_Real/{stage}_Up", real_up, **log_opts)
+        # self.log(f"Directions_Real/{stage}_Down", real_down, **log_opts)
+        # self.log(f"Directions_Real/{stage}_Flat", real_flat, **log_opts)
+        # self.log(f"Directions_Pred/{stage}_Up", pred_up, **log_opts)
+        # self.log(f"Directions_Pred/{stage}_Down", pred_down, **log_opts)
+        # self.log(f"Directions_Pred/{stage}_Flat", pred_flat, **log_opts)
+
+        # ICs = get_spearmanr_correlations(targets.clone().detach(), preds.clone().detach())
 
         # Log accuracy per target
         for i in range(len(self.pred_indices)):
-            self.log(f"Target_Accuracy/{stage}_target_{self.pred_indices[i]}", direction_accuracy_per_target[i], **log_opts)
+            # temp_IR = ICs[:, i].mean()/(ICs[:,:, i].std() + 1e-6)
+            # self.log(f"IR/{stage}_target_{self.pred_indices[i]}", temp_IR, **log_opts)
+            # self.log(f"IC/{stage}_target_{self.pred_indices[i]}", ICs[:,:, i].mean(), **log_opts)
+            # TODO?
+            # self.log(f"Target_Accuracy/{stage}_target_{self.pred_indices[i]}", direction_accuracy_per_target[i], **log_opts)
 
             # Log naive losses per target
             temp_naive_MSE = self.MSE(known_inputs, targets[:, :, i:i+1])
@@ -264,13 +352,15 @@ class MoneyExperiment(pl.LightningModule):
             self.log(f"Naive_Losses_target/{stage}_target_{self.pred_indices[i]}_MAE", temp_naive_MAE, **log_opts)
 
             # log relative losses per target
-            temp_MSSE = self.MSE(logits[:,:,i:i+1], targets[:, :, i:i+1]) / (temp_naive_MSE + 1e-6)
-            temp_MASE = self.MAE(logits[:,:,i:i+1], targets[:, :, i:i+1]) / (temp_naive_MAE + 1e-6)
+            temp_MSSE = self.MSE(preds[:,:,i:i+1], targets[:, :, i:i+1]) / (temp_naive_MSE + 1e-6)
+            temp_MASE = self.MAE(preds[:,:,i:i+1], targets[:, :, i:i+1]) / (temp_naive_MAE + 1e-6)
             self.log(f"Relative_Losses_target/{stage}_target_{self.pred_indices[i]}_MSSE", temp_MSSE, **log_opts)
             self.log(f"Relative_Losses_target/{stage}_target_{self.pred_indices[i]}_MASE", temp_MASE, **log_opts)
             # log loss by target
-            temp_loss = self.loss_fn(logits[:, :, i:i+1], targets[:, :, i:i+1]) / (temp_naive_MSE + 1e-6)
-            temp_loss = temp_loss / (direction_accuracy_per_target[i] + 1e-6)
+            temp_loss = self.loss_fn(preds[:, :, i:i+1], targets[:, :, i:i+1])#, pred_variance[:, :, i:i+1])
+            temp_loss = temp_loss / (temp_naive_MSE + 1e-6)
+            # temp_loss = temp_loss / (direction_accuracy_per_target[i] + 1e-6)
+            temp_loss = temp_loss / (direction_total_acc + 1e-6)
             self.log(f"Loss_target/{stage}_target_{self.pred_indices[i]}", temp_loss, **log_opts)
 
         if stage == "train":
@@ -288,7 +378,7 @@ class MoneyExperiment(pl.LightningModule):
 
 
     def configure_optimizers(self):
-        if self.args.orthograd:
+        if self.args.orthograd: # try sgd
             optimizer = OrthoGrad(params=self.parameters(), base_optimizer_cls=optim.Adam, lr=self.learning_rate)
         else:
             optimizer = optim.Adam(self.parameters(), lr=self.learning_rate)
