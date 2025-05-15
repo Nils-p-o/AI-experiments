@@ -177,6 +177,7 @@ class MoneyExperiment(pl.LightningModule):
         self.lr_mult = lr_mult
         self.batch_size = batch_size
         self.loss_fn = nn.MSELoss() # MASE (NLL for distribution)
+        # self.loss_fn = nn.L1Loss()
         self.MSE = nn.MSELoss()
         self.MAE = nn.L1Loss()
         self.normalized_threshold = normalized_threshold
@@ -210,7 +211,7 @@ class MoneyExperiment(pl.LightningModule):
         stds_of_additonal_inputs = additional_inputs.std(dim=1, keepdim=True).tile(1, additional_inputs.shape[1],1)
         full_inputs = torch.cat([norm_inputs, (additional_inputs-means_of_additonal_inputs)/stds_of_additonal_inputs], dim=-1)
 
-        seperator = torch.zeros((targets.shape[0], 1),dtype=torch.int) # attention sink + seperator token later, myb
+        seperator = torch.zeros((targets.shape[0], 1),dtype=torch.int, device=inputs.device) # attention sink + seperator token later, myb
 
         # full_inputs = torch.cat([time_inputs, full_norm_inputs], dim=-1)
         outputs = self(full_inputs, seperator)[:,1:,:] #.transpose(-1, -2) # (batch_size, seq_len, vocab_size) 

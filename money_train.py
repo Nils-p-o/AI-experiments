@@ -142,8 +142,9 @@ def proceed(args: argparse.Namespace):
         limit_val_batches=50,
         logger=logger,
         log_every_n_steps=100, # 100
-        val_check_interval=400,
-        precision=trainer_precision
+        val_check_interval=100,
+        precision=trainer_precision,
+        check_val_every_n_epoch=None
     )
 
     trainer.fit(experiment, datamodule=data_module)
