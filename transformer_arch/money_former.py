@@ -6,7 +6,6 @@ start with MLA?
 
 myb additional encoding for sequence type? (stock or general market trend, etc.) (probably for later ver)
 Embeddings for specific stock tickers?
-decide on target outputs
 
 
 
@@ -56,6 +55,9 @@ class Money_former(nn.Module):
 
         self.register_buffer("freqs_cis", precompute_freqs_cis(args), persistent=False)
 
+        # seperator/attention sink token
+        self.seperator = nn.Embedding(1, self.d_model)
+
         # time embedding shenanigans
         # self.day_of_week = nn.Embedding(5, 3)
         # self.day_of_month = nn.Embedding(32, 6)
@@ -72,8 +74,8 @@ class Money_former(nn.Module):
 
         # self.project = nn.Linear(self.d_model+25, self.d_model)
 
-    def forward(self, x):
-        x_time, x = torch.split(x,[10,self.input_features], dim=-1)
+    def forward(self, x, seperator=None):
+        # x_time, x = torch.split(x,[10,self.input_features], dim=-1)
         # x_time = x_time.int()
         # time_embeded = torch.cat([
         #     self.day_of_week(x_time[:, :, 0]),
@@ -87,9 +89,12 @@ class Money_former(nn.Module):
         #     self.is_quarter_start(x_time[:, :, 8]),
         #     self.is_quarter_end(x_time[:, :, 9]),
         # ], dim=-1)
-
-        x = self.value_input(x)  # (batch_size, seq_len, d_model)
         # x = self.project(torch.cat([x, time_embeded], dim=-1)) / math.sqrt(self.d_model) # TODO potentially add act fn + layer norm after this?
+        if seperator != None:
+            seperator = self.seperator(seperator)
+        x = self.value_input(x)  # (batch_size, seq_len, d_model)
+        if seperator != None:
+            x = torch.cat([seperator, x], dim=1)
         x = x / math.sqrt(self.d_model)
         x = self.dropout(x)
         seq_len = x.size(1)

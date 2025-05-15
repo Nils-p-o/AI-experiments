@@ -1,6 +1,7 @@
 # TODO add more features, add more indicators (quarterly reports, EPS, etc.)
 # TODO upgrade model architecture to be what i envisioned
 # plus, add more metrics/engineered features
+# TODO test putting all input features as part of sequence? (include attention sink too?)
 
 import json
 import os
@@ -75,14 +76,15 @@ def proceed(args: argparse.Namespace):
         download_numerical_financial_data(
             tickers=args.tickers,
             seq_len=seq_len,
-            check_if_already_downloaded=False
+            check_if_already_downloaded=False, # TODO make this better/check which features are missing
+            target_dates=pred_indices
         )
         data_module = FinancialNumericalDataModule(
             train_file="time_series_data/train.pt",
             val_file="time_series_data/val.pt",
             test_file="time_series_data/test.pt",
             metadata_file="time_series_data/metadata.json",
-            seq_len=seq_len + max(pred_indices)-1,
+            seq_len=seq_len,
             batch_size=batch_size
         )
 
@@ -244,10 +246,6 @@ if __name__ == "__main__":
 
 
 # What to do now:
-# Your focus needs to shift entirely away from minimizing MSE and towards demonstrating value above and beyond the persistence model.
-# Switch Primary Evaluation Metrics: Stop optimizing for MSE. Start focusing on:
-# Directional Accuracy: How often does your model correctly predict whether the price will go UP or DOWN compared to the previous day?. The persistence model often has a directional accuracy near 50%. Can your model significantly beat this (e.g., >55% or 60% consistently)?
-# Your goal is a MASE consistently less than 1.
 
 # (Optional) Information Coefficient (IC) / Correlation: Calculate the correlation between your predicted returns (e.g., predicted[t+1] / predicted[t] - 1) and the actual returns (actual[t+1] / actual[t] - 1). A consistently positive IC shows some predictive alignment.
 # Try Predicting Returns Instead of Prices: 
@@ -256,13 +254,11 @@ if __name__ == "__main__":
 # Feature Engineering: The model defaulting to persistence suggests your current input features might not contain sufficient signal to predict changes effectively. Revisit your features:
 # Are you using standard technical indicators (moving averages, RSI, MACD, Bollinger Bands)?
 # Volume data?
-# Volatility measures (e.g., ATR)?
-# Time-based features (day of week, month)?
+# Volatility measures (e.g., ATR)? Historical Volatility, Implied Volatility, Future / Expected Volatility
+
 # Model Complexity and Regularization:
 # Is the model complex enough to capture non-linear patterns (if they exist)?
 # Is it too complex and overfitting to noise, effectively cancelling out any real signal and defaulting to persistence? Try adjusting model size, dropout rates, weight decay.
-# Address the Time Gap: That 1980-2013 vs 2020-2024 gap is still a major hurdle. Patterns learned pre-2014 might be entirely irrelevant. The model might be implicitly learning this irrelevance and correctly defaulting to persistence as the most robust strategy across the gap. Consider:
-# Training on more recent data (e.g., 2010-2019) to validate on 2020-2024.
 # Using techniques designed for time series with distribution shifts (though this is advanced).
 
 
