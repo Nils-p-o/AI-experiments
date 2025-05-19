@@ -300,7 +300,7 @@ class MoneyExperiment(pl.LightningModule):
             self.log(f"Relative_Losses_target/{stage}_target_{self.pred_indices[i]}_MASE", temp_MASE, **log_opts)
             # log loss by target
             temp_loss = self.loss_fn(preds[:, :, i:i+1], targets[:, :, i:i+1])#, pred_variance[:, :, i:i+1])
-            temp_loss = temp_loss / (temp_naive_MSE + 1e-6)
+            temp_loss = temp_loss / (temp_naive_MSE + 1e-6) 
             # temp_loss = temp_loss / (direction_accuracy_per_target[i] + 1e-6)
             temp_loss = temp_loss / (direction_total_acc + 1e-6)
             self.log(f"Loss_target/{stage}_target_{self.pred_indices[i]}", temp_loss, **log_opts)

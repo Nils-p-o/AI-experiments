@@ -7,9 +7,7 @@ import yfinance as yf
 import torch
 from torch.utils.data import Dataset, DataLoader
 import pytorch_lightning as pl
-from sklearn.model_selection import train_test_split
 from typing import List, Dict, Tuple, Optional, Any
-from collections import defaultdict
 
 
 # V2 What i want
@@ -76,7 +74,7 @@ class FinancialNumericalDataModule(pl.LightningDataModule):
         self.test_dataset: Optional[FinancialNumericalDataset] = None
 
         self._metadata: Optional[Dict[str, Any]] = None
-        # self._load_metadata()
+        self._load_metadata()
 
     def _load_metadata(self):
         with open(self.metadata_file, "r") as f:
@@ -105,7 +103,7 @@ class FinancialNumericalDataModule(pl.LightningDataModule):
             self.val_dataset,
             batch_size=self.batch_size,
             shuffle=False,
-            num_workers=self.num_workers - 3,
+            num_workers=self.num_workers,
             persistent_workers=True,
         )
 
@@ -180,6 +178,7 @@ def download_numerical_financial_data(
     raw_data = torch.tensor(raw_data.values, dtype=torch.float32)  # (Time, Features)
     raw_data = raw_data.transpose(0, 1)  # (Features, Time series)
 
+    # TODO write somewhere else, maybe in another function
     # removing adj close
     raw_data = raw_data[1:, :]
     columns = columns[1:]
@@ -290,6 +289,112 @@ def download_numerical_financial_data(
     macd = data[26,:] - data[27,:]
     data = torch.cat((data, macd.unsqueeze(0)), dim=0)
     columns.append("MACD_10_20_10")
+
+    # ################################ shorter metrics
+    volatility = calculate_volatility_returns(raw_data, lookback=5).unsqueeze(0)
+    data = torch.cat((data, volatility), dim=0)
+    columns.append("Volatility_returns_5")
+
+    smar = calculate_moving_average_returns(raw_data, lookback=5).unsqueeze(0)
+    data = torch.cat((data, smar), dim=0)
+    columns.append("SMAR_5")
+
+    bollinger = data[31,:] + 1 * data[32,:]
+    data = torch.cat((data, bollinger.unsqueeze(0)), dim=0)
+    columns.append("Bollinger_5_up")
+
+    bollinger = data[31,:] - 1 * data[32,:]
+    data = torch.cat((data, bollinger.unsqueeze(0)), dim=0)
+    columns.append("Bollinger_5_down")
+
+    ema = calculate_ema_returns(raw_data, lookback=5).unsqueeze(0)
+    data = torch.cat((data, ema), dim=0)
+    columns.append("EMA_5")
+
+    ppo = (data[35,:] - data[26,:]) / data[26,:]
+    data = torch.cat((data, ppo.unsqueeze(0)), dim=0)
+    columns.append("PPO_5_10_5")
+
+    macd = data[35,:] - data[26,:]
+    data = torch.cat((data, macd.unsqueeze(0)), dim=0)
+    columns.append("MACD_5_10_5")
+
+    ppo = (data[35,:] - data[27,:]) / data[27,:]
+    data = torch.cat((data, ppo.unsqueeze(0)), dim=0)
+    columns.append("PPO_5_20_15")
+
+    macd = data[35,:] - data[27,:]
+    data = torch.cat((data, macd.unsqueeze(0)), dim=0)
+    columns.append("MACD_5_20_15")
+
+    atr = calculate_average_true_range(data, lookback=5).unsqueeze(0)
+    data = torch.cat((data, atr), dim=0)
+    columns.append("ATR_5")
+# more metrics
+    clv = calculate_close_line_values(raw_data).unsqueeze(0)
+    data = torch.cat((data, clv), dim=0)
+    columns.append("CLV")
+
+    ad = calculate_accumulation_distribution_index(raw_data, lookback=5).unsqueeze(0)
+    data = torch.cat((data, ad), dim=0)
+    columns.append("AD_5")
+
+    ad = calculate_accumulation_distribution_index(raw_data, lookback=10).unsqueeze(0)
+    data = torch.cat((data, ad), dim=0)
+    columns.append("AD_10")
+
+    ad = calculate_accumulation_distribution_index(raw_data, lookback=20).unsqueeze(0)
+    data = torch.cat((data, ad), dim=0)
+    columns.append("AD_20")
+
+    vpt = calculate_volume_price_trend(raw_data, lookback=5).unsqueeze(0)
+    data = torch.cat((data, vpt), dim=0)
+    columns.append("VPT_5")
+
+    vpt = calculate_volume_price_trend(raw_data, lookback=10).unsqueeze(0)
+    data = torch.cat((data, vpt), dim=0)
+    columns.append("VPT_10")
+
+    vpt = calculate_volume_price_trend(raw_data, lookback=20).unsqueeze(0)
+    data = torch.cat((data, vpt), dim=0)
+    columns.append("VPT_20")
+
+    chaikin = calculate_ema(calculate_accumulation_distribution_index(raw_data, lookback=1), lookback=3) - calculate_ema(calculate_accumulation_distribution_index(raw_data, lookback=1), lookback=10)
+    data = torch.cat((data, chaikin.unsqueeze(0)), dim=0)
+    columns.append("Chaikin_3_10_7")
+
+    chaikin = calculate_ema(calculate_accumulation_distribution_index(raw_data, lookback=1), lookback=5) - calculate_ema(calculate_accumulation_distribution_index(raw_data, lookback=1), lookback=10)
+    data = torch.cat((data, chaikin.unsqueeze(0)), dim=0)
+    columns.append("Chaikin_5_10_5")
+
+    chaikin = calculate_ema(calculate_accumulation_distribution_index(raw_data, lookback=1), lookback=5) - calculate_ema(calculate_accumulation_distribution_index(raw_data, lookback=1), lookback=20)
+    data = torch.cat((data, chaikin.unsqueeze(0)), dim=0)
+    columns.append("Chaikin_5_20_15")
+
+    chaikin = calculate_ema(calculate_accumulation_distribution_index(raw_data, lookback=1), lookback=10) - calculate_ema(calculate_accumulation_distribution_index(raw_data, lookback=1), lookback=20)
+    data = torch.cat((data, chaikin.unsqueeze(0)), dim=0)
+    columns.append("Chaikin_10_20_10")
+
+    mfi = calculate_money_flow_index(raw_data, lookback=5).unsqueeze(0)
+    data = torch.cat((data, mfi), dim=0)
+    columns.append("MFI_5")
+
+    mfi = calculate_money_flow_index(raw_data, lookback=10).unsqueeze(0)
+    data = torch.cat((data, mfi), dim=0)
+    columns.append("MFI_10")
+
+    mfi = calculate_money_flow_index(raw_data, lookback=20).unsqueeze(0)
+    data = torch.cat((data, mfi), dim=0)
+    columns.append("MFI_20")
+
+    prices = raw_data
+    data = torch.cat((data, prices), dim=0)
+    columns.append("close")
+    columns.append("high")
+    columns.append("low")
+    columns.append("open")
+    columns.append("volume")
+    # TODO pass prices
     # time_related_data = np.array([indexes.day_of_week, indexes.day, indexes.day_of_year, indexes.month, indexes.quarter, indexes.is_leap_year, indexes.is_month_start, indexes.is_month_end, indexes.is_quarter_start, indexes.is_quarter_end], dtype=np.float32)
     # time_related_data = torch.tensor(time_related_data, dtype=torch.float32)
     # data = torch.cat((time_related_data, data), dim=0)
@@ -403,6 +508,7 @@ if __name__ == "__main__":
         check_if_already_downloaded=False,
     )
 
+# TODO recheck how all indicators are calculated
 
 def calculate_volatility_log_ret(
     data: torch.Tensor, lookback: int = 30, dim: int = 0
@@ -411,13 +517,12 @@ def calculate_volatility_log_ret(
     volatility = [0, 0]
     for i in range(2, data.shape[1]):
         if i < lookback:
-            volatility.append(log_returns[:i].std())
+            volatility.append(log_returns[:i + 1].std())
         else:
-            volatility.append(log_returns[i - lookback : i].std())
+            volatility.append(log_returns[i - lookback + 1: i + 1].std())
     volatility[0] = volatility[2]  # maybe wrong, but its just two datapoints
     volatility[1] = volatility[2]
     return torch.tensor(volatility)
-
 
 def calculate_average_true_range(
     data: torch.Tensor, lookback: int = 14
@@ -425,9 +530,8 @@ def calculate_average_true_range(
     ADRr = data[6, :]
     ATRr = []
     for i in range(data.shape[1]):
-        ATRr.append(ADRr[max(i - lookback, 0) : i + 1].sum() / min(max(i - lookback,1), i + 1))
+        ATRr.append(ADRr[max(i - lookback + 1, 0) : i + 1].sum() / min(lookback, i + 1))
     return torch.tensor(ATRr)
-
 
 def calculate_moving_average(
     data: torch.Tensor, lookback: int = 10, dim: int = 0
@@ -435,7 +539,7 @@ def calculate_moving_average(
     price = data[dim, :]
     SMAr = []
     for i in range(data.shape[1]):
-        SMAr.append(price[max(i - lookback, 0) : i + 1].mean())
+        SMAr.append(price[max(i - lookback + 1, 0) : i + 1].mean())
     return torch.tensor(SMAr)
 
 def calculate_moving_average_returns(
@@ -444,7 +548,7 @@ def calculate_moving_average_returns(
     SMAR = (price[lookback:] - price[:-lookback])/lookback
     temp = torch.zeros(lookback)
     for i in range(1,lookback):
-        temp[i] = price[i] - price[0]/i
+        temp[i] = (price[i] - price[0])/i
     temp[0] = temp[1]
     return torch.cat((temp,SMAR))
 
@@ -457,7 +561,7 @@ def calculate_volatility_returns(
         if i < lookback:
             volatility.append(returns[:i].std())
         else:
-            volatility.append(returns[i - lookback : i].std())
+            volatility.append(returns[i - lookback: i].std())
     volatility[0] = volatility[2]  # maybe wrong, but its just two datapoints
     volatility[1] = volatility[2]
     return torch.tensor(volatility)
@@ -474,6 +578,59 @@ def calculate_ema_returns(
         else:
             ema[i] = price[i] * multiplier + ema[i - 1] * (1 - multiplier)
     return ema
+
+def calculate_close_line_values(data: torch.Tensor) -> torch.Tensor:
+    close = data[0, :]
+    high = data[1, :]
+    low = data[2, :]
+    clv = (2*close - high - low)/(high - low)
+    return clv
+
+def calculate_accumulation_distribution_index(
+    data: torch.Tensor, lookback: int = 10
+):
+    volume = data[4, :]
+    clv = calculate_close_line_values(data)
+    ad = torch.zeros(data.shape[1])
+    for i in range(data.shape[1]):
+        ad[i] = (volume[max(i - lookback + 1, 0) : i + 1] * clv[max(i - lookback + 1, 0) : i + 1]).sum()
+    return ad
+
+def calculate_volume_price_trend(data: torch.Tensor, lookback: int = 10):
+    volume = data[4, :]
+    price = data[0, :]
+    returns = torch.zeros(data.shape[1])
+    returns[1:] = (price[1:] - price[:-1])/price[:-1]
+    returns[0] = returns[1]
+    vpt = torch.zeros(data.shape[1])
+    for i in range(data.shape[1]):
+        vpt[i] = (volume[max(i - lookback + 1, 0) : i + 1] * returns[max(i - lookback + 1, 0) : i + 1]).sum()
+    return vpt
+
+def calculate_ema(daily_values: torch.Tensor, lookback: int = 10) -> torch.Tensor: # to calculate ema for anything
+    ema = torch.zeros(daily_values.shape[0])
+    multiplier = 2 / (lookback + 1)
+    for i in range(daily_values.shape[0]):
+        if i == 0:
+            ema[i] = daily_values[i] * multiplier
+        else:
+            ema[i] = daily_values[i] * multiplier + ema[i - 1] * (1 - multiplier)
+    return ema
+
+def calculate_money_flow_index(data: torch.Tensor, lookback: int = 10):
+    volume = data[4, :]
+    close = data[0, :]
+    high = data[1, :]
+    low = data[2, :]
+    typical_price = (high + low + close) / 3
+    money_flow = typical_price * volume
+    signs = torch.zeros(data.shape[1])
+    signs[1:] = torch.sign(typical_price[1:] - typical_price[:-1])
+    mfi = torch.zeros(data.shape[1])
+    for i in range(data.shape[1]):
+        pos_flow = (money_flow[max(i - lookback + 1, 0) : i + 1] * (signs[max(i - lookback + 1, 0) : i + 1] == 1)).sum()
+        mfi[i] = pos_flow/(money_flow[max(i - lookback + 1, 0) : i + 1]).sum()
+    return mfi
 
 # 1. Major Equity Market Indexes (Broad Market Sentiment & Benchmarks):
 # ^GSPC (S&P 500): Tracks 500 large-cap U.S. stocks. Excellent for overall U.S. market health.

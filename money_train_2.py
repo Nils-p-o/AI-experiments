@@ -1,6 +1,4 @@
 # TODO add more features, add more indicators (quarterly reports, EPS, etc.)
-# TODO upgrade model architecture to be what i envisioned TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO
-# plus, add more metrics/engineered features
 # TODO test putting all input features as part of sequence?
 
 # TODO add r squared to loss metrics
@@ -10,12 +8,12 @@ import os
 import argparse
 import pytorch_lightning as pl
 from pytorch_lightning.callbacks import ModelCheckpoint, EarlyStopping
-from training.money_experiment import MoneyExperiment
+from training.money_experiment_2 import MoneyExperiment
 
 from training.utils import (
     count_parameters,
 )
-from training.data_loaders.stocks_time_series import (
+from training.data_loaders.stocks_time_series_2 import (
     FinancialNumericalDataModule,
     download_numerical_financial_data
 )
@@ -24,8 +22,8 @@ from pytorch_lightning.loggers import TensorBoardLogger
 import torch
 from torch.nn.attention import SDPBackend
 
-from transformer_arch.money.money_former import Money_former
-from transformer_arch.money.money_former_DINT import Money_former_DINT
+from transformer_arch.money.money_former_2 import Money_former
+from transformer_arch.money.money_former_DINT_2 import Money_former_DINT
 
 
 def proceed(args: argparse.Namespace):
@@ -95,11 +93,10 @@ def proceed(args: argparse.Namespace):
     # vocab_size = data_module.get_vocab_size()
     args.input_features = len(data_module._metadata["columns"])
     # --- Model Definition ---
-    match architecture:
+    match architecture: # TODO auto format qk_rope_dim for non MLA (currently all of them)
         case "Money_former":
             model = Money_former(
                 args=args
-                # vocab_size=vocab_size
             )
         case "Money_former_DINT":
             model = Money_former_DINT(
@@ -159,7 +156,7 @@ def proceed(args: argparse.Namespace):
     model_dir = f"models"
     if not os.path.exists(model_dir):
         os.makedirs(model_dir)
-    torch.save(experiment.model, f"{model_dir}/money_{args.architecture}_{args.dataset}_{name.split('/')[-1]}.pth") # TODO make this more specific
+    torch.save(experiment.model, f"{model_dir}/{args.architecture}_{name.split('/')[-1]}.pth") # TODO make this more specific
     print("Model saved.")
     return
 
@@ -189,7 +186,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Train a Transformer model.")
 
     parser.add_argument(
-        "--config", type=str, default="./experiment_configs/Money_test.json", help="Path to config file."
+        "--config", type=str, default="./experiment_configs/Money_test_2.json", help="Path to config file."
     )
     if parser.parse_known_args()[0].config != "":
         with open(parser.parse_known_args()[0].config, "r") as f:
