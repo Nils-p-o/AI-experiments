@@ -103,6 +103,10 @@ was multiplying input embeddings by sqrt(d_model) instead of dividing them, fml
 attention didnt add up to 1.0 in DINT, because was adding mean along wrong dimention, which i though would mean it was cheating, but apparently, it was just
 a little worse than it was supposed to be
 
+Was correct the first time, misremembered how DINT attention was supposed to work
+
+miscoded seen/unseen accuracy (need to code less while half asleep)
+
 
 # 1. Major Equity Market Indexes (Broad Market Sentiment & Benchmarks):
 # ^GSPC (S&P 500): Tracks 500 large-cap U.S. stocks. Excellent for overall U.S. market health.

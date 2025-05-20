@@ -3,6 +3,8 @@
 
 # TODO add r squared to loss metrics
 
+# TODO seperate loss into seen and unseen, maybe scale unseen accordingly?
+
 import json
 import os
 import argparse
@@ -63,7 +65,7 @@ def proceed(args: argparse.Namespace):
         f"type: {type} LLaMa seq_len:{seq_len} d_model:{d_model} d_ff:{d_ff} num_layers:{num_layers} nhead:{nhead} dropout:{dropout} lr:{lr} t_total:{t_total} warmup_steps:{warmup_steps} t_0:{t_0} t_mult:{t_mult} lr_mult:{lr_mult} batch_size:{batch_size}"
     )
 
-    name = f"{args.dataset}/{type}_{architecture}_{seq_len}_{d_model}_{d_ff}_{num_layers}_{nhead}_{batch_size}"
+    name = f"{args.dataset}/post_causality_fix/{type}_{architecture}_{seq_len}_{d_model}_{d_ff}_{num_layers}_{nhead}_{batch_size}"
     if extra_descriptor != "":
         name = name + "_" + extra_descriptor
     

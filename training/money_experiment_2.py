@@ -32,7 +32,6 @@ def get_direction_accuracy_returns(actual_returns, predicted_returns, thresholds
         acc_flat = ((actual_movements==0) * (predicted_movements==0)).sum()/(actual_movements==0).sum()
 
     total_acc = (actual_movements == predicted_movements).sum() / actual_movements.numel()
-    # TODO for seperation between sequences too (prob with a for loop)
 
     # per target
     actual_up = (actual_movements==1).sum(dim=(0,1,3)).unsqueeze(0)
@@ -142,8 +141,8 @@ class MoneyExperiment(pl.LightningModule):
         self.t_mult = t_mult
         self.lr_mult = lr_mult
         self.batch_size = batch_size
-        self.loss_fn = nn.MSELoss() # MASE (NLL for distribution)
-        # self.loss_fn = nn.L1Loss()
+        # self.loss_fn = nn.MSELoss() # MASE (NLL for distribution)
+        self.loss_fn = nn.L1Loss()
         self.MSE = nn.MSELoss()
         self.MAE = nn.L1Loss()
         self.threshold = 0.01
@@ -163,11 +162,11 @@ class MoneyExperiment(pl.LightningModule):
         time_preprocessing_start = time.time_ns()
         # recieve in shapes (batch_size, features, seq_len, (targets 1), num_sequences)
         inputs, labels = batch 
-        inputs = inputs[:,:,:-9,:]
+        batch_size, num_features, seq_len, num_sequences = inputs.shape
         
         known_inputs = inputs[:,0, :].unsqueeze(2) # (batch_size, seq_len, 1, num_sequences)
 
-        targets = labels[:,:-9,:,:] # (batch_size, (features 1), seq_len, targets, num_sequences)
+        targets = labels # (batch_size, (features 1), seq_len, targets, num_sequences)
 
         target_input_means = known_inputs.mean(dim=1, keepdim=True).tile(1, known_inputs.shape[1],1,1)
         target_input_stds = known_inputs.std(dim=1, keepdim=True).tile(1, known_inputs.shape[1],1,1)
@@ -179,7 +178,7 @@ class MoneyExperiment(pl.LightningModule):
         means_of_additonal_inputs = additional_inputs.mean(dim=1, keepdim=True).tile(1, additional_inputs.shape[1],1,1)
         stds_of_additonal_inputs = additional_inputs.std(dim=1, keepdim=True).tile(1, additional_inputs.shape[1],1,1)
         full_inputs = torch.cat([norm_inputs, (additional_inputs-means_of_additonal_inputs)/stds_of_additonal_inputs], dim=2)
-        # full_inputs = torch.cat([full_inputs, target_input_means, means_of_additonal_inputs, target_input_stds, stds_of_additonal_inputs], dim=2)
+        # full_inputs = torch.cat([full_inputs, target_input_means, target_input_stds], dim=2)
         full_inputs = full_inputs.transpose(2, 3)
 
         seperator = torch.zeros((targets.shape[0], 1),dtype=torch.int, device=inputs.device) # (batch_size, 1)
@@ -215,7 +214,19 @@ class MoneyExperiment(pl.LightningModule):
             pred_variance = nn.functional.softplus(raw_pred_variance)
             loss = self.loss_fn(preds, targets, pred_variance)
         else:
-            loss = self.loss_fn(preds, targets)
+            loss = 0
+            target_weights = [2.0, 1.0, 0.5]
+            seen_unseen_weights = [1.0, 1.0]
+            # TODO seen/unseen weights
+            for i in range(len(self.pred_indices)):
+                seen_current_preds = preds[:, :-self.pred_indices[i], i, :]
+                unseen_current_preds = preds[:, -self.pred_indices[i]:, i, :]
+                seen_current_targets = targets[:, :-self.pred_indices[i], i, :]
+                unseen_current_targets = targets[:, -self.pred_indices[i]:, i, :]
+                loss += target_weights[i] * (seen_unseen_weights[0] * 2/sum(seen_unseen_weights)) * self.loss_fn(seen_current_preds, seen_current_targets) * ((seq_len-self.pred_indices[i])/seq_len)
+                loss += target_weights[i] * (seen_unseen_weights[1] * 2/sum(seen_unseen_weights)) * self.loss_fn(unseen_current_preds, unseen_current_targets) * (self.pred_indices[i]/seq_len)
+            loss = loss / sum(target_weights)
+            # loss = self.loss_fn(preds, targets)
         
         naive_loss = self.loss_fn(torch.zeros_like(targets), targets) 
 
@@ -224,13 +235,13 @@ class MoneyExperiment(pl.LightningModule):
         # direction_total_acc_for_loss = (actual_movements_for_loss == predicted_movements_for_loss).sum() / actual_movements_for_loss.numel()
 
         # adjusting loss to be scaled relative to persistance model and dicertional acc
-        loss = loss / (naive_loss + 1e-6)
+        # loss = loss / (naive_loss + 1e-6) # testing for now
         # loss = loss / (direction_total_acc_for_loss + 1e-6)
 
         if stage == "train":
             cummulative_times["loss"] += (time.time_ns()-time_loss_calc_start)/1e6
 
-        self.log(f"Loss/{stage}_loss", loss, prog_bar=True, on_step=(stage == 'train'), on_epoch=(stage != 'train'), logger=True, sync_dist=True)
+        self.log(f"Loss/{stage}_loss", loss/(naive_loss + 1e-6), prog_bar=True, on_step=(stage == 'train'), on_epoch=(stage != 'train'), logger=True, sync_dist=True)
         # self.log(f"Accuracy/{stage}_accuracy", direction_total_acc_for_loss, on_step=(stage == 'train'), on_epoch=(stage != 'train'), logger=True, sync_dist=True)
 
         calculate_detailed_metrics = False
@@ -257,17 +268,14 @@ class MoneyExperiment(pl.LightningModule):
                 for i in range(self.num_sequences):
                     self.log(f"Accuracy_finer/{stage}_expected_max_acc_{self.tickers[i]}", expected_acc_sequence[i], **current_log_opts)
             if stage == "val":
-                seen_targets = labels[:,:-10,:,:]
-                unseen_targets = labels[:,-10:,:,:]
-
                 for i in range(len(self.pred_indices)):
                     seen_current_preds = preds[:,:-self.pred_indices[i],i]
-                    seen_current_targets = seen_targets[:,(self.pred_indices[i]-1):,i]
+                    seen_current_targets = targets[:,:-self.pred_indices[i],i]
                     seen_MSE = self.MSE(seen_current_preds, seen_current_targets)
                     seen_MAE = self.MAE(seen_current_preds, seen_current_targets)
 
                     unseen_current_preds = preds[:,-self.pred_indices[i]:,i]
-                    unseen_current_targets = unseen_targets[:,:self.pred_indices[i],i]
+                    unseen_current_targets = targets[:,-self.pred_indices[i]:,i]
                     unseen_MSE = self.MSE(unseen_current_preds, unseen_current_targets)
                     unseen_MAE = self.MAE(unseen_current_preds, unseen_current_targets)
 

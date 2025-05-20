@@ -39,9 +39,9 @@ class FinancialNumericalDataset(Dataset):
 
     def __getitem__(self, idx):
         if self.preload:
-            input_sequence = self.sequences_data[:, idx : idx + self.seq_len + 9, 0, :]
+            input_sequence = self.sequences_data[:, idx : idx + self.seq_len, 0, :]
             target_sequence = self.sequences_data[
-                0, idx + 1 : idx + self.seq_len + 1 + 9, :, :
+                0, idx + 1 : idx + self.seq_len + 1, :, :
             ]
             return input_sequence, target_sequence
         else:  # TODO?
@@ -521,7 +521,7 @@ def download_numerical_financial_data(
             for i in range(1, len(target_dates)):
                 if target_dates[i] == max(target_dates):
                     temp_returns = (
-                        temp_raw_data[: temp_raw_data.shape[0], target_dates[i] :]
+                        temp_raw_data[: temp_raw_data.shape[0], target_dates[i]:]
                         - temp_raw_data[
                             : temp_raw_data.shape[0], : -(max(target_dates))
                         ]
@@ -565,10 +565,113 @@ def download_numerical_financial_data(
             temp_data[:, 20:, :].unsqueeze(-1)
         )  # getting rid of some trashy-ish data points
 
-    column_to_id = {column: i for i, column in enumerate(columns)}
 
-    data = torch.cat(data, dim=-1)
+    data = torch.cat(data, dim=-1) # (features, time series, target dates, tickers)
     data_length = data.shape[1]
+
+
+    # adding VIX data
+    raw_vix_data = yf.download(
+        "^VIX", start=start_date, end=end_date, progress=False, auto_adjust=False
+    )
+    vix_columns = [raw_vix_data.columns.levels[0][1]]
+    raw_vix_data = torch.tensor(raw_vix_data[vix_columns].values, dtype=torch.float32).transpose(0,1)
+    # TODO if the start date changes to > 1997 ish, you can add a lot more features, because vix changes from daily to hourly (probably)
+    for i in range(len(vix_columns)):
+        vix_columns[i] = "vix_" + vix_columns[i]
+
+    vix_returns = (raw_vix_data[:,1:] - raw_vix_data[:, :-1]) / raw_vix_data[:, :-1]
+    vix_returns = torch.cat((vix_returns[:, :1], vix_returns), dim=1)
+    vix_data = torch.cat((raw_vix_data, vix_returns), dim=0)
+    vix_columns.append("vix_returns")
+
+    sma_vix = calculate_moving_average(vix_data, lookback=5, dim=0)
+    vix_data = torch.cat((vix_data, sma_vix.unsqueeze(0)), dim=0)
+    vix_columns.append("vix_sma_5")
+
+    sma_vix = calculate_moving_average(vix_data, lookback=10, dim=0)
+    vix_data = torch.cat((vix_data, sma_vix.unsqueeze(0)), dim=0)
+    vix_columns.append("vix_sma_10")
+
+    sma_vix = calculate_moving_average(vix_data, lookback=20, dim=0)
+    vix_data = torch.cat((vix_data, sma_vix.unsqueeze(0)), dim=0)
+    vix_columns.append("vix_sma_20")
+
+    ema_vix = calculate_ema(raw_vix_data[0,:], lookback=5)
+    vix_data = torch.cat((vix_data, ema_vix.unsqueeze(0)), dim=0)
+    vix_columns.append("vix_ema_5")
+
+    ema_vix = calculate_ema(raw_vix_data[0,:], lookback=10)
+    vix_data = torch.cat((vix_data, ema_vix.unsqueeze(0)), dim=0)
+    vix_columns.append("vix_ema_10")
+
+    ema_vix = calculate_ema(raw_vix_data[0,:], lookback=20)
+    vix_data = torch.cat((vix_data, ema_vix.unsqueeze(0)), dim=0)
+    vix_columns.append("vix_ema_20")
+
+
+    # just a copy of whats above but for vix
+    vix_data = vix_data[:, 1:]
+
+    if max(target_dates) != 1:
+        times_vix_data = vix_data[
+            : raw_vix_data.shape[0], : -(max(target_dates) - 1)
+        ].unsqueeze(
+            -1
+        )
+        temp_vix_indicators = vix_data[
+            raw_vix_data.shape[0] :, : -(max(target_dates) - 1)
+        ].unsqueeze(
+            -1
+        )
+        for i in range(1, len(target_dates)):
+            if target_dates[i] == max(target_dates):
+                temp_returns = (
+                    raw_vix_data[: raw_vix_data.shape[0], target_dates[i] :]
+                    - raw_vix_data[
+                        : raw_vix_data.shape[0], : -(max(target_dates))
+                    ]
+                ) / raw_vix_data[: raw_vix_data.shape[0], : -(max(target_dates))]
+                temp_vix_indicators = torch.cat(
+                    (
+                        temp_vix_indicators,
+                        vix_data[
+                            raw_vix_data.shape[0] :, target_dates[i] - 1 :
+                        ].unsqueeze(-1),
+                    ),
+                    dim=-1,
+                )
+            else:
+                temp_returns = (
+                    raw_vix_data[
+                        : raw_vix_data.shape[0],
+                        target_dates[i] : -(max(target_dates) - target_dates[i]),
+                    ]
+                    - raw_vix_data[
+                        : raw_vix_data.shape[0], : -(max(target_dates))
+                    ]
+                ) / raw_vix_data[: raw_vix_data.shape[0], : -(max(target_dates))]
+                temp_vix_indicators = torch.cat(
+                    (
+                        temp_vix_indicators,
+                        vix_data[
+                            raw_vix_data.shape[0] :,
+                            target_dates[i]
+                            - 1 : -(max(target_dates) - target_dates[i]),
+                        ].unsqueeze(-1),
+                    ),
+                    dim=-1,
+                )
+            times_vix_data = torch.cat(
+                (times_vix_data, temp_returns.unsqueeze(-1)), dim=-1
+            )
+        vix_data = torch.cat((times_vix_data, temp_vix_indicators), dim=0)
+    vix_data = vix_data[:, 20:, :].unsqueeze(-1)
+
+    data = torch.cat((data, vix_data.repeat(1, 1, 1, len(tickers))), dim=0)
+    columns = columns + vix_columns
+
+    column_to_id = {column: i for i, column in enumerate(columns)}
 
     if (torch.isnan(data)).any() or (torch.isinf(data)).any():
         print("Data contains NaN or Inf values.")
