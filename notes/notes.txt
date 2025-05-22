@@ -54,6 +54,8 @@ adding s&p 500 helps AAPL prediction, but more tech stocks seem to hurt. (likely
 still missing some flavours of data in input features (VIX, for example)
 overnight trading to fill gaps in info? (or readadd times)
 
+threshold plays a big part in accuracy
+
 V1:
 (from training on one stock and 3 points in time for prediction)
 NLL (gaussian) is a bad idea, horribly overfits, even with orthograd (retry now that i am using returns)

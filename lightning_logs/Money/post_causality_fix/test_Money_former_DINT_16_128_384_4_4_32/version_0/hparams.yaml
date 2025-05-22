@@ -1,0 +1,40 @@
+args: !!python/object:argparse.Namespace
+  architecture: Money_former_DINT
+  batch_size: 32
+  config: ./experiment_configs/Money_test_2.json
+  d_ff: 384
+  d_model: 128
+  dataset: Money
+  dropout: 0.1
+  dtype: fp32
+  experiment_notes: attn mask, more indicators, time data, (VIX data, MAE, unseen
+    weighted loss)
+  extra_descriptor: ''
+  indices_to_predict:
+  - 1
+  - 5
+  - 10
+  input_features: 182
+  lr: 0.0003
+  lr_mult: 0.5
+  nhead: 4
+  num_layers: 4
+  num_params: 883331
+  orthograd: true
+  predict_gaussian: false
+  qk_rope_dim: 16
+  seq_len: 16
+  t_0: 9000
+  t_mult: 1.5
+  t_total: 10000
+  tickers:
+  - AAPL
+  - ^GSPC
+  type: test
+  warmup_steps: 1000
+batch_size: 32
+learning_rate: 0.0003
+lr_mult: 0.5
+t_0: 10000
+t_mult: 1.5
+warmup_steps: 1000
