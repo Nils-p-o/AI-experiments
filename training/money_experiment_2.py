@@ -145,7 +145,7 @@ class MoneyExperiment(pl.LightningModule):
         self.loss_fn = nn.L1Loss()
         self.MSE = nn.MSELoss()
         self.MAE = nn.L1Loss()
-        self.threshold = 0.01
+        self.threshold = 0.003
         self.pred_indices = args.indices_to_predict
         self.save_hyperparameters(
             ignore=["model"]
@@ -173,12 +173,13 @@ class MoneyExperiment(pl.LightningModule):
 
         norm_inputs = (known_inputs - target_input_means) / target_input_stds
 
-        additional_inputs = inputs[:, 1:, :, :]
+        additional_inputs = torch.cat((inputs[:, 1:71, :, :], inputs[:, 86:, :, :]), dim=1) # (batch_size, features, seq_len, num_sequences)
         additional_inputs = additional_inputs.transpose(1, 2) # (batch_size, seq_len, features, num_sequences)
         means_of_additonal_inputs = additional_inputs.mean(dim=1, keepdim=True).tile(1, additional_inputs.shape[1],1,1)
         stds_of_additonal_inputs = additional_inputs.std(dim=1, keepdim=True).tile(1, additional_inputs.shape[1],1,1)
-        full_inputs = torch.cat([norm_inputs, (additional_inputs-means_of_additonal_inputs)/stds_of_additonal_inputs], dim=2)
+        full_inputs = torch.cat([norm_inputs, (additional_inputs-means_of_additonal_inputs)/(stds_of_additonal_inputs + 1e-6)], dim=2)
         # full_inputs = torch.cat([full_inputs, target_input_means, target_input_stds], dim=2)
+        full_inputs = torch.cat([full_inputs, inputs[:,71:86,:,:].transpose(1,2)], dim=2) # adding time based data (need to be careful with this)
         full_inputs = full_inputs.transpose(2, 3)
 
         seperator = torch.zeros((targets.shape[0], 1),dtype=torch.int, device=inputs.device) # (batch_size, 1)
@@ -215,10 +216,9 @@ class MoneyExperiment(pl.LightningModule):
             loss = self.loss_fn(preds, targets, pred_variance)
         else:
             loss = 0
-            target_weights = [2.0, 1.0, 0.5]
-            seen_unseen_weights = [1.0, 1.0]
-            # TODO seen/unseen weights
+            target_weights = [1.0, 1.0, 1.0]
             for i in range(len(self.pred_indices)):
+                seen_unseen_weights = [self.pred_indices[i], seq_len-self.pred_indices[i]]
                 seen_current_preds = preds[:, :-self.pred_indices[i], i, :]
                 unseen_current_preds = preds[:, -self.pred_indices[i]:, i, :]
                 seen_current_targets = targets[:, :-self.pred_indices[i], i, :]
@@ -325,6 +325,13 @@ class MoneyExperiment(pl.LightningModule):
 
                 self.log(f"IR/{stage}_target_{self.pred_indices[i]}", temp_IR, **current_log_opts)
                 self.log(f"IC/{stage}_target_{self.pred_indices[i]}", mean_IC_target, **current_log_opts)
+
+                unseen_ICs = ICs[:,-self.pred_indices[i]:, i][~torch.isnan(ICs[:,-self.pred_indices[i]:, i])]
+                if len(unseen_ICs) > 1:
+                    self.log(f"IR/{stage}_target_{self.pred_indices[i]}_unseen", unseen_ICs.mean()/(unseen_ICs.std() + 1e-9), **current_log_opts)
+                else:
+                    self.log(f"IR/{stage}_target_{self.pred_indices[i]}_unseen", torch.tensor(float('nan'), device=ICs.device), **current_log_opts)
+                self.log(f"IC/{stage}_target_{self.pred_indices[i]}_unseen", unseen_ICs.mean(), **current_log_opts)
                 self.log(f"Target_Accuracy/{stage}_target_{self.pred_indices[i]}", acc_target[i], **current_log_opts)
 
 

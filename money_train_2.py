@@ -3,7 +3,6 @@
 
 # TODO add r squared to loss metrics
 
-# TODO seperate loss into seen and unseen, maybe scale unseen accordingly?
 
 import json
 import os
