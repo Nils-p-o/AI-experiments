@@ -48,6 +48,8 @@ class Money_former_DINT(nn.Module):
 
         self.value_inputs = nn.ModuleList([nn.Linear(self.input_features, self.d_model) for _ in range(1)])
         # self.value_input = nn.Linear(self.input_features, self.d_model) # encodes numerical input
+        # self.shared_value_input = nn.Linear(self.input_features, (self.d_model//4 *3))
+        # self.unique_value_input = nn.ModuleList([nn.Linear(self.input_features, (self.d_model//4)) for _ in range(len(args.tickers))])
         self.norm = nn.RMSNorm(self.d_model)
         
         self.predict_distribution = args.predict_gaussian
@@ -71,7 +73,11 @@ class Money_former_DINT(nn.Module):
 
         tickers = self.ticker_embedding(tickers).unsqueeze(1)
         tickers = tickers.repeat(1, seq_len + 1, 1, 1)
-        
+        # shared_temp_x = self.shared_value_input(x)
+        # unique_temp_x = torch.zeros(batch_size, seq_len, num_sequences, self.d_model//4, device=x.device)
+        # for i in range(num_sequences):
+        #     unique_temp_x[:,:,i,:] = self.unique_value_input[i](x[:,:,i,:])
+        # x = torch.cat([shared_temp_x, unique_temp_x], dim=-1)
         temp_x = torch.zeros(batch_size, seq_len, num_sequences, self.d_model, device=x.device)
         for i in range(num_sequences):
             temp_x[:,:,i,:] = self.value_inputs[0](x[:,:,i,:])
@@ -311,6 +317,7 @@ class DINT_MHA(nn.Module):
         # a_weights = a.detach().cpu()
         # plt.imshow(torch.sum(torch.sum(a_weights, dim=1), dim=0))
         # plt.show()
+        a = a.masked_fill(mask[:,:self.nhead,:,:] == 1, 0)
         a = self.dropout(a)
 
 
