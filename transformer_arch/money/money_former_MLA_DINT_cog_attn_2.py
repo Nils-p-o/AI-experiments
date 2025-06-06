@@ -1,10 +1,5 @@
 # tries to predict movements in the stock market
-"""first version TODO list:
-
-create model architecture:
-start with MLA?
-
-
+"""
 further version TODO list:
 embeddings for sequence category (stock price/return, general market, etc.)
 
@@ -22,7 +17,7 @@ from ..components import get_causal_mask  # TODO at v2
 import matplotlib.pyplot as plt
 
 
-class Money_former_DINT(nn.Module):
+class Money_former_MLA_DINT_cog_attn(nn.Module):
     def __init__(self, args):  # , dtype=torch.float32):
         super().__init__()
         # args.dtype = dtype
@@ -38,11 +33,11 @@ class Money_former_DINT(nn.Module):
 
         self.ticker_embedding = nn.Embedding(len(args.tickers), self.d_model)
         self.shared_value_input = nn.Linear(
-            self.input_features, (self.d_model // 4 * 3)
+            self.input_features, (self.d_model // 4 * 3), bias=False
         )
         self.unique_value_input = nn.ModuleList(
             [
-                nn.Linear(self.input_features, (self.d_model // 4))
+                nn.Linear(self.input_features, (self.d_model // 4), bias=False)
                 for _ in range(len(args.tickers))
             ]
         )
@@ -51,11 +46,11 @@ class Money_former_DINT(nn.Module):
         self.predict_distribution = args.predict_gaussian
         if self.predict_distribution:
             self.out = nn.Linear(
-                self.d_model, len(args.indices_to_predict) * 2
+                self.d_model, len(args.indices_to_predict) * 2, bias=False
             )  # decodes to mean and std
         else:
             self.out = nn.Linear(
-                self.d_model, len(args.indices_to_predict)
+                self.d_model, len(args.indices_to_predict), bias=False
             )  # decodes to target(s)
 
         self.register_buffer("freqs_cis", precompute_freqs_cis(args), persistent=False)
@@ -108,7 +103,7 @@ class Money_former_block(nn.Module):
     def __init__(self, args, depth=0):
         super().__init__()
         self.nhead = args.nhead
-        self.mha = DINT_MHA(args, depth)
+        self.mha = custom_MHA(args, depth)
         self.norm1 = nn.RMSNorm(args.d_model)
         self.norm2 = nn.RMSNorm(args.d_model)
         self.ff = SwiGLU_feed_forward(args)
@@ -128,82 +123,33 @@ class Money_former_block(nn.Module):
         return x
 
 
-class MHA(nn.Module):
-    def __init__(self, args):
+class custom_MHA(nn.Module): # a mix of MLA and DINT
+    def __init__(self, args, depth=0):
         super().__init__()
         self.d_model = args.d_model
         self.nhead = args.nhead
-        self.head_dim = self.d_model // self.nhead
-        assert self.head_dim * self.nhead == self.d_model
-
-        self.q_linear = nn.Linear(self.d_model, self.d_model)
-        self.k_linear = nn.Linear(self.d_model, self.d_model)
-        self.v_linear = nn.Linear(self.d_model, self.d_model)
-
-        self.o = nn.Linear(self.d_model, self.d_model)
-        self.dropout = nn.Dropout(args.dropout)
-
-    def forward(self, x, mask=None, freqs_cis=None):
-        batch_size, seq_len, _ = x.shape
-
-        # Project and split x into multiple heads
-        q = self.q_linear(x).view(batch_size, seq_len, self.nhead, self.head_dim)
-        k = self.k_linear(x).view(batch_size, seq_len, self.nhead, self.head_dim)
-        v = (
-            self.v_linear(x)
-            .view(batch_size, seq_len, self.nhead, self.head_dim)
-            .transpose(1, 2)
-        )  # (batch_size, nhead, seq_len, head_dim)
-        q_sep, q = q.split([1, seq_len - 1], dim=1)
-        k_sep, k = k.split([1, seq_len - 1], dim=1)
-        q = apply_rotary_emb(q, freqs_cis=freqs_cis)
-        k = apply_rotary_emb(k, freqs_cis=freqs_cis)
-
-        q = torch.cat([q_sep, q], dim=1).transpose(1, 2)
-        k = torch.cat([k_sep, k], dim=1).transpose(1, 2)
-
-        a = torch.matmul(q, k.transpose(-2, -1)) / math.sqrt(self.head_dim)
-
-        # Apply mask if provided
-        if mask is not None:
-            a = a.masked_fill(mask == 1, -1e9)
-
-        a = torch.softmax(a, dim=-1)
-        a = self.dropout(a)
-
-        # Apply attention to values
-        attn_output = torch.matmul(a, v)
-
-        # Concatenate heads and project
-        attn_output = (
-            attn_output.transpose(1, 2)
-            .contiguous()
-            .view(batch_size, seq_len, self.d_model)
-        )
-
-        return self.dropout(self.o(attn_output))
-
-
-class DINT_MHA(nn.Module):
-    def __init__(self, args, depth=0, v1: bool = False):
-        super().__init__()
-        self.d_model = args.d_model
-        self.nhead = args.nhead
-        self.head_dim = (
-            args.head_dim
-        )  # technically half of this, but it gets confusing cuz its still one head, so...
+        self.head_dim = args.head_dim  # technically half of this, but it gets confusing cuz its still one head, so...
         # assert self.head_dim * self.nhead == self.d_model
 
-        # Separate Q projections for each head
-        self.q_linear = nn.Linear(self.d_model, self.nhead * self.head_dim)
-        self.k_linear = nn.Linear(self.d_model, self.nhead * self.head_dim)
-        self.v_linear = nn.Linear(self.d_model, self.nhead * self.head_dim)
+        self.kv_compression_dim = args.kv_compression_dim
+        self.q_compression_dim = args.q_compression_dim
+        self.rope_dim = args.qk_rope_dim
 
-        self.o = nn.Linear(self.nhead * self.head_dim, self.d_model)
+        self.kv_down = nn.Linear(self.d_model, self.kv_compression_dim + self.rope_dim, bias=False)
+        self.q_down = nn.Linear(self.d_model, self.q_compression_dim, bias=False)
+
+        self.kv_up = nn.Linear(self.kv_compression_dim, self.head_dim * self.nhead * 2, bias=False)
+        self.q_up = nn.Linear(self.q_compression_dim, (self.head_dim + self.rope_dim) * self.nhead, bias=False)
+
+        self.kv_norm = nn.RMSNorm(self.kv_compression_dim)
+        self.q_norm = nn.RMSNorm(self.q_compression_dim)
+
+        self.o = nn.Linear(self.nhead * self.head_dim, self.d_model, bias=False)
         self.dropout = nn.Dropout(args.dropout)
 
-        self.scaling = 1.0 / math.sqrt(self.head_dim // 2)
+        self.scaling = ((self.head_dim + self.rope_dim) // 2) ** -0.5
 
+        # DINT part
         self.lambda_init = lambda_init_fn(depth)
         self.lambda_k1 = nn.Parameter(
             torch.zeros(self.head_dim // 2, dtype=torch.float32).normal_(
@@ -232,70 +178,74 @@ class DINT_MHA(nn.Module):
         # # Now applied *after* attention, so normalize the head_dim
         # self.norm = nn.GroupNorm(self.num_groups_norm, self.nhead * self.head_dim)
 
-        self.v1 = v1
         self.num_sequences = len(args.tickers)
 
     def forward(self, x, mask=None, freqs_cis=None):
         batch_size, seq_len, _ = x.shape
         seq_per_stock = seq_len // self.num_sequences
 
-        q_proj = self.q_linear(x)
-        k_proj = self.k_linear(x)
-        v_proj = self.v_linear(x)
+        c_kv = self.kv_down(x)
+        c_kv, k_rope = c_kv.split([self.kv_compression_dim, self.rope_dim], dim=-1)
 
-        q = q_proj.view(
+        kv = self.kv_up(self.kv_norm(c_kv)).view(
             batch_size,
-            seq_per_stock,
-            self.num_sequences,
-            self.nhead * 2,
-            self.head_dim // 2,
-        ).permute(0, 1, 3, 4, 2)
-        k = k_proj.view(
-            batch_size,
-            seq_per_stock,
-            self.num_sequences,
-            self.nhead * 2,
-            self.head_dim // 2,
-        ).permute(0, 1, 3, 4, 2)
-        v = v_proj.view(batch_size, seq_len, self.nhead, self.head_dim).transpose(1, 2)
+            seq_len,
+            self.nhead,
+            self.head_dim*2
+        )
+        k, v = kv.split([self.head_dim, self.head_dim], dim=-1)
+        k = k.reshape(batch_size, seq_len, self.nhead*2, self.head_dim//2)
 
-        # --- RoPE ---
+        q = self.q_up(self.q_norm(self.q_down(x))).view(
+            batch_size,
+            seq_len,
+            self.nhead,
+            self.head_dim + self.rope_dim
+        )
+        q, q_rope = q.split([self.head_dim, self.rope_dim], dim=-1)
+        q = q.reshape(batch_size, seq_len, self.nhead*2, self.head_dim//2)
+
+        k_rope = k_rope.view(batch_size, seq_len, 1, self.rope_dim)
+        k_rope = k_rope.tile(1, 1, self.nhead, 1)
+
+        q_rope = q_rope.reshape(batch_size, seq_len, self.nhead*2, self.rope_dim//2)
+        k_rope = k_rope.reshape(batch_size, seq_len, self.nhead*2, self.rope_dim//2)
+        q_rope = q_rope.view(batch_size, seq_per_stock, self.num_sequences, self.nhead*2, self.rope_dim//2).permute(0, 1, 3, 4, 2)
+        k_rope = k_rope.view(batch_size, seq_per_stock, self.num_sequences, self.nhead*2, self.rope_dim//2).permute(0, 1, 3, 4, 2)
+
+        # --- RoPE (decoupled) ---
         for i in range(self.num_sequences):
-            q_temp = q[:, :, :, :, i]
-            k_temp = k[:, :, :, :, i]
-            q_sep, q_temp = q_temp.clone().split(
-                [1, (seq_len - 1) // self.num_sequences], dim=1
-            )
-            k_sep, k_temp = k_temp.clone().split(
-                [1, (seq_len - 1) // self.num_sequences], dim=1
-            )
+            q_temp = q_rope[:, :, :, :, i]
+            k_temp = k_rope[:, :, :, :, i]
+            q_sep, q_temp = q_temp.split([1, seq_per_stock - 1], dim=1)
+            k_sep, k_temp = k_temp.split([1, seq_per_stock - 1], dim=1)
             q_temp = apply_rotary_emb(q_temp, freqs_cis=freqs_cis)
             k_temp = apply_rotary_emb(k_temp, freqs_cis=freqs_cis)
-            q[:, :, :, :, i] = torch.cat([q_sep, q_temp], dim=1)
-            k[:, :, :, :, i] = torch.cat([k_sep, k_temp], dim=1)
+            q_rope[:, :, :, :, i] = torch.cat([q_sep, q_temp], dim=1)
+            k_rope[:, :, :, :, i] = torch.cat([k_sep, k_temp], dim=1)
+        
+        q_rope = q_rope.permute(0, 1, 4, 2, 3)
+        k_rope = k_rope.permute(0, 1, 4, 2, 3)
 
-        q_perm = q.permute(
-            0, 4, 1, 2, 3
-        ).contiguous()  # (batch, num_seq, S_per_stock, nhead*2, head_dim//2)
-        k_perm = k.permute(0, 4, 1, 2, 3).contiguous()
+        q_rope = q_rope.view(batch_size, seq_len, self.nhead*2, self.rope_dim//2)
+        k_rope = k_rope.view(batch_size, seq_len, self.nhead*2, self.rope_dim//2)
 
-        q = q_perm.reshape(
-            batch_size, seq_len, self.nhead * 2, self.head_dim // 2
-        )  # q_final shape: (batch, nhead*2, L_flat, head_dim//2)
-        k = k_perm.reshape(batch_size, seq_len, self.nhead * 2, self.head_dim // 2)
+        q = torch.cat([q, q_rope], dim=-1)
+        k = torch.cat([k, k_rope], dim=-1)
 
-        q = q.transpose(1, 2)  # (batch_size, 2*nhead, seq_len, head_dim/2)
-        k = k.transpose(1, 2)  # (batch_size, 2*nhead, seq_len, head_dim/2)
-        # v = v.transpose(1, 2)  # (batch_size, nhead, seq_len, head_dim)
+        q = q.transpose(1, 2)  # (batch_size, 2*nhead, seq_len, (head_dim+rope_dim)//2)
+        k = k.transpose(1, 2)  # (batch_size, 2*nhead, seq_len, (head_dim+rope_dim)//2)
+        v = v.transpose(1, 2)  # (batch_size, nhead, seq_len, head_dim)
 
         # --- Attention Calculation ---
         a = torch.matmul(q, k.transpose(-2, -1)) * self.scaling
         # (batch_size, 2*nhead, seq_len, seq_len)
 
+        # cog_attn
+        abs_a = torch.abs(a)
         if mask is not None:
-            a = a.masked_fill(mask == 1, -1e9)
-
-        a = torch.softmax(a, dim=-1)
+            abs_a = abs_a.masked_fill(mask == 1, -1e9)
+        a = torch.sign(a) * torch.softmax(abs_a, dim=-1)
 
         lambda_1 = torch.exp(torch.sum(self.lambda_k1 * self.lambda_q1, dim=-1))
         lambda_2 = torch.exp(torch.sum(self.lambda_k2 * self.lambda_q2, dim=-1))
@@ -336,8 +286,8 @@ class DINT_MHA(nn.Module):
 class SwiGLU_feed_forward(nn.Module):
     def __init__(self, args):
         super().__init__()
-        self.linear_in_gate = nn.Linear(args.d_model, args.d_ff * 2)
-        self.linear_out = nn.Linear(args.d_ff, args.d_model)
+        self.linear_in_gate = nn.Linear(args.d_model, args.d_ff * 2, bias=False)
+        self.linear_out = nn.Linear(args.d_ff, args.d_model, bias=False)
         self.dropout = nn.Dropout(args.dropout)
         self.d_model = args.d_model
 
@@ -358,7 +308,7 @@ def precompute_freqs_cis(args) -> torch.Tensor:
     # beta_slow: int = 1
     # mscale: float = 1.
 
-    dim = args.qk_rope_dim
+    dim = args.qk_rope_dim // 2 # TODO keep correct (//2 because DINT)
     max_seqlen = (
         args.seq_len * 4
     )  # might need to look at this, currently just the same as V3 so hopefully works fine

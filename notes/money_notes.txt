@@ -1,0 +1,120 @@
+similar to notes, but just for money former concenpt
+
+Money former
+V2:
+2 signifies using multiple time series sequences (the vision), might be merged into normal file, if performs better
+
+DINT is much better than just MHA, likely because of the denoising properties, potentially confirming my suspicions about the problem
+
+adding s&p 500 helps AAPL prediction, but more tech stocks seem to hurt. (likely need more macroeconomic indicators/indexes)
+still missing some flavours of data in input features (VIX, for example)
+overnight trading to fill gaps in info? (or readadd times)
+
+threshold plays a big part in accuracy
+
+for iteration speed purposes currently running models with ~4 attn heads, even though more seems to be better in general (2-3x faster than 20 or 30 heads)
+
+V1:
+(from training on one stock and 3 points in time for prediction)
+NLL (gaussian) is a bad idea, horribly overfits, even with orthograd (retry now that i am using returns)
+SGD is just worse than Adam
+
+Returns are the way to go!!! (much better than z normed prices)
+finally beats persistence model (kind of an achievement?)
+With returns, seems to learns everything within the first ~300 steps (makes sense, not really the most complicated dataset)
+
+means and stds dont seem bad? to feed as additonal input features, as the acc went down, but it seems more stable?
+
+need waaaay more data, overfits (starts to do it) in ~1000 steps
+higher batch sizes are very good (faster)
+
+ok, scratch that, apparently i just needed to reduce the seq_len, 
+now its weirdly good and does not really overfit, so thats cool, ig
+
+lower model dim seems to help 
+lower head dim too, but better to reduce both at once
+
+#########current flaws, that need fixing asap##########
+
+
+TODOs
+reorganise lightning logs (way too much of a mess rn)
+Bayesian optim to actually properly analyse test results
+add more data to time_series_data
+
+
+# 1. Major Equity Market Indexes (Broad Market Sentiment & Benchmarks):
+# ^GSPC (S&P 500): Tracks 500 large-cap U.S. stocks. Excellent for overall U.S. market health.
+# ^IXIC (NASDAQ Composite): Tracks most stocks listed on the Nasdaq exchange, heavily tech-weighted. Good for tech sector sentiment.
+# ^DJI (Dow Jones Industrial Average): Tracks 30 large, publicly-owned U.S. companies. More of a historical/popular index but still watched.
+# ^RUT (Russell 2000): Tracks 2000 small-cap U.S. stocks. Indicator for smaller companies and broader economic health.
+# International Indexes (if your target stocks have global exposure):
+# ^FTSE (FTSE 100 - UK): Large-cap UK stocks.
+# ^GDAXI (DAX - Germany): Major German stocks.
+# ^N225 (Nikkei 225 - Japan): Major Japanese stocks.
+# ^HSI (Hang Seng Index - Hong Kong): Major Hong Kong stocks.
+# ^STOXX50E (EURO STOXX 50): Blue-chip stocks from Eurozone countries.
+# 2. Volatility Indexes (Market Fear/Uncertainty):
+# ^VIX (CBOE Volatility Index): Often called the "fear index," it measures market expectations of 30-day volatility based on S&P 500 index options. Highly influential.
+# ^VVIX (CBOE VIX of VIX Index): Measures the volatility of the VIX itself. Can indicate nervousness about future volatility.
+# ^VXN (CBOE Nasdaq 100 Volatility Index): Similar to VIX, but for the Nasdaq 100.
+# 3. Interest Rates & Bonds (Cost of Capital, Economic Outlook):
+# Treasury Yields (proxy for risk-free rates and economic expectations):
+# ^TNX (CBOE Interest Rate 10 Year T Note): 10-Year U.S. Treasury yield. Very important.
+# ^TYX (CBOE Interest Rate 30 Year T Bond): 30-Year U.S. Treasury yield.
+# ^FVX (CBOE Interest Rate 5 Year T Note): 5-Year U.S. Treasury yield.
+# ^IRX (CBOE Interest Rate 13 Week T Bill): 13-Week (3-Month) U.S. Treasury Bill yield.
+# Yield Curve Spreads (often leading indicators of recessions): You'd calculate these yourself after fetching individual yields. Common ones:
+# 10-Year minus 2-Year (^TNX - ^FVX or directly fetch 2-year if available)
+# 10-Year minus 3-Month (^TNX - ^IRX)
+# 4. Commodities (Inflation, Industrial Demand, Global Growth):
+# Crude Oil:
+# CL=F (Crude Oil Futures): WTI crude oil.
+# BZ=F (Brent Crude Oil Futures): Brent crude oil.
+# Gold:
+# GC=F (Gold Futures): Often seen as a safe-haven asset and inflation hedge.
+# Silver:
+# SI=F (Silver Futures): Both an industrial metal and a precious metal.
+# Copper:
+# HG=F (Copper Futures): "Dr. Copper," often seen as an indicator of global economic health due to its industrial uses.
+# Broad Commodity Index ETFs (easier than individual futures sometimes):
+# DBC (Invesco DB Commodity Index Tracking Fund)
+# GSG (iShares S&P GSCI Commodity-Indexed Trust)
+# 5. Currencies (Global Capital Flows, Relative Economic Strength):
+# U.S. Dollar Index:
+# DX-Y.NYB (U.S. Dollar Index Futures): Measures the value of the USD against a basket of foreign currencies.
+# Major Currency Pairs (relative to USD, or against each other if relevant):
+# EURUSD=X (Euro to USD)
+# JPY=X (USD to Japanese Yen) - Note: some are quoted as USD/Other, others Other/USD.
+# GBPUSD=X (British Pound to USD)
+# AUDUSD=X (Australian Dollar to USD)
+# CNY=X (USD to Chinese Yuan Renminbi)
+# 6. Sector-Specific ETFs (If your target stock is in a specific sector):
+# Technology: XLK, VGT, QQQ (Nasdaq 100, very tech-heavy)
+# Financials: XLF, VFH
+# Healthcare: XLV, VHT
+# Energy: XLE, VDE
+# Consumer Discretionary: XLY, VCR
+# Consumer Staples: XLP, VDC
+# Industrials: XLI, VIS
+# Utilities: XLU, VPU
+# Real Estate: XLRE, VNQ
+# Materials: XLB, VAW
+# (Search for "(Sector Name) Sector SPDR ETF" or "Vanguard (Sector Name) ETF" to find tickers)
+# Tips for Incorporating These:
+# Relevance: Choose indicators most relevant to the stocks you are trying to predict. A tech stock will be more influenced by ^IXIC and ^VXN than an oil company.
+# Lagged Features: Consider using lagged values of these indicators (e.g., the VIX from yesterday, or the average VIX over the last week) as input features. The market often reacts with a delay.
+# Transformations: Just like your primary stock data, you'll likely want to use percentage changes or standardized values for these indicators rather than raw price levels to ensure stationarity and comparable scales.
+# Feature Engineering: Create new features, like the yield curve spreads mentioned above.
+# Data Availability & Alignment: yfinance is great, but be mindful of:
+# Trading Hours: Different markets have different trading hours. Daily data (interval="1d") is usually the easiest to align.
+# Holidays: Market holidays can lead to missing data points. pandas can help with ffill() or bfill() or interpolation if needed carefully.
+# Start Dates: Ensure all chosen indicators have historical data covering your desired training period.
+# Curse of Dimensionality: Don't add too many features without reason. Feature selection or dimensionality reduction techniques might be necessary if you include a very large number. Start with a core set and expand.
+# Causality vs. Correlation: Remember that correlation doesn't imply causation. While these indicators can improve predictive power, they are part of a complex system.
+# When adding these to your download_and_process_numerical_financial_data function, you'd fetch them alongside your primary tickers and then process their percentage changes and normalize them using the training set statistics of those specific indicators. They would become additional columns in your input_data_np.
+
+# Selective Inclusion (Your Suggestion):
+# "Maybe only they should be included for a select few input features" – This is a very sensible approach if you were to revisit this.
+# For instance, the per-sequence mean and std of the primary returns (your known_inputs) might be the most impactful if you were to choose any. These directly tell the model about the recent drift and volatility of what it's primarily trying to predict.
+# However, given your past negative experience, it's wise to be cautious and perhaps focus on other avenues for improvement first.

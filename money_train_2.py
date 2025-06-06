@@ -4,6 +4,39 @@
 # TODO add r squared to loss metrics
 
 
+# TODO bayesian optimization (inference + training)
+# TODO add more things as part of config (weights for loss, features, etc.)
+# TODO rewrite dataloader to take in a list of features
+
+# TODO noMachine on hypkos computer
+
+# TODO more metrics (try to find out if/which are redundant)
+
+# TODO make timing be per epoch
+# TODO maybe try optimising some parts of the code by using c?
+
+# TODO set up old pc for training
+
+
+# Once you have multiple performance scores for each option (e.g., 3 validation MASE scores for Option A, 3 for Option B), you can use statistical tests to compare their means.
+# Common Tests:
+# Independent two-sample t-test: If you assume the scores are approximately normally distributed and have roughly equal variances. Given only 3 samples per group, checking these assumptions is hard, but it's a common starting point.
+# Mann-Whitney U test (Wilcoxon rank-sum test): A non-parametric alternative to the t-test, which doesn't assume normality. Often safer for ML metrics with small sample sizes.
+# Paired t-test (or Wilcoxon signed-rank test): If there's a natural pairing between the runs (e.g., you use the exact same set of 3 random seeds for Option A and Option B). This can be more powerful as it controls for variance due to specific seeds.
+# What to Test: You'd apply this to your key metrics:
+# Final validation loss (e.g., scaled L1 loss)
+# Directional accuracy
+# Information Ratio (IR) or Mean IC
+# MSSE/MASE
+# Interpretation: The p-value from the test will tell you the probability of observing the difference in means (or a larger difference) if there were actually no true difference between the options. A small p-value (e.g., < 0.05) suggests the difference is statistically significant.
+
+# TODO test nGPT
+
+# TODO bias in linear layers
+
+# TODO check stat for noise
+# TODO do runs w fixed features
+
 import json
 import os
 import argparse
@@ -14,9 +47,9 @@ from training.money_experiment_2 import MoneyExperiment
 from training.utils import (
     count_parameters,
 )
-from training.data_loaders.stocks_time_series_2 import (
+from training.data_loaders.new_stocks_time_series_2_v2 import (
     FinancialNumericalDataModule,
-    download_numerical_financial_data
+    download_numerical_financial_data,
 )
 
 from pytorch_lightning.loggers import TensorBoardLogger
@@ -25,6 +58,11 @@ from torch.nn.attention import SDPBackend
 
 from transformer_arch.money.money_former_2 import Money_former
 from transformer_arch.money.money_former_DINT_2 import Money_former_DINT
+from transformer_arch.money.money_former_MLA_DINT_2 import Money_former_MLA_DINT
+from transformer_arch.money.money_former_DINT_cog_attn_2 import Money_former_DINT_cog_attn
+from transformer_arch.money.money_former_MLA_2 import Money_former_MLA
+from transformer_arch.money.money_former_nGPT_2 import Money_former_nGPT, normalize_weights_and_enforce_positive_eigenvalues
+from transformer_arch.money.money_former_MLA_DINT_cog_attn_2 import Money_former_MLA_DINT_cog_attn
 
 
 def proceed(args: argparse.Namespace):
@@ -46,7 +84,9 @@ def proceed(args: argparse.Namespace):
     # TODO add loss functions
     # seed = args.seed
     extra_descriptor = args.extra_descriptor
-    pred_indices = args.indices_to_predict # how many datapoints in the future to predict (workdays, not regular days, because market no work weekend)
+    pred_indices = (
+        args.indices_to_predict
+    )  # how many datapoints in the future to predict (workdays, not regular days, because market no work weekend)
 
     match args.dtype:
         case "fp32":
@@ -64,22 +104,21 @@ def proceed(args: argparse.Namespace):
         f"type: {type} LLaMa seq_len:{seq_len} d_model:{d_model} d_ff:{d_ff} num_layers:{num_layers} nhead:{nhead} dropout:{dropout} lr:{lr} t_total:{t_total} warmup_steps:{warmup_steps} t_0:{t_0} t_mult:{t_mult} lr_mult:{lr_mult} batch_size:{batch_size}"
     )
 
-    name = f"{args.dataset}/post_causality_fix/{type}_{architecture}_{seq_len}_{d_model}_{d_ff}_{num_layers}_{nhead}_{batch_size}"
+    name = f"{args.dataset}/{args.folder_name}/{type}_{architecture}_{seq_len}_{d_model}_{d_ff}_{num_layers}_{nhead}_{batch_size}"
     if extra_descriptor != "":
         name = name + "_" + extra_descriptor
-    
 
     logger = TensorBoardLogger(
         "lightning_logs",
         name=name,  # seq, d_model, d_ff mult, num_layers, nhead
     )  # Optional logging
     # --- Data Loading ---
-    if args.dataset == "Money": # yahoo finance stock data
+    if args.dataset == "Money":  # yahoo finance stock data
         download_numerical_financial_data(
             tickers=args.tickers,
             seq_len=seq_len,
-            check_if_already_downloaded=False, # TODO make this better/check which features are missing
-            target_dates=pred_indices
+            check_if_already_downloaded=False,  # TODO make this better/check which features are missing
+            target_dates=pred_indices,
         )
         data_module = FinancialNumericalDataModule(
             train_file="time_series_data/train.pt",
@@ -87,30 +126,40 @@ def proceed(args: argparse.Namespace):
             test_file="time_series_data/test.pt",
             metadata_file="time_series_data/metadata.json",
             seq_len=seq_len,
-            batch_size=batch_size
+            batch_size=batch_size,
         )
 
     data_module.setup()  # Very important to setup the data
     # vocab_size = data_module.get_vocab_size()
     args.input_features = len(data_module._metadata["columns"])
     # --- Model Definition ---
-    match architecture: # TODO auto format qk_rope_dim for non MLA (currently all of them)
+    match architecture:  # TODO auto format qk_rope_dim for non MLA (currently all of them)
         case "Money_former":
-            model = Money_former(
-                args=args
-            )
+            model = Money_former(args=args)
         case "Money_former_DINT":
-            model = Money_former_DINT(
-                args=args
-            )
+            model = Money_former_DINT(args=args)
+        case "Money_former_MLA_DINT":
+            model = Money_former_MLA_DINT(args=args)
+        case "Money_former_DINT_cog_attn":
+            model = Money_former_DINT_cog_attn(args=args)
+        case "Money_former_MLA":
+            model = Money_former_MLA(args=args)
+        case "Money_former_nGPT":
+            model = Money_former_nGPT(args=args)
+        case "Money_former_MLA_DINT_cog_attn":
+            model = Money_former_MLA_DINT_cog_attn(args=args)
         case _:
             raise ValueError(f"Architecture {architecture} not supported")
     # Print parameter count:
     num_params = count_parameters(model)
-    print(f"The model has {num_params:,} trainable parameters. Parameter dtype: {args.dtype}")
+    print(
+        f"The model has {num_params:,} trainable parameters. Parameter dtype: {args.dtype}"
+    )
     args.num_params = num_params
 
     # --- Training Setup ---
+    if model.__class__.__name__ == "Money_former_nGPT":
+        normalize_weights_and_enforce_positive_eigenvalues(model)
 
     experiment = MoneyExperiment(
         model,
@@ -146,10 +195,10 @@ def proceed(args: argparse.Namespace):
         # limit_train_batches=1000,
         limit_val_batches=50,
         logger=logger,
-        log_every_n_steps=100, # 100
+        log_every_n_steps=100,  # 100
         val_check_interval=300,
         precision=trainer_precision,
-        check_val_every_n_epoch=None
+        check_val_every_n_epoch=None,
     )
 
     trainer.fit(experiment, datamodule=data_module)
@@ -157,15 +206,15 @@ def proceed(args: argparse.Namespace):
     model_dir = f"models"
     if not os.path.exists(model_dir):
         os.makedirs(model_dir)
-    torch.save(experiment.model, f"{model_dir}/{args.architecture}_{name.split('/')[-1]}.pth") # TODO make this more specific
+    torch.save(
+        experiment.model, f"{model_dir}/{args.architecture}_{name.split('/')[-1]}.pth"
+    )  # TODO make this more specific
     print("Model saved.")
     return
 
 
 def run_experiment(args: argparse.Namespace):
-    torch.set_float32_matmul_precision(
-        "medium"
-    )
+    torch.set_float32_matmul_precision("medium")
     if torch.cuda.is_available():
         with torch.nn.attention.sdpa_kernel(
             [
@@ -187,7 +236,11 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Train a Transformer model.")
 
     parser.add_argument(
-        "--config", type=str, default="./experiment_configs/Money_test_2.json", help="Path to config file."
+        "--config",
+        type=str,
+        # default="./experiment_configs/Money_test_2.json",
+        default="./experiment_configs/experiment.json",
+        help="Path to config file.",
     )
     if parser.parse_known_args()[0].config != "":
         with open(parser.parse_known_args()[0].config, "r") as f:
@@ -199,26 +252,35 @@ if __name__ == "__main__":
         parser.add_argument(
             "--architecture",
             type=str,
-            default="Money_former",#"DINT",
+            default="Money_former",  # "DINT",
             help="Model architecture (LLaMa, ...)",
         )
-        parser.add_argument("--d_model", type=int, default=128, help="Embedding dimension.")
+        parser.add_argument(
+            "--d_model", type=int, default=128, help="Embedding dimension."
+        )
         parser.add_argument(
             "--nhead", type=int, default=8, help="Number of attention heads."
         )
-        parser.add_argument("--num_layers", type=int, default=4, help="Number of layers.")
+        parser.add_argument(
+            "--num_layers", type=int, default=4, help="Number of layers."
+        )
         parser.add_argument("--d_ff", type=int, default=512, help="dimension in d_ff")
 
         parser.add_argument(
             "--dropout", type=float, default=0.1, help="Dropout probability."
         )
         parser.add_argument(
-            "--type", type=str, default="baseline", help="Experiment type (for logging)."
+            "--type",
+            type=str,
+            default="baseline",
+            help="Experiment type (for logging).",
         )
 
         # Training arguments (same as before)
         parser.add_argument("--lr", type=float, default=1e-3, help="Learning rate.")
-        parser.add_argument("--warmup_steps", type=int, default=2000, help="Warmup steps.")
+        parser.add_argument(
+            "--warmup_steps", type=int, default=2000, help="Warmup steps."
+        )
         parser.add_argument(
             "--t_total", type=int, default=100000, help="Total training steps."
         )
@@ -234,28 +296,27 @@ if __name__ == "__main__":
         parser.add_argument("--seq_len", type=int, default=128, help="Sequence length.")
         parser.add_argument("--batch_size", type=int, default=16, help="Batch size.")
 
-
         # parser.add_argument(
         #     "--seed", type=int, default=42, help="Seed for reproducibility."
         # )
         parser.add_argument(
-            "--extra_descriptor", type=str, default="", help="Extra descriptor for logging."
+            "--extra_descriptor",
+            type=str,
+            default="",
+            help="Extra descriptor for logging.",
         )
-        parser.add_argument("--orthograd", type=bool, default=True, help="Use OrthoGrad.")
+        parser.add_argument(
+            "--orthograd", type=bool, default=True, help="Use OrthoGrad."
+        )
         parser.add_argument(
             "--dataset", type=str, default="Money", help="Dataset to use."
         )
-
 
     args = parser.parse_args()
     run_experiment(args)
 
 
 # What to do now:
-
-# (Optional) Information Coefficient (IC) / Correlation: Calculate the correlation between your predicted returns (e.g., predicted[t+1] / predicted[t] - 1) and the actual returns (actual[t+1] / actual[t] - 1). A consistently positive IC shows some predictive alignment.
-# Try Predicting Returns Instead of Prices: 
-# Price series are strongly persistent (non-stationary). Daily returns (price[t]/price[t-1] - 1) or log returns (log(price[t]/price[t-1])) are generally closer to stationary, making them potentially easier to model meaningfully.
 
 # Feature Engineering: The model defaulting to persistence suggests your current input features might not contain sufficient signal to predict changes effectively. Revisit your features:
 # Are you using standard technical indicators (moving averages, RSI, MACD, Bollinger Bands)?
@@ -268,29 +329,6 @@ if __name__ == "__main__":
 # Using techniques designed for time series with distribution shifts (though this is advanced).
 
 
-# The IC is essentially a correlation coefficient (typically Pearson or Spearman) calculated between your model's predictions for a set of assets at a given time and the actual subsequent realized outcomes for those assets.
-# Here's a breakdown of how to calculate and interpret it:
-# 1. Gather Your Data:
-# Model Predictions (Signals or Alphas):
-# For each time step t (e.g., end of day), your model generates a prediction for each asset i in your universe (e.g., all stocks in the S&P 500).
-# This prediction P_i,t is for a future outcome, say at time t+k (e.g., prediction for next day's return, next week's return).
-# So, at each time t, you'll have a vector of predictions: Predictions_t = [P_1,t, P_2,t, ..., P_N,t] for N assets.
-# Actual Realized Outcomes:
-# For each asset i and prediction made at time t for period t+k, you need the actual outcome A_i,t+k that occurred.
-# If predicting returns, this would be the actual realized forward return for each asset over the period k (e.g., next day's open-to-close return, or close-to-close return).
-# So, corresponding to Predictions_t, you'll have a vector of actuals: Actuals_t+k = [A_1,t+k, A_2,t+k, ..., A_N,t+k].
-# 2. Calculate the IC for Each Period (Cross-Sectional IC):
-# At each time step t, you calculate the correlation between the vector of predictions Predictions_t made at that time and the vector of corresponding actual future outcomes Actuals_t+k.
-# IC_t = Correlation(Predictions_t, Actuals_t+k)
-# Types of Correlation:
-# Pearson IC: Measures linear correlation. Use scipy.stats.pearsonr or numpy.corrcoef.
-# Spearman Rank IC: Measures the correlation between the ranks of predictions and the ranks of actuals. This is often preferred because it's less sensitive to outliers and doesn't assume a linear relationship (only monotonic). Use scipy.stats.spearmanr.
-# 3. Analyze the Time Series of ICs:
-# You will now have a time series of IC values (IC_1, IC_2, ..., IC_T). Analyzing this series tells you about the quality and consistency of your predictive signal:
-# Mean IC (Average IC):
-# The average of all your calculated IC_t values.
-# A positive mean IC suggests your model has, on average, predictive power in the desired direction (higher predictions correspond to higher actual outcomes).
-# A negative mean IC suggests your model has predictive power but in the opposite direction (your signal might need to be inverted).
 # Standard Deviation of IC:
 # Measures the volatility or consistency of your ICs over time. A lower standard deviation is generally better, indicating a more stable signal.
 
