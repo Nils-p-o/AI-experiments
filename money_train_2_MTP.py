@@ -36,18 +36,21 @@
 # TODO do runs w fixed features
 
 # different scaling in attn
+# TODO redo some tests (global vs local, etc. groupnorm)
+
+# for some optim use expand instead of repeat, where original dim is 1
 
 import json
 import os
 import argparse
 import pytorch_lightning as pl
 from pytorch_lightning.callbacks import ModelCheckpoint, EarlyStopping
-from training.money_experiment_2 import MoneyExperiment
+from training.money_experiment_2_MTP import MoneyExperiment
 
 from training.utils import (
     count_parameters,
 )
-from training.data_loaders.test_feats_stocks_time_series_2 import (
+from training.data_loaders.stocks_time_series_2_MTP import (
     FinancialNumericalDataModule,
     download_numerical_financial_data,
 )
@@ -63,6 +66,7 @@ from transformer_arch.money.money_former_DINT_cog_attn_2 import Money_former_DIN
 from transformer_arch.money.money_former_MLA_2 import Money_former_MLA
 from transformer_arch.money.money_former_nGPT_2 import Money_former_nGPT, normalize_weights_and_enforce_positive_eigenvalues
 from transformer_arch.money.money_former_MLA_DINT_cog_attn_2 import Money_former_MLA_DINT_cog_attn
+from transformer_arch.money.money_former_MLA_DINT_cog_attn_2_MTP import Money_former_MLA_DINT_cog_attn_MTP
 
 
 def proceed(args: argparse.Namespace):
@@ -122,8 +126,11 @@ def proceed(args: argparse.Namespace):
         )
         data_module = FinancialNumericalDataModule(
             train_file="time_series_data/train.pt",
+            train_targets_file="time_series_data/train_MTP_targets.pt",
             val_file="time_series_data/val.pt",
+            val_targets_file="time_series_data/val_MTP_targets.pt",
             test_file="time_series_data/test.pt",
+            test_targets_file="time_series_data/test_MTP_targets.pt",
             metadata_file="time_series_data/metadata.json",
             seq_len=seq_len,
             batch_size=batch_size,
@@ -148,6 +155,8 @@ def proceed(args: argparse.Namespace):
             model = Money_former_nGPT(args=args)
         case "Money_former_MLA_DINT_cog_attn":
             model = Money_former_MLA_DINT_cog_attn(args=args)
+        case "Money_former_MLA_DINT_cog_attn_MTP":
+            model = Money_former_MLA_DINT_cog_attn_MTP(args=args)
         case _:
             raise ValueError(f"Architecture {architecture} not supported")
     # Print parameter count:
@@ -239,7 +248,7 @@ if __name__ == "__main__":
         "--config",
         type=str,
         # default="./experiment_configs/Money_test_2.json",
-        default="./experiment_configs/experiment.json",
+        default="./experiment_configs/MTP_experiment.json",
         help="Path to config file.",
     )
     if parser.parse_known_args()[0].config != "":

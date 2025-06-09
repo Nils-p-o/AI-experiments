@@ -11,13 +11,13 @@ import torch
 import torch.nn as nn
 import math
 import torch.nn.functional as F
-from ..components import get_causal_mask  # TODO at v2
+from ..components import get_causal_mask
 
 # for debug/visualization
 import matplotlib.pyplot as plt
 
 
-class Money_former_MLA_DINT_cog_attn(nn.Module):
+class Money_former_MLA_DINT_cog_attn_MTP(nn.Module): # TODO MTP blocks
     def __init__(self, args):  # , dtype=torch.float32):
         super().__init__()
         # args.dtype = dtype
@@ -42,7 +42,7 @@ class Money_former_MLA_DINT_cog_attn(nn.Module):
                 for _ in range(len(args.tickers))
             ]
         )
-        self.norm = nn.RMSNorm(self.d_model)
+        self.norm = nn.RMSNorm(self.d_model) # TODO maybe one per MTP block?
 
         self.predict_distribution = args.predict_gaussian
         if self.predict_distribution:
@@ -51,53 +51,66 @@ class Money_former_MLA_DINT_cog_attn(nn.Module):
             )  # decodes to mean and std
         else:
             self.out = nn.Linear(
-                self.d_model, len(args.indices_to_predict), bias=args.bias
-            )  # decodes to target(s)
+                self.d_model, 5, bias=args.bias
+            )  # decodes to target(s) features
 
         self.register_buffer("freqs_cis", precompute_freqs_cis(args), persistent=False)
 
         # seperator/attention sink token
         self.seperator = nn.Embedding(1, self.d_model)
 
+        self.MTP_blocks = nn.ModuleList(
+            [MTP_money_former_block(args, depth + self.num_layers) for depth in range(max(args.indices_to_predict)-1)]
+        )
+
     def forward(
         self, x, seperator=None, tickers=None
-    ):  # seperator (batch_size, 1); tickers (batch_size, num_sequences)
-        batch_size, seq_len, num_sequences, _ = x.size()
+    ):  # seperator (batch_size, targets, 1); tickers (batch_size, targets, num_sequences)
+        batch_size, targets, seq_len, num_sequences, _ = x.size()
 
-        seperator = self.seperator(seperator).unsqueeze(1)
-        seperator = seperator.repeat(1, 1, num_sequences, 1)
+        seperator = self.seperator(seperator).unsqueeze(2)
+        seperator = seperator.repeat(1, 1, 1, num_sequences, 1)
 
-        tickers = self.ticker_embedding(tickers).unsqueeze(1)
-        tickers = tickers.repeat(1, seq_len + 1, 1, 1)
-        shared_temp_x = self.shared_value_input(x)
-        unique_temp_x = torch.zeros(
-            batch_size, seq_len, num_sequences, self.d_model // 4, device=x.device
-        )
-        for i in range(num_sequences):
-            unique_temp_x[:, :, i, :] = self.unique_value_input[i](x[:, :, i, :])
-        x = torch.cat([shared_temp_x, unique_temp_x], dim=-1)
+        tickers = self.ticker_embedding(tickers).unsqueeze(2)
+        tickers = tickers.repeat(1, 1, seq_len + 1, 1, 1)
 
-        x = torch.cat([seperator, x], dim=1)
-        x = x + tickers  # TODO maybe concat and project?
+        x = self.encode_inputs(x)
+
+        x = torch.cat([seperator, x], dim=2)
+        x = x + tickers
 
         x = x / math.sqrt(self.d_model)
         x = self.dropout(x)
 
         x = x.view(
-            batch_size, -1, self.d_model
+            batch_size, targets, -1, self.d_model
         )  # (batch_size, (seq_len+1)*num_sequences, d_model)
 
+        x_end = torch.empty_like(x)
+        x_main = x[:, 0, :, :]
         freqs_cis = self.freqs_cis[0 : 0 + seq_len]
         for layer in self.layers:
-            x = layer(x, freqs_cis)
-        x = self.norm(x)  # (batch_size, seq_len, d_model)
-        x = self.out(x)
-        if self.predict_distribution:
-            x = x.view(
-                x.size(0), x.size(1), -1, 2
-            )  # (batch_size, seq_len, points in future, (mean and std) or target)
-            return x
-        return x  # (batch_size, seq_len, targets) logits
+            x_main = layer(x_main, freqs_cis)
+        x_main = self.norm(x_main)  # (batch_size, seq_len, d_model)
+        x_end[:, 0, :, :] = x_main
+        for i in range(1, targets):
+            x_end[:, i, :, :] = self.norm(self.MTP_blocks[i-1](x[:, i, :, :], x_end[:, i-1, :, :], freqs_cis))
+
+        # TODO MTP part
+        x_end = self.out(x_end)
+        return x_end  # (batch_size, targets, seq_len, features) logits
+    
+    def encode_inputs(self, x):
+        batch_size, targets, seq_len, num_sequences, _ = x.size()
+        shared_temp_x = self.shared_value_input(x)
+        unique_temp_x = torch.zeros(
+            batch_size, targets, seq_len, num_sequences, self.d_model // 4, device=x.device
+        )
+        for i in range(num_sequences):
+            unique_temp_x[:, :, :, i, :] = self.unique_value_input[i](x[:, :, :, i, :])
+        x = torch.cat([shared_temp_x, unique_temp_x], dim=-1)
+        return x
+
 
 
 class Money_former_block(nn.Module):
@@ -116,12 +129,26 @@ class Money_former_block(nn.Module):
         mask = get_causal_mask(seq_len)
         mask = mask.repeat(
             batch_size, 2 * self.nhead, self.num_sequences, self.num_sequences
-        )  # repeat, or tile?
+        )
         x = x + self.mha(
             self.norm1(x), mask, freqs_cis
         )  # (batch_size, seq_len, d_model)
         x = x + self.ff(self.norm2(x))
         return x
+    
+class MTP_money_former_block(nn.Module):
+    def __init__(self, args, depth=0):
+        super().__init__()
+        self.norm = nn.RMSNorm(args.d_model)
+        self.projection = nn.Linear(args.d_model*2, args.d_model)
+        self.transformer_block = Money_former_block(args, depth)
+
+    def forward(self, x_curr, x_prev, freqs_cis):
+        x_curr = self.norm(x_curr) # (batch_size, seq_len, d_model)
+        x_combined = torch.cat([x_curr, x_prev], dim=-1)
+        x_combined = self.projection(x_combined)
+        x_combined = self.transformer_block(x_combined, freqs_cis)
+        return x_combined
 
 
 class custom_MHA(nn.Module): # a mix of MLA and DINT
@@ -274,10 +301,9 @@ class custom_MHA(nn.Module): # a mix of MLA and DINT
         # attn_output = torch.stack(normed_heads, dim=2)  # (batch_size, seq_len, nhead, head_dim)
         attn_output = self.norm(attn_output)  # (batch_size, seq_len, nhead, head_dim)
         attn_output = attn_output.transpose(1, 2)  # (batch_size, nhead, seq_len, head_dim)
-        attn_output = attn_output.reshape( # TODO sus (amogus)
+        attn_output = attn_output.reshape( # TODO keep in mind sus amogus
             batch_size, seq_len, self.nhead, self.head_dim
         )
-        # attn_output = attn_output * (1 - self.lambda_init)
         # --- Concatenate and Output Projection ---
         attn_output = (
             attn_output.contiguous()

@@ -17,9 +17,15 @@ import time
 
 cummulative_times = {"preprocessing": 0, "model": 0, "loss": 0, "metrics": 0}
 
+# TODO:
+# add predictions for close, high, low, open, volume
+# recompute new features for additional inputs
+# MTP in money_former
+# adapt new form of predictions to be comparable with old type of predictions (for comparison with old models)
+# maybe rewrite sma of returns (cumprod method)
 
 def get_direction_accuracy_returns(actual_returns, predicted_returns, thresholds=0.01):
-    batch, seq_len, targets, sequences = actual_returns.shape
+    batch, seq_len, features, targets, sequences = actual_returns.shape
     actual_movements = torch.where(
         actual_returns > thresholds, 1, torch.where(actual_returns < -thresholds, -1, 0)
     )
@@ -47,43 +53,43 @@ def get_direction_accuracy_returns(actual_returns, predicted_returns, thresholds
     ).sum() / actual_movements.numel()
 
     # per target
-    actual_up = (actual_movements == 1).sum(dim=(0, 1, 3)).unsqueeze(0)
-    actual_down = (actual_movements == -1).sum(dim=(0, 1, 3)).unsqueeze(0)
-    actual_flat = (actual_movements == 0).sum(dim=(0, 1, 3)).unsqueeze(0)
+    actual_up = (actual_movements == 1).sum(dim=(0, 1, 2, 4)).unsqueeze(0)
+    actual_down = (actual_movements == -1).sum(dim=(0, 1, 2, 4)).unsqueeze(0)
+    actual_flat = (actual_movements == 0).sum(dim=(0, 1, 2, 4)).unsqueeze(0)
 
     expected_acc = torch.max(
         torch.cat([actual_up, actual_down, actual_flat], dim=0), dim=0
-    ).values / (batch * seq_len * sequences)
+    ).values / (batch * seq_len * sequences * features)
     expected_strat = (
         torch.cat([actual_up, actual_down, actual_flat], dim=0).square().sum(dim=0)
-        / (batch * seq_len * sequences) ** 2
+        / (batch * seq_len * sequences * features) ** 2
     )
     expected_max_acc_target = torch.max(
         torch.cat([expected_acc.unsqueeze(0), expected_strat.unsqueeze(0)], dim=0),
         dim=0,
     ).values
     acc_per_target = torch.sum(
-        actual_movements == predicted_movements, dim=(0, 1, 3)
-    ) / (batch * seq_len * sequences)
+        actual_movements == predicted_movements, dim=(0, 1, 2, 4)
+    ) / (batch * seq_len * sequences * features)
 
     # per sequence
-    actual_up = (actual_movements == 1).sum(dim=(0, 1, 2)).unsqueeze(0)
-    actual_down = (actual_movements == -1).sum(dim=(0, 1, 2)).unsqueeze(0)
-    actual_flat = (actual_movements == 0).sum(dim=(0, 1, 2)).unsqueeze(0)
-    expected_acc = torch.max(
-        torch.cat([actual_up, actual_down, actual_flat], dim=0), dim=0
-    ).values / (batch * seq_len * targets)
-    expected_strat = (
-        torch.cat([actual_up, actual_down, actual_flat], dim=0).square().sum(dim=0)
-        / (batch * seq_len * targets) ** 2
-    )
-    expected_max_acc_sequence = torch.max(
-        torch.cat([expected_acc.unsqueeze(0), expected_strat.unsqueeze(0)], dim=0),
-        dim=0,
-    ).values
-    acc_per_sequence = torch.sum(
-        actual_movements == predicted_movements, dim=(0, 1, 2)
-    ) / (batch * seq_len * targets)
+    # actual_up = (actual_movements == 1).sum(dim=(0, 1, 2)).unsqueeze(0)
+    # actual_down = (actual_movements == -1).sum(dim=(0, 1, 2)).unsqueeze(0)
+    # actual_flat = (actual_movements == 0).sum(dim=(0, 1, 2)).unsqueeze(0)
+    # expected_acc = torch.max(
+    #     torch.cat([actual_up, actual_down, actual_flat], dim=0), dim=0
+    # ).values / (batch * seq_len * targets)
+    # expected_strat = (
+    #     torch.cat([actual_up, actual_down, actual_flat], dim=0).square().sum(dim=0)
+    #     / (batch * seq_len * targets) ** 2
+    # )
+    # expected_max_acc_sequence = torch.max(
+    #     torch.cat([expected_acc.unsqueeze(0), expected_strat.unsqueeze(0)], dim=0),
+    #     dim=0,
+    # ).values
+    # acc_per_sequence = torch.sum(
+    #     actual_movements == predicted_movements, dim=(0, 1, 2)
+    # ) / (batch * seq_len * targets)
 
     return (
         total_acc,
@@ -91,9 +97,9 @@ def get_direction_accuracy_returns(actual_returns, predicted_returns, thresholds
         acc_down,
         acc_flat,
         expected_max_acc_target,
-        expected_max_acc_sequence,
+        # expected_max_acc_sequence,
         acc_per_target,
-        acc_per_sequence,
+        # acc_per_sequence,
     )
 
 
@@ -110,62 +116,8 @@ def z_normalize_additional_inputs(additional_inputs):
     return additional_inputs
 
 
-def get_spearmanr_correlations(actual_prices, predicted_values):
-    # TODO for later, rewrite in torch for speed
-    actual_np = actual_prices.cpu().numpy()
-    predicted_np = predicted_values.cpu().numpy()
 
-    batch_size, seq_len, num_targets, sequences = actual_np.shape
-
-    if sequences < 2:
-        ICs_np = np.full((batch_size, seq_len, num_targets), np.nan)
-        return torch.from_numpy(ICs_np).to(actual_prices.device)
-
-    # Rank data along the last axis (axis=-1 is equivalent to axis=3 here)
-    # method='average' handles ties in the standard way for Spearman.
-    ranked_actual = stats.rankdata(actual_np, axis=-1, method="average")
-    ranked_predicted = stats.rankdata(predicted_np, axis=-1, method="average")
-
-    # Now calculate Pearson correlation on the ranks
-    # Demean the ranks along the last axis
-    ranked_actual_demeaned = ranked_actual - ranked_actual.mean(axis=-1, keepdims=True)
-    ranked_predicted_demeaned = ranked_predicted - ranked_predicted.mean(
-        axis=-1, keepdims=True
-    )
-
-    # Numerator of Pearson correlation
-    numerator = (ranked_actual_demeaned * ranked_predicted_demeaned).sum(axis=-1)
-
-    # Denominator of Pearson correlation
-    # Sum of squares of demeaned ranks
-    sum_sq_demeaned_actual = (ranked_actual_demeaned**2).sum(axis=-1)
-    sum_sq_demeaned_predicted = (ranked_predicted_demeaned**2).sum(axis=-1)
-
-    denominator = np.sqrt(sum_sq_demeaned_actual * sum_sq_demeaned_predicted)
-
-    # Calculate correlations
-    # Initialize with NaN to handle cases where denominator is zero (constant ranks)
-    correlations_np = np.full(denominator.shape, np.nan)
-
-    # Create a mask for valid denominators (non-zero)
-    # Use a small epsilon for floating point comparisons
-    valid_mask = denominator > 1e-12
-
-    # Only calculate correlation where denominator is valid
-    correlations_np[valid_mask] = numerator[valid_mask] / denominator[valid_mask]
-
-    # Clip to ensure values are within [-1, 1] due to potential floating point inaccuracies
-    correlations_np = np.clip(correlations_np, -1.0, 1.0)
-
-    # If one of the original (unranked) series was constant, its ranks will be constant,
-    # leading to a standard deviation of ranks (and sum_sq_demeaned) being 0.
-    # The `valid_mask` above handles this by leaving `correlations_np` as NaN.
-    # This matches the behavior of `scipy.stats.spearmanr` which returns NaN for constant input.
-
-    return torch.from_numpy(correlations_np).to(actual_prices.device)
-
-
-def get_spearmanr_correlations_pytorch(
+def get_spearmanr_correlations_pytorch( # TODO adapt for MTP
     actual_values: torch.Tensor, predicted_values: torch.Tensor, epsilon: float = 1e-12
 ) -> torch.Tensor:
     """
@@ -317,65 +269,45 @@ class MoneyExperiment(pl.LightningModule):
         self.num_sequences = len(args.tickers)
         self.tickers = args.tickers
 
+        self.compare = True
+
     def forward(self, *args, **kwargs):
         return self.model(*args, **kwargs)
 
     def _shared_step(self, batch, batch_idx, stage="train"):
         time_preprocessing_start = time.time_ns()
-        # recieve in shapes (batch_size, features, seq_len, (targets 1), num_sequences)
         inputs, labels = batch
-        batch_size, features, seq_len, num_sequences = inputs.shape
-        inputs, target_input_means, target_input_stds = inputs.split(
-            [features - 2, 1, 1], dim=1
-        )
-        target_input_means = target_input_means.transpose(1, 2)
-        target_input_stds = target_input_stds.transpose(1, 2)
+        # inputs (batch_size, features, targets, seq_len, num_sequences)
+        # labels (batch_size, features (chlov), targets, seq_len, num_sequences)
+        batch_size, _, _, seq_len, num_sequences = inputs.shape
 
+        # inputs = inputs.permute(0, 2, 3, 1)  # (batch_size, seq_len, num_sequences, features)
+        inputs = inputs.permute(0, 2, 3, 4, 1) # (batch_size, targets, seq_len, num_sequences, features)
 
-        known_inputs = inputs[:, 0, :, :].unsqueeze(
-            2
-        )  # (batch_size, seq_len, 1, num_sequences)
+        targets = labels  # (batch_size, features, targets, seq_len, num_sequences)
+        targets = targets.permute(0, 3, 1, 2, 4)  # (batch_size, seq_len, features, targets, num_sequences)
 
-        targets = labels  # (batch_size, features (targets), seq_len, num_sequences)
-        targets = targets.permute(
-            0, 2, 1, 3
-        )  # (batch_size, seq_len, targets, num_sequences)
-
-        # norm_inputs = (known_inputs - target_input_means) / target_input_stds
-        norm_inputs = known_inputs
-
-        additional_inputs = inputs[
-            :, 1:-15, :, :
-        ]  # (batch_size, features, seq_len, num_sequences)
-        additional_inputs = additional_inputs.transpose(
-            1, 2
-        )  # (batch_size, seq_len, features, num_sequences)
-        full_inputs = torch.cat([norm_inputs, additional_inputs], dim=2)
-        # full_inputs = torch.cat([full_inputs, target_input_means, means_of_additional_inputs, target_input_stds, stds_of_additional_inputs], dim=2)
-        full_inputs = torch.cat(
-            [full_inputs, inputs[:, -15:, :, :].transpose(1, 2)], dim=2
-        )  # adding time based data (need to be careful with this)
-        full_inputs = full_inputs.transpose(2, 3)
+        # full_inputs = torch.cat([full_inputs, target_input_means, target_input_stds], dim=2)
 
         seperator = torch.zeros(
-            (targets.shape[0], 1), dtype=torch.int, device=inputs.device
-        )  # (batch_size, 1)
+            (batch_size, len(self.pred_indices), 1), dtype=torch.int, device=inputs.device
+        )  # (batch_size, targets, 1)
         tickers = torch.arange(self.num_sequences, device=inputs.device)
-        tickers = tickers.unsqueeze(0).repeat(
-            targets.shape[0], 1
-        )  # (batch_size, num_sequences)
+        tickers = tickers.unsqueeze(0).unsqueeze(0).repeat(
+            batch_size, len(self.pred_indices), 1
+        )  # (batch_size, targets, num_sequences)
 
         if stage == "train":
             cummulative_times["preprocessing"] += (
                 time.time_ns() - time_preprocessing_start
             ) / 1e6
         time_model_start = time.time_ns()
-        outputs = self(full_inputs, seperator, tickers).view(
-            targets.shape[0], -1, num_sequences, len(self.pred_indices)
-        ).permute(0, 1, 3, 2)  # (batch_size, seq_len, targets, num_sequences)
+        outputs = self(inputs, seperator, tickers).view(
+            batch_size, max(self.pred_indices), (seq_len+1), self.num_sequences, 5
+        ).permute(0, 2, 4, 1, 3)  # (batch_size, seq_len, features (chlov), targets, num_sequences)
         if stage == "train":
             cummulative_times["model"] += (time.time_ns() - time_model_start) / 1e6
-        outputs = outputs[:, 1:, :, :]
+        outputs = outputs[:, 1:, :, :, :]
 
         # for debugging reasons
         if torch.isnan(outputs).any():
@@ -391,11 +323,8 @@ class MoneyExperiment(pl.LightningModule):
             raw_logits = raw_logits.squeeze(-1)
             raw_pred_variance = raw_pred_variance.squeeze(-1)
 
-        # preds = raw_logits * target_input_stds.tile(
-        #     1, 1, len(self.pred_indices), 1
-        # ) + target_input_means.tile(1, 1, len(self.pred_indices), 1)
-
         preds = raw_logits
+
         time_loss_calc_start = time.time_ns()
         unseen_losses = []
         seen_losses = []
@@ -404,17 +333,17 @@ class MoneyExperiment(pl.LightningModule):
             loss = self.loss_fn(preds, targets, pred_variance)
         else:
             loss = 0
-            target_weights = [1.0, 1.0, 1.0]
-            for i in range(len(self.pred_indices)):
+            target_weights = [1.0 for _ in range(max(self.pred_indices))]
+            for i in range(max(self.pred_indices)):
                 # seen_unseen_weights = [
                 #     self.pred_indices[i],
                 #     seq_len - self.pred_indices[i],
                 # ]
                 seen_unseen_weights = [1.0, 1.0]
-                seen_current_preds = preds[:, : -self.pred_indices[i], i, :]
-                unseen_current_preds = preds[:, -self.pred_indices[i] :, i, :]
-                seen_current_targets = targets[:, : -self.pred_indices[i], i, :]
-                unseen_current_targets = targets[:, -self.pred_indices[i] :, i, :]
+                seen_current_preds = preds[:, :-self.pred_indices[i], :, i, :]
+                unseen_current_preds = preds[:, -self.pred_indices[i] :, :, i, :]
+                seen_current_targets = targets[:, : -self.pred_indices[i], :, i, :]
+                unseen_current_targets = targets[:, -self.pred_indices[i] :, :, i, :]
                 loss += (
                     target_weights[i]
                     * (seen_unseen_weights[0] * 2 / sum(seen_unseen_weights))
@@ -436,12 +365,13 @@ class MoneyExperiment(pl.LightningModule):
                 )
             loss = loss / sum(target_weights)
             # loss = self.loss_fn(preds, targets)
-        # naive_guess = (torch.zeros_like(targets) - target_input_means.tile(1,1,len(self.pred_indices),1)) / target_input_stds.tile(1,1,len(self.pred_indices),1)
-        naive_loss = self.loss_fn(torch.zeros_like(preds), targets)
+
+        naive_loss = self.loss_fn(torch.zeros_like(targets), targets)
 
         if stage == "train":
             cummulative_times["loss"] += (time.time_ns() - time_loss_calc_start) / 1e6
-
+        if torch.isnan(loss/(naive_loss + 1e-6)).any():
+            print("NAN IN LOSS")
         self.log(
             f"Loss/{stage}_loss",
             loss / (naive_loss + 1e-6),
@@ -505,9 +435,9 @@ class MoneyExperiment(pl.LightningModule):
                 _,
                 _,
                 expected_acc_target,
-                expected_acc_sequence,
+                # expected_acc_sequence,
                 acc_target,
-                acc_sequence,
+                # acc_sequence,
             ) = get_direction_accuracy_returns(
                 targets, preds, thresholds=self.threshold
             )
@@ -522,21 +452,21 @@ class MoneyExperiment(pl.LightningModule):
                         expected_acc_target[i],
                         **current_log_opts,
                     )
-                for i in range(self.num_sequences):
-                    self.log(
-                        f"Accuracy_finer/{stage}_expected_max_acc_{self.tickers[i]}",
-                        expected_acc_sequence[i],
-                        **current_log_opts,
-                    )
+                # for i in range(self.num_sequences):
+                #     self.log(
+                #         f"Accuracy_finer/{stage}_expected_max_acc_{self.tickers[i]}",
+                #         expected_acc_sequence[i],
+                #         **current_log_opts,
+                #     )
             if stage == "val":
                 for i in range(len(self.pred_indices)):
-                    seen_current_preds = preds[:, : -self.pred_indices[i], i]
-                    seen_current_targets = targets[:, : -self.pred_indices[i], i]
+                    seen_current_preds = preds[:, :, : -self.pred_indices[i], i, :]
+                    seen_current_targets = targets[:, :, : -self.pred_indices[i], i, :]
                     seen_MSE = self.MSE(seen_current_preds, seen_current_targets)
                     seen_MAE = self.MAE(seen_current_preds, seen_current_targets)
 
-                    unseen_current_preds = preds[:, -self.pred_indices[i] :, i]
-                    unseen_current_targets = targets[:, -self.pred_indices[i] :, i]
+                    unseen_current_preds = preds[:, :, -self.pred_indices[i] :, i, :]
+                    unseen_current_targets = targets[:, :, -self.pred_indices[i] :, i, :]
                     unseen_MSE = self.MSE(unseen_current_preds, unseen_current_targets)
                     unseen_MAE = self.MAE(unseen_current_preds, unseen_current_targets)
 
@@ -554,7 +484,7 @@ class MoneyExperiment(pl.LightningModule):
                         **current_log_opts,
                     )
 
-                    # TODO maybe add split dicertional accuracy
+                    # TODO maybe add split directional accuracy
                     seen_target_movements = torch.where(
                         seen_current_targets > self.threshold,
                         1,
@@ -610,53 +540,53 @@ class MoneyExperiment(pl.LightningModule):
             self.log(f"Relative_Losses/{stage}_MASE", MASE, **current_log_opts)
 
             # can only be done per time step
-            ICs = get_spearmanr_correlations_pytorch(
-                targets.clone().detach(), preds.clone().detach()
-            )
-            # Log accuracy per target
+            # ICs = get_spearmanr_correlations_pytorch(
+            #     targets.clone().detach(), preds.clone().detach()
+            # )
+
             for i in range(len(self.pred_indices)):
-                valid_ics_target = ICs[:, :, i][~torch.isnan(ICs[:, :, i])]
-                if len(valid_ics_target) > 1:
-                    temp_IR = valid_ics_target.mean() / (valid_ics_target.std() + 1e-9)
-                    mean_IC_target = valid_ics_target.mean()
-                elif len(valid_ics_target) == 1:
-                    temp_IR = torch.tensor(float("nan"), device=ICs.device)
-                    mean_IC_target = valid_ics_target[0]
-                else:
-                    temp_IR = torch.tensor(float("nan"), device=ICs.device)
-                    mean_IC_target = torch.tensor(float("nan"), device=ICs.device)
+                # valid_ics_target = ICs[:, :, i][~torch.isnan(ICs[:, :, i])]
+                # if len(valid_ics_target) > 1:
+                #     temp_IR = valid_ics_target.mean() / (valid_ics_target.std() + 1e-9)
+                #     mean_IC_target = valid_ics_target.mean()
+                # elif len(valid_ics_target) == 1:
+                #     temp_IR = torch.tensor(float("nan"), device=ICs.device)
+                #     mean_IC_target = valid_ics_target[0]
+                # else:
+                #     temp_IR = torch.tensor(float("nan"), device=ICs.device)
+                #     mean_IC_target = torch.tensor(float("nan"), device=ICs.device)
 
-                self.log(
-                    f"IR/{stage}_target_{self.pred_indices[i]}",
-                    temp_IR,
-                    **current_log_opts,
-                )
-                self.log(
-                    f"IC/{stage}_target_{self.pred_indices[i]}",
-                    mean_IC_target,
-                    **current_log_opts,
-                )
+                # self.log(
+                #     f"IR/{stage}_target_{self.pred_indices[i]}",
+                #     temp_IR,
+                #     **current_log_opts,
+                # )
+                # self.log(
+                #     f"IC/{stage}_target_{self.pred_indices[i]}",
+                #     mean_IC_target,
+                #     **current_log_opts,
+                # )
 
-                unseen_ICs = ICs[:, -self.pred_indices[i] :, i][
-                    ~torch.isnan(ICs[:, -self.pred_indices[i] :, i])
-                ]
-                if len(unseen_ICs) > 1:
-                    self.log(
-                        f"IR/{stage}_target_{self.pred_indices[i]}_unseen",
-                        unseen_ICs.mean() / (unseen_ICs.std() + 1e-9),
-                        **current_log_opts,
-                    )
-                else:
-                    self.log(
-                        f"IR/{stage}_target_{self.pred_indices[i]}_unseen",
-                        torch.tensor(float("nan"), device=ICs.device),
-                        **current_log_opts,
-                    )
-                self.log(
-                    f"IC/{stage}_target_{self.pred_indices[i]}_unseen",
-                    unseen_ICs.mean(),
-                    **current_log_opts,
-                )
+                # unseen_ICs = ICs[:, -self.pred_indices[i] :, i][
+                #     ~torch.isnan(ICs[:, -self.pred_indices[i] :, i])
+                # ]
+                # if len(unseen_ICs) > 1:
+                #     self.log(
+                #         f"IR/{stage}_target_{self.pred_indices[i]}_unseen",
+                #         unseen_ICs.mean() / (unseen_ICs.std() + 1e-9),
+                #         **current_log_opts,
+                #     )
+                # else:
+                #     self.log(
+                #         f"IR/{stage}_target_{self.pred_indices[i]}_unseen",
+                #         torch.tensor(float("nan"), device=ICs.device),
+                #         **current_log_opts,
+                #     )
+                # self.log(
+                #     f"IC/{stage}_target_{self.pred_indices[i]}_unseen",
+                #     unseen_ICs.mean(),
+                #     **current_log_opts,
+                # )
                 self.log(
                     f"Target_Accuracy/{stage}_target_{self.pred_indices[i]}",
                     acc_target[i],
@@ -763,13 +693,13 @@ class MoneyExperiment(pl.LightningModule):
                 cummulative_times["metrics"] += (
                     time.time_ns() - time_metrics_start
                 ) / 1e6
-        if stage == "train":
-            self.log(
-                f"{stage}_lr",
-                self.lr_schedulers().get_last_lr()[0],
-                on_step=True,
-                logger=True,
-            )
+            if stage == "train":
+                self.log(
+                    f"{stage}_lr",
+                    self.lr_schedulers().get_last_lr()[0],
+                    on_step=True,
+                    logger=True,
+                )
         return loss
 
     def training_step(self, batch, batch_idx):
