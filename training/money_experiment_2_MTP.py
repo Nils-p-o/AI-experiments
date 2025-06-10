@@ -340,21 +340,23 @@ class MoneyExperiment(pl.LightningModule):
                 #     seq_len - self.pred_indices[i],
                 # ]
                 seen_unseen_weights = [1.0, 1.0]
-                seen_current_preds = preds[:, :-self.pred_indices[i], :, i, :]
-                unseen_current_preds = preds[:, -self.pred_indices[i] :, :, i, :]
-                seen_current_targets = targets[:, : -self.pred_indices[i], :, i, :]
-                unseen_current_targets = targets[:, -self.pred_indices[i] :, :, i, :]
+                seen_current_preds = preds[:, :-1, :, i, :]
+                unseen_current_preds = preds[:, -1:, :, i, :]
+                seen_current_targets = targets[:, :-1, :, i, :]
+                unseen_current_targets = targets[:, -1:, :, i, :]
                 loss += (
                     target_weights[i]
                     * (seen_unseen_weights[0] * 2 / sum(seen_unseen_weights))
                     * self.loss_fn(seen_current_preds, seen_current_targets)
-                    * ((seq_len - self.pred_indices[i]) / seq_len)
+                    # * ((seq_len - self.pred_indices[i]) / seq_len)
+                    * ((seq_len-1)/seq_len)
                 )
                 loss += (
                     target_weights[i]
                     * (seen_unseen_weights[1] * 2 / sum(seen_unseen_weights))
                     * self.loss_fn(unseen_current_preds, unseen_current_targets)
-                    * (self.pred_indices[i] / seq_len)
+                    # * (self.pred_indices[i] / seq_len)
+                    * (1/seq_len)
                 )
 
                 unseen_losses.append(
@@ -459,14 +461,15 @@ class MoneyExperiment(pl.LightningModule):
                 #         **current_log_opts,
                 #     )
             if stage == "val":
+                avg_unseen_target_acc = []
                 for i in range(len(self.pred_indices)):
-                    seen_current_preds = preds[:, :, : -self.pred_indices[i], i, :]
-                    seen_current_targets = targets[:, :, : -self.pred_indices[i], i, :]
+                    seen_current_preds = preds[:, :, :-1, i, :]
+                    seen_current_targets = targets[:, :, :-1, i, :]
                     seen_MSE = self.MSE(seen_current_preds, seen_current_targets)
                     seen_MAE = self.MAE(seen_current_preds, seen_current_targets)
 
-                    unseen_current_preds = preds[:, :, -self.pred_indices[i] :, i, :]
-                    unseen_current_targets = targets[:, :, -self.pred_indices[i] :, i, :]
+                    unseen_current_preds = preds[:, :, -1:, i, :]
+                    unseen_current_targets = targets[:, :, -1:, i, :]
                     unseen_MSE = self.MSE(unseen_current_preds, unseen_current_targets)
                     unseen_MAE = self.MAE(unseen_current_preds, unseen_current_targets)
 
@@ -519,6 +522,7 @@ class MoneyExperiment(pl.LightningModule):
                     unseen_direction_acc = (
                         unseen_target_movements == unseen_predicted_movements
                     ).sum() / unseen_target_movements.numel()
+                    avg_unseen_target_acc.append(unseen_direction_acc)
                     self.log(
                         f"Split_Error/{stage}_unseen_accuracy_{self.pred_indices[i]}",
                         unseen_direction_acc,
@@ -530,6 +534,12 @@ class MoneyExperiment(pl.LightningModule):
                         **current_log_opts,
                     )
 
+                avg_unseen_target_acc = torch.mean(torch.stack(avg_unseen_target_acc))
+                self.log(
+                    f"Split_Error/{stage}_unseen_accuracy_avg",
+                    avg_unseen_target_acc,
+                    **current_log_opts,
+                )
             naive_MSE = self.MSE(torch.zeros_like(targets), targets)
             naive_MAE = self.MAE(torch.zeros_like(targets), targets)
             MSSE = self.MSE(preds, targets) / (naive_MSE + 1e-6)

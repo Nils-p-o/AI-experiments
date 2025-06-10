@@ -228,8 +228,6 @@ def download_numerical_financial_data(
 
     # TODO write somewhere else, maybe in another function
 
-    # new structure - targets, then input features in the same dimension
-    # (targets+features, time series, tickers)
     # TODO rewrite without for loop over tickers (adapt calculate functions for multiple tickers at once)
     raw_data = raw_data[1:, :, :]
     columns = columns[1:]
@@ -405,6 +403,11 @@ def download_numerical_financial_data(
     full_data = (raw_data[:,1:,:] - raw_data[:,:-1,:]) / raw_data[:,:-1,:]  # (features, time series, tickers)
     full_data = torch.cat((torch.zeros_like(full_data[:,0:1,:]), full_data), dim=1)
     full_data[4, 5929] = full_data[4, 5928] # ffil fix for inf
+
+    volatil_data, volatil_columns = feature_volatility_ret(returns=full_data)
+    full_data = torch.cat((full_data, volatil_data), dim=0)
+    columns.extend(volatil_columns)
+
     data = torch.empty(full_data.shape[0], max(target_dates), full_data.shape[1]-max(target_dates), full_data.shape[2], dtype=torch.float32)
     for i in range(max(target_dates)):
         data[:,i,:,:] = full_data[:,i:-(max(target_dates)-i),:]
@@ -842,14 +845,9 @@ def download_numerical_financial_data(
 
     column_to_id = {column: i for i, column in enumerate(columns)}
 
-    # data[4, 5909] = data[
-    #     4, 5908
-    # ]  # ffil quickfix for now, (no clue why inf all of a sudden)
     if (torch.isnan(data)).any() or (torch.isinf(data)).any():
         print("Data contains NaN or Inf values.")
-    # MTP_targets[4, :, 5908] = MTP_targets[
-    #     4, :, 5907
-    # ] # same issue point
+
     if (torch.isnan(MTP_targets)).any() or (torch.isinf(MTP_targets)).any():
         print("MTP_targets contains NaN or Inf values.")
     
@@ -879,7 +877,7 @@ def download_numerical_financial_data(
     # val_data[:len(target_dates)] = (val_data[:len(target_dates)] - means_close_ret) / stds_close_ret
     # test_data[:len(target_dates)] = (test_data[:len(target_dates)] - means_close_ret) / stds_close_ret
 
-    MTP_targets = (MTP_targets - means) / stds
+    MTP_targets = (MTP_targets - means[:5]) / stds[:5]
 
     train_MTP_targets, val_MTP_targets, test_MTP_targets = torch.split(
         MTP_targets, [train_data_length, val_data_length, test_data_length], dim=2
@@ -1412,15 +1410,15 @@ def calculate_moving_average_returns(
 def calculate_volatility_returns(
     returns: torch.Tensor, lookback: int = 30
 ) -> torch.Tensor:
-    volatility = [0, 0]
-    for i in range(2, returns.shape[0]):
+    volatility = torch.zeros(returns.shape[1], returns.shape[2])
+    for i in range(2, returns.shape[1]):
         if i < lookback:
-            volatility.append(returns[:i].std())
+            volatility[i] = returns[:, :i].std(dim=(0,1))
         else:
-            volatility.append(returns[i - lookback : i].std())
+            volatility[i] = returns[:, i - lookback : i].std(dim=(0,1))
     volatility[0] = volatility[2]  # maybe wrong, but its just two datapoints
     volatility[1] = volatility[2]
-    return torch.tensor(volatility)
+    return volatility
 
 
 
