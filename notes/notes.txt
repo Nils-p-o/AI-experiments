@@ -59,3 +59,4 @@ a little worse than it was supposed to be
 Was correct the first time, misremembered how DINT attention was supposed to work
 
 miscoded seen/unseen accuracy (need to code less while half asleep)
+reshaping wrong in model architecture, so everything up to now is bs?

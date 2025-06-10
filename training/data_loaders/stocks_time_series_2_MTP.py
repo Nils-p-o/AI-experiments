@@ -235,19 +235,6 @@ def download_numerical_financial_data(
     # full_data = []
 
     # for i in range(len(tickers)):
-    #     temp_raw_data = raw_data[:, :, i]
-    #     # getting targets
-    #     # temp_raw_data = temp_raw_data[:, : -max(target_dates)]
-
-    #     # getting features
-    #     returns = (temp_raw_data[:, 1:] - temp_raw_data[:, :-1]) / temp_raw_data[:, :-1]
-    #     returns = torch.cat((torch.zeros(temp_raw_data.shape[0], 1), returns), dim=1)
-    #     temp_data = returns
-
-    #     # vol_data, vol_columns = feature_volatility_log_ret(temp_raw_data[0], "log_returns_")
-    #     # temp_data = torch.cat((temp_data, vol_data), dim=0)
-    #     # if i == 0:
-    #     #     columns.extend(vol_columns)
 
     #     # adr_data, adr_columns = feature_adr_old(temp_raw_data[0], temp_raw_data[1], temp_raw_data[2])
     #     # temp_data = torch.cat((temp_data, adr_data), dim=0)
@@ -263,11 +250,6 @@ def download_numerical_financial_data(
     #     # temp_data = torch.cat((temp_data, returns_sma_data), dim=0)
     #     # if i == 0:
     #     #     columns.extend(returns_sma_columns)
-        
-    #     # vol_data, vol_columns = feature_volatility_ret(temp_raw_data[0])
-    #     # temp_data = torch.cat((temp_data, vol_data), dim=0)
-    #     # if i == 0:
-    #     #     columns.extend(vol_columns)
 
     #     # column_to_id = {col: idx for idx, col in enumerate(columns)}
 
@@ -404,9 +386,29 @@ def download_numerical_financial_data(
     full_data = torch.cat((torch.zeros_like(full_data[:,0:1,:]), full_data), dim=1)
     full_data[4, 5929] = full_data[4, 5928] # ffil fix for inf
 
-    volatil_data, volatil_columns = feature_volatility_ret(returns=full_data)
-    full_data = torch.cat((full_data, volatil_data), dim=0)
-    columns.extend(volatil_columns)
+    vol_data, vol_columns = feature_volatility_ret(returns=full_data[0:1], prefix="close_returns_")
+    full_data = torch.cat((full_data, vol_data), dim=0)
+    columns.extend(vol_columns)
+
+    sma_data, sma_columns = feature_returns_sma(returns=full_data[0:1], prefix="close_returns_")
+    full_data = torch.cat((full_data, sma_data), dim=0)
+    columns.extend(sma_columns)
+
+    sma_data, sma_columns = feature_returns_sma(returns=full_data[1:2], prefix="high_returns_")
+    full_data = torch.cat((full_data, sma_data), dim=0)
+    columns.extend(sma_columns)
+
+    sma_data, sma_columns = feature_returns_sma(returns=full_data[2:3], prefix="low_returns_")
+    full_data = torch.cat((full_data, sma_data), dim=0)
+    columns.extend(sma_columns)
+
+    sma_data, sma_columns = feature_returns_sma(returns=full_data[3:4], prefix="open_returns_")
+    full_data = torch.cat((full_data, sma_data), dim=0)
+    columns.extend(sma_columns)
+
+    sma_data, sma_columns = feature_returns_sma(returns=full_data[4:5], prefix="volume_returns_")
+    full_data = torch.cat((full_data, sma_data), dim=0)
+    columns.extend(sma_columns)
 
     data = torch.empty(full_data.shape[0], max(target_dates), full_data.shape[1]-max(target_dates), full_data.shape[2], dtype=torch.float32)
     for i in range(max(target_dates)):
@@ -992,19 +994,19 @@ def feature_returns_sma(returns: torch.Tensor, prefix: str = "returns_") -> torc
     sma_columns = []
 
     sma = calculate_sma(returns, lookback=5)
-    sma_data = sma.unsqueeze(0)
+    sma_data = sma
     sma_columns.append(prefix + "sma_5")
 
     sma = calculate_sma(returns, lookback=10)
-    sma_data = torch.cat((sma_data, sma.unsqueeze(0)), dim=0)
+    sma_data = torch.cat((sma_data, sma), dim=0)
     sma_columns.append(prefix + "sma_10")
 
     sma = calculate_sma(returns, lookback=20)
-    sma_data = torch.cat((sma_data, sma.unsqueeze(0)), dim=0)
+    sma_data = torch.cat((sma_data, sma), dim=0)
     sma_columns.append(prefix + "sma_20")
 
     sma = calculate_sma(returns, lookback=50)
-    sma_data = torch.cat((sma_data, sma.unsqueeze(0)), dim=0)
+    sma_data = torch.cat((sma_data, sma), dim=0)
     sma_columns.append(prefix + "sma_50")
 
     return sma_data, sma_columns
@@ -1388,11 +1390,11 @@ def calculate_true_range(
     trs = torch.cat((trs[:, 0:1], trs), dim=1)  # add first value
     return torch.max(trs, dim=0).values
 
-def calculate_sma(price_series: torch.Tensor, lookback: int = 10) -> torch.Tensor:
-    sma = torch.empty_like(price_series)
-    cumsum = torch.cumsum(price_series, dim=0)
-    sma[:lookback] = cumsum[:lookback] / torch.arange(1, lookback + 1)
-    sma[lookback:] = (cumsum[lookback:] - cumsum[:-lookback]) / lookback
+def calculate_sma(series: torch.Tensor, lookback: int = 10) -> torch.Tensor:
+    sma = torch.empty_like(series)
+    cumsum = torch.cumsum(series, dim=1)
+    sma[:, :lookback] = cumsum[:, :lookback] / torch.arange(1, lookback + 1).view(1,-1,1)
+    sma[:, lookback:] = (cumsum[:, lookback:] - cumsum[:, :-lookback]) / lookback
     return sma
 
 

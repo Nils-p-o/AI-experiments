@@ -14,7 +14,10 @@ def welch_t_test(a, b):
 # best achived val_loss_unseen
 base_3_global = np.array([0.5423, 0.5428, 0.544, 0.5438, 0.5437, 0.543, 0.5426, 0.5444])
 base_3_global_shorter = np.array([0.5445, 0.5432, 0.5439])
-
+# combined vol
+base_3_g_sh_vol = np.array([0.5428, 0.5435, 0.5434])
+base_3_g_sh_vol_c = np.array([0.5413, 0.5418, 0.5423]) # best so far
+base_3_g_sh_vol_chlov = np.array([0.5428, 0.5422, 0.5428])
 
 # normal test (8 samples min)
 _, p_value = stats.normaltest(base_3_global)
@@ -50,3 +53,21 @@ print(f"Mean base_3_global: {np.mean(base_3_global)}")
 print(f"Mean base_3_global_shorter: {np.mean(base_3_global_shorter)}")
 print("Welch's t-test: base_3_global vs base_3_global_shorter")
 welch_t_test(base_3_global, base_3_global_shorter)
+
+print(f"Mean base_3_g_sh_vol: {np.mean(base_3_g_sh_vol)}")
+print("Welch's t-test: base_3_global_shorter vs base_3_g_sh_vol")
+welch_t_test(base_3_global_shorter, base_3_g_sh_vol)
+
+# print("Welch's t-test: base_3_global vs base_3_g_sh_vol")
+# welch_t_test(base_3_global, base_3_g_sh_vol) # same-ish
+
+print(f"Mean base_3_g_sh_vol_c: {np.mean(base_3_g_sh_vol_c)}")
+print("Welch's t-test: base_3_g_sh_vol vs base_3_g_sh_vol_c")
+welch_t_test(base_3_g_sh_vol, base_3_g_sh_vol_c) # better
+
+print("Welch's t-test: base_3_global vs base_3_g_sh_vol_c")
+welch_t_test(base_3_global, base_3_g_sh_vol_c) # def improvement
+
+# print(f"Mean base_3_g_sh_vol_chlov: {np.mean(base_3_g_sh_vol_chlov)}")
+# print("Welch's t-test: base_3_g_sh_vol_c vs base_3_g_sh_vol_chlov")
+# welch_t_test(base_3_g_sh_vol_c, base_3_g_sh_vol_chlov) # worse 0.09
