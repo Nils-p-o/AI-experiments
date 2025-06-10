@@ -38,6 +38,7 @@ class FinancialNumericalDataset(Dataset):
         self.preload = preload
         self.file_path = file_path
         self.num_targets = num_targets
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         if preload:
             self.sequences_data = torch.load(file_path)
             self.targets_data = torch.load(targets_file_path)
@@ -54,11 +55,11 @@ class FinancialNumericalDataset(Dataset):
         if self.preload:
             input_sequence = self.sequences_data[
                 :, :, idx : idx + self.seq_len, :
-            ]
+            ].to(self.device)
             # target_sequence = self.sequences_data[
             #     : self.num_targets, idx : idx + self.seq_len, :
             # ]
-            target_sequence = self.targets_data[:,:, idx : idx + self.seq_len, :]
+            target_sequence = self.targets_data[:,:, idx : idx + self.seq_len, :].to(self.device)
             return input_sequence, target_sequence
         else:  # TODO?
             raise NotImplementedError

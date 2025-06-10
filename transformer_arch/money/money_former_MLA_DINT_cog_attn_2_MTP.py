@@ -88,7 +88,7 @@ class Money_former_MLA_DINT_cog_attn_MTP(nn.Module): # TODO MTP blocks
 
         x_end = torch.empty_like(x)
         x_main = x[:, 0, :, :]
-        freqs_cis = self.freqs_cis[0 : 0 + seq_len]
+        freqs_cis = self.freqs_cis[0 : 0 + seq_len].to(x.device)
         for layer in self.layers:
             x_main = layer(x_main, freqs_cis)
         x_main = self.norm(x_main)  # (batch_size, seq_len, d_model)
@@ -126,7 +126,7 @@ class Money_former_block(nn.Module):
     def forward(self, x, freqs_cis):
         batch_size, seq_len, _ = x.size()
         seq_len = seq_len // self.num_sequences
-        mask = get_causal_mask(seq_len)
+        mask = get_causal_mask(seq_len).to(x.device)
         mask = mask.repeat(
             batch_size, 2 * self.nhead, self.num_sequences, self.num_sequences
         )
@@ -300,10 +300,10 @@ class custom_MHA(nn.Module): # a mix of MLA and DINT
         #     normed_heads.append(head)
         # attn_output = torch.stack(normed_heads, dim=2)  # (batch_size, seq_len, nhead, head_dim)
         attn_output = self.norm(attn_output)  # (batch_size, seq_len, nhead, head_dim)
-        attn_output = attn_output.transpose(1, 2)  # (batch_size, nhead, seq_len, head_dim)
-        attn_output = attn_output.reshape( # TODO keep in mind sus amogus
-            batch_size, seq_len, self.nhead, self.head_dim
-        )
+        # attn_output = attn_output.transpose(1, 2)  # (batch_size, nhead, seq_len, head_dim)
+        # attn_output = attn_output.reshape( # TODO keep in mind sus amogus
+        #     batch_size, seq_len, self.nhead, self.head_dim
+        # )
         # --- Concatenate and Output Projection ---
         attn_output = (
             attn_output.contiguous()
