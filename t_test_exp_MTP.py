@@ -17,12 +17,22 @@ base_3_global_shorter = np.array([0.5445, 0.5432, 0.5439])
 # combined vol
 base_3_g_sh_vol = np.array([0.5428, 0.5435, 0.5434])
 base_3_g_sh_vol_c = np.array([0.5413, 0.5418, 0.5423]) # best so far
-base_3_g_sh_vol_chlov = np.array([0.5428, 0.5422, 0.5428])
+# base_3_g_sh_vol_chlov = np.array([0.5428, 0.5422, 0.5428])
 
 # sma and ema
 base_3_g_sh_vol_c_sma_c = np.array([0.5415, 0.5415, 0.5417]) # same-ish
 base_3_g_sh_vol_c_sma_chlov = np.array([0.5362, 0.5365, 0.5353]) # better
 base_3_g_sh_vol_c_ema_chlov = np.array([0.5236, 0.5243, 0.5235]) # best so far
+
+# ema_chlov_mfi = np.array([0.5241, 0.524, 0.5245])
+# ema_chlov_mfi_ch = np.array([0.5242, 0.5239, 0.5238])
+
+ema_chlov_vpt = np.array([0.5228, 0.5229, 0.5222])
+# ema_chlov_vpt_ch = np.array([0.5235, 0.5234, 0.5248])
+# ema_chlov_vpt_m = np.array([0.5242, 0.525, 0.5237])
+# ema_chlov_vpt_m_ch = np.array([0.5242, 0.5239, 0.5234])
+
+
 # normal test (8 samples min)
 _, p_value = stats.normaltest(base_3_global)
 print(f"Normal test base_small p-value: {p_value}")
@@ -53,40 +63,50 @@ print(f"Normal test base_small p-value: {p_value}")
 
 # means
 
-print(f"Mean base_3_global: {np.mean(base_3_global)}")
-print(f"Mean base_3_global_shorter: {np.mean(base_3_global_shorter)}")
-print("Welch's t-test: base_3_global vs base_3_global_shorter")
-welch_t_test(base_3_global, base_3_global_shorter)
+# print(f"Mean base_3_global: {np.mean(base_3_global)}")
+# print(f"Mean base_3_global_shorter: {np.mean(base_3_global_shorter)}")
+# print("Welch's t-test: base_3_global vs base_3_global_shorter")
+# welch_t_test(base_3_global, base_3_global_shorter)
 
-print(f"Mean base_3_g_sh_vol: {np.mean(base_3_g_sh_vol)}")
-print("Welch's t-test: base_3_global_shorter vs base_3_g_sh_vol")
-welch_t_test(base_3_global_shorter, base_3_g_sh_vol)
+# print(f"Mean base_3_g_sh_vol_c: {np.mean(base_3_g_sh_vol_c)}")
+# print("Welch's t-test: base_3_g_sh_vol vs base_3_g_sh_vol_c")
+# welch_t_test(base_3_g_sh_vol, base_3_g_sh_vol_c) # better
 
-# print("Welch's t-test: base_3_global vs base_3_g_sh_vol")
-# welch_t_test(base_3_global, base_3_g_sh_vol) # same-ish
+# print("Welch's t-test: base_3_global vs base_3_g_sh_vol_c")
+# welch_t_test(base_3_global, base_3_g_sh_vol_c) # def improvement
 
-print(f"Mean base_3_g_sh_vol_c: {np.mean(base_3_g_sh_vol_c)}")
-print("Welch's t-test: base_3_g_sh_vol vs base_3_g_sh_vol_c")
-welch_t_test(base_3_g_sh_vol, base_3_g_sh_vol_c) # better
 
-print("Welch's t-test: base_3_global vs base_3_g_sh_vol_c")
-welch_t_test(base_3_global, base_3_g_sh_vol_c) # def improvement
-
-# print(f"Mean base_3_g_sh_vol_chlov: {np.mean(base_3_g_sh_vol_chlov)}")
-# print("Welch's t-test: base_3_g_sh_vol_c vs base_3_g_sh_vol_chlov")
-# welch_t_test(base_3_g_sh_vol_c, base_3_g_sh_vol_chlov) # worse 0.09
-
-print(f"Mean base_3_g_sh_vol_c_sma_c: {np.mean(base_3_g_sh_vol_c_sma_c)}")
-print("Welch's t-test: base_3_g_sh_vol_c vs base_3_g_sh_vol_c_sma_c")
-welch_t_test(base_3_g_sh_vol_c, base_3_g_sh_vol_c_sma_c) # better
-
-print(f"Mean base_3_g_sh_vol_c_sma_chlov: {np.mean(base_3_g_sh_vol_c_sma_chlov)}")
-print("Welch's t-test: base_3_g_sh_vol_c vs base_3_g_sh_vol_c_sma_chlov")
-welch_t_test(base_3_g_sh_vol_c, base_3_g_sh_vol_c_sma_chlov) # better
+# print(f"Mean base_3_g_sh_vol_c_sma_chlov: {np.mean(base_3_g_sh_vol_c_sma_chlov)}")
+# print("Welch's t-test: base_3_g_sh_vol_c vs base_3_g_sh_vol_c_sma_chlov")
+# welch_t_test(base_3_g_sh_vol_c, base_3_g_sh_vol_c_sma_chlov) # better
 
 print(f"Mean base_3_g_sh_vol_c_ema_chlov: {np.mean(base_3_g_sh_vol_c_ema_chlov)}")
-print("Welch's t-test: base_3_g_sh_vol_c vs base_3_g_sh_vol_c_ema_chlov")
-welch_t_test(base_3_g_sh_vol_c, base_3_g_sh_vol_c_ema_chlov) # better
+# print("Welch's t-test: base_3_g_sh_vol_c vs base_3_g_sh_vol_c_ema_chlov")
+# welch_t_test(base_3_g_sh_vol_c, base_3_g_sh_vol_c_ema_chlov) # better
 
-print("Welch's t-test: base_3_g_sh_vol_c_sma_chlov vs base_3_g_sh_vol_c_ema_chlov")
-welch_t_test(base_3_g_sh_vol_c_sma_chlov, base_3_g_sh_vol_c_ema_chlov) # best so far
+# print("Welch's t-test: base_3_g_sh_vol_c_sma_chlov vs base_3_g_sh_vol_c_ema_chlov")
+# welch_t_test(base_3_g_sh_vol_c_sma_chlov, base_3_g_sh_vol_c_ema_chlov) # best so far
+
+# print(f"Mean ema_chlov_mfi: {np.mean(ema_chlov_mfi)}")
+# print("Welch's t-test: base_3_g_sh_vol_c_ema_chlov vs ema_chlov_mfi")
+# welch_t_test(base_3_g_sh_vol_c_ema_chlov, ema_chlov_mfi) # same-ish (possibly worse)
+
+# print(f"Mean ema_chlov_mfi_ch: {np.mean(ema_chlov_mfi_ch)}")
+# print("Welch's t-test: base_3_g_sh_vol_c_ema_chlov vs ema_chlov_mfi_ch")
+# welch_t_test(base_3_g_sh_vol_c_ema_chlov, ema_chlov_mfi_ch) # same-ish
+
+print(f"Mean ema_chlov_vpt: {np.mean(ema_chlov_vpt)}")
+print("Welch's t-test: base_3_g_sh_vol_c_ema_chlov vs ema_chlov_vpt")
+welch_t_test(base_3_g_sh_vol_c_ema_chlov, ema_chlov_vpt) # better? 0.025
+
+# print(f"Mean ema_chlov_vpt_ch: {np.mean(ema_chlov_vpt_ch)}")
+# print("Welch's t-test: base_3_g_sh_vol_c_ema_chlov vs ema_chlov_vpt_ch")
+# welch_t_test(base_3_g_sh_vol_c_ema_chlov, ema_chlov_vpt_ch)
+
+# print(f"Mean ema_chlov_vpt_m: {np.mean(ema_chlov_vpt_m)}")
+# print("Welch's t-test: base_3_g_sh_vol_c_ema_chlov vs ema_chlov_vpt_m")
+# welch_t_test(base_3_g_sh_vol_c_ema_chlov, ema_chlov_vpt_m)
+
+# print(f"Mean ema_chlov_vpt_m_ch: {np.mean(ema_chlov_vpt_m_ch)}")
+# print("Welch's t-test: base_3_g_sh_vol_c_ema_chlov vs ema_chlov_vpt_m_ch")
+# welch_t_test(base_3_g_sh_vol_c_ema_chlov, ema_chlov_vpt_m_ch)

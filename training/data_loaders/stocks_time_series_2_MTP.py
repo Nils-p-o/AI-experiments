@@ -335,16 +335,6 @@ def download_numerical_financial_data(
     #     #     columns.append("d_percent_14_3")
     #     # new shit (+ relative vol as well)
         
-    #     # mfi_data, mfi_columns = feature_mfi(
-    #     #     close=temp_raw_data[0],
-    #     #     high=temp_raw_data[1],
-    #     #     low=temp_raw_data[2],
-    #     #     volume=temp_raw_data[4],
-    #     # )
-    #     # temp_data = torch.cat((temp_data, mfi_data), dim=0)
-    #     # if i == 0:
-    #     #     columns.extend(mfi_columns)
-        
     #     # standard_ad = calculate_accumulation_distribution_index_standard(
     #     #     temp_raw_data[4], clv
     #     # )
@@ -359,12 +349,6 @@ def download_numerical_financial_data(
     #     # if i == 0:
     #     #     columns.extend(chaikin_columns)
         
-    #     # standard_vpt = calculate_volume_price_trend_standard(
-    #     #     temp_raw_data[0], temp_raw_data[4]
-    #     # )
-    #     # temp_data = torch.cat((temp_data, standard_vpt.unsqueeze(0)), dim=0)
-    #     # if i == 0:
-    #     #     columns.append("standard_vpt")
         
     #     # atr_data, atr_columns = feature_atr(temp_raw_data[1], temp_raw_data[2], temp_raw_data[0])
     #     # temp_data = torch.cat((temp_data, atr_data), dim=0)
@@ -444,10 +428,17 @@ def download_numerical_financial_data(
     # full_data = torch.cat((full_data, vpt_data), dim=0)
     # columns.extend(["vpt_close_change", "vpt_high_change", "vpt_low_change", "vpt_open_change"])
 
-    mfi_data, mfi_columns = feature_mfi(raw_data[0], raw_data[1], raw_data[2], raw_data[4])
-    full_data = torch.cat((full_data, mfi_data), dim=0)
-    columns.extend(mfi_columns)
-
+    # mfi_data, mfi_columns = feature_mfi(raw_data[0], raw_data[1], raw_data[2], raw_data[4]) # meh global norm
+    # mfi_data[:, 1:] = (mfi_data[:, 1:] - mfi_data[:, :-1])/(mfi_data[:, :-1] + 1e-6) # change
+    # mfi_data[:, :1] = mfi_data[:, 1:2]
+    # full_data = torch.cat((full_data, mfi_data), dim=0)
+    # columns.extend(mfi_columns)
+    full_atr = []
+    for i in range(len(tickers)):
+        atr_data, atr_columns = feature_atr(raw_data[0, :, i], raw_data[1, :, i], raw_data[2, :, i])
+        full_atr.append(atr_data)
+    full_data = torch.cat((full_data, torch.stack(full_atr, dim=-1)), dim=0)
+    columns.extend(atr_columns)
 
 
     data = torch.empty(full_data.shape[0], max(target_dates), full_data.shape[1]-max(target_dates), full_data.shape[2], dtype=torch.float32)
@@ -1317,7 +1308,7 @@ def feature_mfi(
 def feature_atr(
     close: torch.Tensor, high: torch.Tensor, low: torch.Tensor) -> torch.Tensor:
     atr_columns = []
-    tr = calculate_true_range(close, high, low)
+    tr = calculate_true_range(close, high, low) / close
     atr_data = tr.unsqueeze(0)
     atr_columns.append("tr")
 
@@ -1332,6 +1323,10 @@ def feature_atr(
     atr = calculate_ema_pandas(tr, lookback=20*2-1)  # Wilder's smoothing
     atr_data = torch.cat((atr_data, atr.unsqueeze(0)), dim=0)
     atr_columns.append("atr_20")
+
+    atr = calculate_ema_pandas(tr, lookback=50*2-1)  # Wilder's smoothing
+    atr_data = torch.cat((atr_data, atr.unsqueeze(0)), dim=0)
+    atr_columns.append("atr_50")
 
     return atr_data, atr_columns
 
