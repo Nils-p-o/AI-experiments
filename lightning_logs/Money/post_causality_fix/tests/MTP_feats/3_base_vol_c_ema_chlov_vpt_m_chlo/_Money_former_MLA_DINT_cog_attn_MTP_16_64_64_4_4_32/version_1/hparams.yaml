@@ -1,0 +1,46 @@
+args: !!python/object:argparse.Namespace
+  architecture: Money_former_MLA_DINT_cog_attn_MTP
+  batch_size: 32
+  bias: true
+  config: ./experiment_configs/MTP_triplicate.json
+  d_ff: 64
+  d_model: 64
+  dataset: Money
+  dropout: 0.1
+  dtype: fp32
+  experiment_notes: vpt - sma 50 of chlo, ema's of chlov returns, global znorm volatility
+    (ret, from c), returns, time data, bias, global znorm, sus in architecture (but
+    it gives better results, so)
+  extra_descriptor: ''
+  folder_name: post_causality_fix/tests/MTP_feats/3_base_vol_c_ema_chlov_vpt_m_chlo/
+  head_dim: 16
+  indices_to_predict:
+  - 1
+  - 2
+  - 3
+  input_features: 48
+  kv_compression_dim: 24
+  lr: 0.001
+  lr_mult: 0.5
+  nhead: 4
+  num_layers: 4
+  num_params: 194829
+  orthograd: false
+  predict_gaussian: false
+  q_compression_dim: 48
+  qk_rope_dim: 4
+  seq_len: 16
+  t_0: 4000
+  t_mult: 1.5
+  t_total: 5000
+  tickers:
+  - AAPL
+  - ^GSPC
+  type: ''
+  warmup_steps: 1000
+batch_size: 32
+learning_rate: 0.001
+lr_mult: 0.5
+t_0: 5000
+t_mult: 1.5
+warmup_steps: 1000
