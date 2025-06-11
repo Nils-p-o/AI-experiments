@@ -27,6 +27,6 @@
     "dataset":"Money",
     "type": "",
     "extra_descriptor":"",
-    "experiment_notes": "added sma's of chlov returns, added global znorm volatility (ret, from c), returns, time data, bias, global znorm, sus in architecture (but it gives better results, so)",
-    "folder_name": "post_causality_fix/tests/MTP_feats/3_base_vol_c_sma_chlov/"
+    "experiment_notes": "mfi, ema's of chlov returns, global znorm volatility (ret, from c), returns, time data, bias, global znorm, sus in architecture (but it gives better results, so)",
+    "folder_name": "post_causality_fix/tests/MTP_feats/3_base_vol_c_ema_chlov_mfi/"
 }

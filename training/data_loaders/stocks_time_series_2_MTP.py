@@ -247,10 +247,6 @@ def download_numerical_financial_data(
     #     # if i == 0:
     #     #     columns.extend(price_sma_columns)
 
-    #     # returns_sma_data, returns_sma_columns = feature_returns_sma(temp_data[0]) # differs from old version (but should be identical)
-    #     # temp_data = torch.cat((temp_data, returns_sma_data), dim=0)
-    #     # if i == 0:
-    #     #     columns.extend(returns_sma_columns)
 
     #     # column_to_id = {col: idx for idx, col in enumerate(columns)}
 
@@ -338,10 +334,6 @@ def download_numerical_financial_data(
     #     #     columns.append("k_percent_14")
     #     #     columns.append("d_percent_14_3")
     #     # new shit (+ relative vol as well)
-    #     # returns_ema_data, returns_ema_columns = feature_ema(temp_data[0], "returns_")
-    #     # temp_data = torch.cat((temp_data, returns_ema_data), dim=0)
-    #     # if i == 0:
-    #     #     columns.extend(returns_ema_columns)
         
     #     # mfi_data, mfi_columns = feature_mfi(
     #     #     close=temp_raw_data[0],
@@ -382,7 +374,7 @@ def download_numerical_financial_data(
     #     full_data.append(
     #         temp_data[:, 20:].unsqueeze(-1)
     #     )  # getting rid of some trashy-ish data points
-
+    # TODO maybe norm ema and such using same values as returns and such
     full_data = (raw_data[:,1:,:] - raw_data[:,:-1,:]) / raw_data[:,:-1,:]  # (features, time series, tickers)
     full_data = torch.cat((torch.zeros_like(full_data[:,0:1,:]), full_data), dim=1)
     full_data[4, 5929] = full_data[4, 5928] # ffil fix for inf
@@ -391,25 +383,72 @@ def download_numerical_financial_data(
     full_data = torch.cat((full_data, vol_data), dim=0)
     columns.extend(vol_columns)
 
-    sma_data, sma_columns = feature_returns_sma(returns=full_data[0:1], prefix="close_returns_")
-    full_data = torch.cat((full_data, sma_data), dim=0)
-    columns.extend(sma_columns)
+    # sma_data, sma_columns = feature_returns_sma(returns=full_data[0:1], prefix="close_returns_")
+    # full_data = torch.cat((full_data, sma_data), dim=0)
+    # columns.extend(sma_columns)
 
-    sma_data, sma_columns = feature_returns_sma(returns=full_data[1:2], prefix="high_returns_")
-    full_data = torch.cat((full_data, sma_data), dim=0)
-    columns.extend(sma_columns)
+    # sma_data, sma_columns = feature_returns_sma(returns=full_data[1:2], prefix="high_returns_")
+    # full_data = torch.cat((full_data, sma_data), dim=0)
+    # columns.extend(sma_columns)
 
-    sma_data, sma_columns = feature_returns_sma(returns=full_data[2:3], prefix="low_returns_")
-    full_data = torch.cat((full_data, sma_data), dim=0)
-    columns.extend(sma_columns)
+    # sma_data, sma_columns = feature_returns_sma(returns=full_data[2:3], prefix="low_returns_")
+    # full_data = torch.cat((full_data, sma_data), dim=0)
+    # columns.extend(sma_columns)
 
-    sma_data, sma_columns = feature_returns_sma(returns=full_data[3:4], prefix="open_returns_")
-    full_data = torch.cat((full_data, sma_data), dim=0)
-    columns.extend(sma_columns)
+    # sma_data, sma_columns = feature_returns_sma(returns=full_data[3:4], prefix="open_returns_")
+    # full_data = torch.cat((full_data, sma_data), dim=0)
+    # columns.extend(sma_columns)
 
-    sma_data, sma_columns = feature_returns_sma(returns=full_data[4:5], prefix="volume_returns_")
-    full_data = torch.cat((full_data, sma_data), dim=0)
-    columns.extend(sma_columns)
+    # sma_data, sma_columns = feature_returns_sma(returns=full_data[4:5], prefix="volume_returns_")
+    # full_data = torch.cat((full_data, sma_data), dim=0)
+    # columns.extend(sma_columns)
+
+    full_ema = []
+    for i in range(len(tickers)):
+        ema_data, ema_columns = feature_ema(full_data[0, :, i], prefix="close_returns_")
+        full_ema.append(ema_data.unsqueeze(-1))
+    full_data = torch.cat((full_data, torch.cat(full_ema, dim=-1)), dim=0)
+    columns.extend(ema_columns)
+
+    full_ema = []
+    for i in range(len(tickers)):
+        ema_data, ema_columns = feature_ema(full_data[1, :, i], prefix="high_returns_")
+        full_ema.append(ema_data.unsqueeze(-1))
+    full_data = torch.cat((full_data, torch.cat(full_ema, dim=-1)), dim=0)
+    columns.extend(ema_columns)
+
+    full_ema = []
+    for i in range(len(tickers)):
+        ema_data, ema_columns = feature_ema(full_data[2, :, i], prefix="low_returns_")
+        full_ema.append(ema_data.unsqueeze(-1))
+    full_data = torch.cat((full_data, torch.cat(full_ema, dim=-1)), dim=0)
+    columns.extend(ema_columns)
+
+    full_ema = []
+    for i in range(len(tickers)):
+        ema_data, ema_columns = feature_ema(full_data[3, :, i], prefix="open_returns_")
+        full_ema.append(ema_data.unsqueeze(-1))
+    full_data = torch.cat((full_data, torch.cat(full_ema, dim=-1)), dim=0)
+    columns.extend(ema_columns)
+
+    full_ema = []
+    for i in range(len(tickers)):
+        ema_data, ema_columns = feature_ema(full_data[4, :, i], prefix="volume_returns_")
+        full_ema.append(ema_data.unsqueeze(-1))
+    full_data = torch.cat((full_data, torch.cat(full_ema, dim=-1)), dim=0)
+    columns.extend(ema_columns)
+
+    # vpt_data = calculate_volume_price_trend_standard(raw_data[:4], raw_data[4:]) - calculate_sma(raw_data[:4], lookback=50) # seems to not be useful (with global norm at least)
+    # vpt_data[:, 1:] = (vpt_data[:, 1:] - vpt_data[:, :-1])/(vpt_data[:, :-1] + 1e-6)
+    # vpt_data[:, :1] = vpt_data[:, 1:2]
+    # full_data = torch.cat((full_data, vpt_data), dim=0)
+    # columns.extend(["vpt_close_change", "vpt_high_change", "vpt_low_change", "vpt_open_change"])
+
+    mfi_data, mfi_columns = feature_mfi(raw_data[0], raw_data[1], raw_data[2], raw_data[4])
+    full_data = torch.cat((full_data, mfi_data), dim=0)
+    columns.extend(mfi_columns)
+
+
 
     data = torch.empty(full_data.shape[0], max(target_dates), full_data.shape[1]-max(target_dates), full_data.shape[2], dtype=torch.float32)
     for i in range(max(target_dates)):
@@ -1466,12 +1505,12 @@ def calculate_volume_price_trend(
 
 
 def calculate_volume_price_trend_standard(price: torch.Tensor, volume: torch.Tensor):
-    returns = torch.zeros(price.shape[0])
-    returns[1:] = (price[1:] - price[:-1]) / (price[:-1] + 1e-6)
-    returns[0] = returns[1]
+    returns = torch.empty_like(price)
+    returns[:, 1:] = (price[:, 1:] - price[:, :-1]) / (price[:, :-1] + 1e-6)
+    returns[:, 0] = returns[:, 1]
 
     vtr = volume * returns
-    return torch.cumsum(vtr, dim=0)
+    return torch.cumsum(vtr, dim=1)
 
 
 def calculate_ema_pandas(
