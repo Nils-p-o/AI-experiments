@@ -512,10 +512,34 @@ def download_numerical_financial_data(
     vix_data = aligned_vix_data
     vix_data = vix_data.to_numpy()[:, 1:-1]
     vix_data = torch.tensor(vix_data, dtype=torch.float32)
+    vix_data = vix_data.transpose(0, 1)
+    # full_vix = []
     # vix_wider_data, vix_wider_columns = calculate_wider_economics_indicators(
-    #     vix_data, "vix"
+    #     vix_data[0, :], indicator_name="vix_close"
     # )
-    vix_data = vix_data.transpose(0, 1).unsqueeze(-1)
+    # full_vix.append(vix_wider_data)
+    # columns.extend(vix_wider_columns)
+    # vix_wider_data, vix_wider_columns = calculate_wider_economics_indicators(
+    #     vix_data[1, :], indicator_name="vix_high"
+    # )
+    # full_vix.append(vix_wider_data)
+    # columns.extend(vix_wider_columns)
+    # vix_wider_data, vix_wider_columns = calculate_wider_economics_indicators(
+    #     vix_data[2, :], indicator_name="vix_low"
+    # )
+    # full_vix.append(vix_wider_data)
+    # columns.extend(vix_wider_columns)
+    # vix_wider_data, vix_wider_columns = calculate_wider_economics_indicators(
+    #     vix_data[3, :], indicator_name="vix_open"
+    # )
+    # full_vix.append(vix_wider_data)
+    # columns.extend(vix_wider_columns)
+
+    # full_vix = torch.cat(full_vix, dim=0).unsqueeze(-1)
+    # full_vix = full_vix.expand(full_vix.shape[0], full_vix.shape[1], len(tickers))
+    # full_data = torch.cat((full_data, full_vix), dim=0)
+
+    vix_data = vix_data.unsqueeze(-1)
     vix_data = vix_data.expand(vix_data.shape[0], vix_data.shape[1], len(tickers))
     full_data = torch.cat((full_data, vix_data), dim=0)
     columns.extend(["vix_close", "vix_high", "vix_low", "vix_open"])
@@ -1849,17 +1873,17 @@ def calculate_wider_economics_indicators(indicator: torch.Tensor, indicator_name
     # indicator_data = torch.cat((indicator_data, sma.unsqueeze(0)), dim=0)
     # indicator_columns.append(indicator_name + "_sma_20")
 
-    ema = calculate_ema_pandas(indicator, lookback=5)
-    indicator_data = torch.cat((indicator_data, ema.unsqueeze(0)), dim=0)
-    indicator_columns.append(indicator_name + "_ema_5")
+    # ema = calculate_ema_pandas(indicator, lookback=5)
+    # indicator_data = torch.cat((indicator_data, ema.unsqueeze(0)), dim=0)
+    # indicator_columns.append(indicator_name + "_ema_5")
 
-    ema = calculate_ema_pandas(indicator, lookback=10)
-    indicator_data = torch.cat((indicator_data, ema.unsqueeze(0)), dim=0)
-    indicator_columns.append(indicator_name + "_ema_10")
+    # ema = calculate_ema_pandas(indicator, lookback=10)
+    # indicator_data = torch.cat((indicator_data, ema.unsqueeze(0)), dim=0)
+    # indicator_columns.append(indicator_name + "_ema_10")
 
-    ema = calculate_ema_pandas(indicator, lookback=20)
-    indicator_data = torch.cat((indicator_data, ema.unsqueeze(0)), dim=0)
-    indicator_columns.append(indicator_name + "_ema_20")
+    # ema = calculate_ema_pandas(indicator, lookback=20)
+    # indicator_data = torch.cat((indicator_data, ema.unsqueeze(0)), dim=0)
+    # indicator_columns.append(indicator_name + "_ema_20")
 
     # sma = calculate_sma(change.unsqueeze(0), lookback=5, dim=0)
     # indicator_data = torch.cat((indicator_data, sma.unsqueeze(0)), dim=0)
@@ -1873,17 +1897,17 @@ def calculate_wider_economics_indicators(indicator: torch.Tensor, indicator_name
     # indicator_data = torch.cat((indicator_data, sma.unsqueeze(0)), dim=0)
     # indicator_columns.append(indicator_name + "_change_sma_20")
 
-    ema = calculate_ema_pandas(change, lookback=5)
-    indicator_data = torch.cat((indicator_data, ema.unsqueeze(0)), dim=0)
-    indicator_columns.append(indicator_name + "_change_ema_5")
+    # ema = calculate_ema_pandas(change, lookback=5)
+    # indicator_data = torch.cat((indicator_data, ema.unsqueeze(0)), dim=0)
+    # indicator_columns.append(indicator_name + "_change_ema_5")
 
-    ema = calculate_ema_pandas(change, lookback=10)
-    indicator_data = torch.cat((indicator_data, ema.unsqueeze(0)), dim=0)
-    indicator_columns.append(indicator_name + "_change_ema_10")
+    # ema = calculate_ema_pandas(change, lookback=10)
+    # indicator_data = torch.cat((indicator_data, ema.unsqueeze(0)), dim=0)
+    # indicator_columns.append(indicator_name + "_change_ema_10")
 
-    ema = calculate_ema_pandas(change, lookback=20)
-    indicator_data = torch.cat((indicator_data, ema.unsqueeze(0)), dim=0)
-    indicator_columns.append(indicator_name + "_change_ema_20")
+    # ema = calculate_ema_pandas(change, lookback=20)
+    # indicator_data = torch.cat((indicator_data, ema.unsqueeze(0)), dim=0)
+    # indicator_columns.append(indicator_name + "_change_ema_20")
 
     return indicator_data, indicator_columns
 
