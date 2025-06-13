@@ -300,10 +300,10 @@ class custom_MHA(nn.Module): # a mix of MLA and DINT
         #     normed_heads.append(head)
         # attn_output = torch.stack(normed_heads, dim=2)  # (batch_size, seq_len, nhead, head_dim)
         attn_output = self.norm(attn_output)  # (batch_size, seq_len, nhead, head_dim)
-        # attn_output = attn_output.transpose(1, 2)  # (batch_size, nhead, seq_len, head_dim)
-        # attn_output = attn_output.reshape( # TODO keep in mind sus amogus
-        #     batch_size, seq_len, self.nhead, self.head_dim
-        # )
+        attn_output = attn_output.transpose(1, 2)  # (batch_size, nhead, seq_len, head_dim)
+        attn_output = attn_output.reshape( # TODO keep in mind sus amogus
+            batch_size, seq_len, self.nhead, self.head_dim
+        )
         # --- Concatenate and Output Projection ---
         attn_output = (
             attn_output.contiguous()

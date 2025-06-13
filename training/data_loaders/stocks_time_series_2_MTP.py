@@ -465,6 +465,38 @@ def download_numerical_financial_data(
     # full_data = torch.cat((full_data, torch.stack(full_ppo, dim=-1)), dim=0)
     # columns.extend(ppo_columns)
 
+    # full_rsi = []
+    # for i in range(len(tickers)):
+    #     rsi_data, rsi_columns = feature_rsi(raw_data[0, :, i], prefix="close_") 
+    #     full_rsi.append(rsi_data)
+    # full_data = torch.cat((full_data, torch.stack(full_rsi, dim=-1)), dim=0)
+    # columns.extend(rsi_columns)
+
+    # full_rsi = []
+    # for i in range(len(tickers)):
+    #     rsi_data, rsi_columns = feature_rsi(raw_data[1, :, i], prefix="high_") 
+    #     full_rsi.append(rsi_data)
+    # full_data = torch.cat((full_data, torch.stack(full_rsi, dim=-1)), dim=0)
+    # columns.extend(rsi_columns)
+
+    # full_rsi = []
+    # for i in range(len(tickers)):
+    #     rsi_data, rsi_columns = feature_rsi(raw_data[2, :, i], prefix="low_") 
+    #     full_rsi.append(rsi_data)
+    # full_data = torch.cat((full_data, torch.stack(full_rsi, dim=-1)), dim=0)
+    # columns.extend(rsi_columns)
+
+    # full_rsi = []
+    # for i in range(len(tickers)):
+    #     rsi_data, rsi_columns = feature_rsi(raw_data[3, :, i], prefix="open_") 
+    #     full_rsi.append(rsi_data)
+    # full_data = torch.cat((full_data, torch.stack(full_rsi, dim=-1)), dim=0)
+    # columns.extend(rsi_columns)
+
+    # clv_data = calculate_close_line_values(raw_data[0], raw_data[1], raw_data[2]).unsqueeze(0)
+    # full_data = torch.cat((full_data, clv_data), dim=0)
+    # columns.extend(["clv"])
+
     vix_data = yf.download(
         "^VIX", start=start_date, end=end_date, progress=False, auto_adjust=False
     )
@@ -1284,19 +1316,23 @@ def feature_pmfr(
     return pmfr_data, pmfr_columns
 
 def feature_rsi(
-    close: torch.Tensor) -> torch.Tensor:
+    close: torch.Tensor, prefix: str = "") -> torch.Tensor:
     rsi_columns = []
     rsi = calculate_rsi(close, lookback=7)
     rsi_data = rsi.unsqueeze(0)
-    rsi_columns.append("rsi_7")
+    rsi_columns.append(prefix+"rsi_7")
 
     rsi = calculate_rsi(close, lookback=14)
     rsi_data = torch.cat((rsi_data, rsi.unsqueeze(0)), dim=0)
-    rsi_columns.append("rsi_14")
+    rsi_columns.append(prefix+"rsi_14")
 
     rsi = calculate_rsi(close, lookback=21)
     rsi_data = torch.cat((rsi_data, rsi.unsqueeze(0)), dim=0)
-    rsi_columns.append("rsi_21")
+    rsi_columns.append(prefix+"rsi_21")
+
+    rsi = calculate_rsi(close, lookback=50)
+    rsi_data = torch.cat((rsi_data, rsi.unsqueeze(0)), dim=0)
+    rsi_columns.append(prefix+"rsi_50")
 
     return rsi_data, rsi_columns
 
