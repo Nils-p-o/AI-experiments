@@ -544,69 +544,6 @@ def download_numerical_financial_data(
     # full_data = torch.cat((full_data, vix_data), dim=0)
     # columns.extend(["vix_close", "vix_high", "vix_low", "vix_open"])
 
-    gold_data = yf.download(
-        "GC=F", start=start_date, end=end_date, progress=False, auto_adjust=False
-    )
-    aligned_gold_data = pd.DataFrame(columns=gold_data.columns)
-    for column in gold_data.columns.levels[0]:
-        aligned_gold_data[column, "GC=F"] = align_financial_dataframes(
-            {column: gold_data},
-            target_column=column,
-            fill_method="ffill",
-            min_date=start_date,
-            max_date=end_date,
-        )
-    gold_data = aligned_gold_data
-    gold_data = gold_data.to_numpy()[:, 1:2]
-    gold_data = torch.tensor(gold_data, dtype=torch.float32)
-    gold_data = gold_data.transpose(0, 1)
-
-    gold_change = (gold_data[:, :1] - gold_data[:, :-1])/gold_data[:, :-1]
-    gold_change = torch.cat((gold_change[:, 0:1], gold_change), dim=1)
-    gold_data = torch.cat((gold_data, gold_change), dim=0)
-    
-    gold_data = gold_data.unsqueeze(-1)
-    gold_data = gold_data.expand(gold_data.shape[0], gold_data.shape[1], len(tickers))
-    full_data = torch.cat((full_data, gold_data), dim=0)
-    # columns.extend(["gold_close_ch", "gold_high_ch", "gold_low_ch", "gold_open_ch", "gold_volume_ch"])
-    columns.extend(["gold_close", "gold_close_ch"])
-
-
-
-    data = torch.empty(full_data.shape[0], max(target_dates), full_data.shape[1]-max(target_dates), full_data.shape[2], dtype=torch.float32)
-    for i in range(max(target_dates)):
-        data[:,i,:,:] = full_data[:,i:-(max(target_dates)-i),:]
-    data = data[:, :, 20:, :]  # (features, target_inputs, time series, tickers)
-
-    # adding more complex relationships
-
-    # adding VIX data
-    # vix_data = yf.download(
-    #     "^VIX", start=start_date, end=end_date, progress=False, auto_adjust=False
-    # )
-    # aligned_vix_data = pd.DataFrame(columns=vix_data.columns)
-    # for column in vix_data.columns.levels[0]:
-    #     aligned_vix_data[column, "^VIX"] = align_financial_dataframes(
-    #         {column: vix_data},
-    #         target_column=column,
-    #         fill_method="ffill",
-    #         min_date=start_date,
-    #         max_date=end_date,
-    #     )
-    # vix_data = aligned_vix_data
-    # vix_data = vix_data["Close"].to_numpy()
-    # vix_data = torch.tensor(vix_data, dtype=torch.float32).squeeze(-1)
-    # vix_wider_data, vix_wider_columns = calculate_wider_economics_indicators(
-    #     vix_data, "vix"
-    # )
-    # vix_wider_data = vix_wider_data[:, : -max(target_dates)]
-    # vix_wider_data = vix_wider_data[:, 20:]
-    # vix_wider_data = vix_wider_data.unsqueeze(-1)
-    # vix_wider_data = vix_wider_data.tile(1, 1, len(tickers))
-    # data = torch.cat((data, vix_wider_data), dim=0)
-    # columns = columns + vix_wider_columns
-
-    # # TODO find 2 year yields
     # US_treasury_yields = yf.download(
     #     "^TNX", start=start_date, end=end_date, progress=False
     # )
@@ -623,8 +560,8 @@ def download_numerical_financial_data(
     #     )
     # US_treasury_yields = aligned_US_treasury_yields
     # US_treasury_yields = US_treasury_yields["Close"].to_numpy()
-    # wider_data = torch.tensor(US_treasury_yields, dtype=torch.float32).unsqueeze(0).squeeze(-1)
-    # wider_columns = ["10_year_treasury_yield_close"]
+    # US_treasury_data = torch.tensor(US_treasury_yields, dtype=torch.float32).unsqueeze(0).squeeze(-1)
+    # US_treasury_columns = ["10_year_treasury_yield_close"]
 
     # US_treasury_yields = yf.download(
     #     "^FVX", start=start_date, end=end_date, progress=False
@@ -642,14 +579,14 @@ def download_numerical_financial_data(
     #     )
     # US_treasury_yields = aligned_US_treasury_yields
     # US_treasury_yields = US_treasury_yields["Close"].to_numpy()
-    # wider_data = torch.cat(
+    # US_treasury_data = torch.cat(
     #     (
-    #         wider_data,
+    #         US_treasury_data,
     #         torch.tensor(US_treasury_yields, dtype=torch.float32).unsqueeze(0).squeeze(-1),
     #     ),
     #     dim=0,
     # )
-    # wider_columns.append("5_year_treasury_yield_close")
+    # US_treasury_columns.append("5_year_treasury_yield_close")
 
     # US_treasury_yields = yf.download(
     #     "^IRX", start=start_date, end=end_date, progress=False
@@ -667,132 +604,85 @@ def download_numerical_financial_data(
     #     )
     # US_treasury_yields = aligned_US_treasury_yields
     # US_treasury_yields = US_treasury_yields["Close"].to_numpy()
-    # wider_data = torch.cat(
+    # US_treasury_data = torch.cat(
     #     (
-    #         wider_data,
+    #         US_treasury_data,
     #         torch.tensor(US_treasury_yields, dtype=torch.float32).unsqueeze(0).squeeze(-1),
     #     ),
     #     dim=0,
     # )
-    # wider_columns.append("3_month_treasury_yield_close")
+    # US_treasury_columns.append("3_month_treasury_yield_close")
 
-    # spread = wider_data[0, :] - wider_data[1, :]
-    # wider_data = torch.cat((wider_data, spread.unsqueeze(0)), dim=0)
-    # wider_columns.append("yield_spread_10y_5y")
+    # spread = US_treasury_data[0:1, :] - US_treasury_data[1:2, :]
+    # US_treasury_data = torch.cat((US_treasury_data, spread), dim=0)
+    # US_treasury_columns.append("yield_spread_10y_5y")
 
-    # spread = wider_data[0, :] - wider_data[2, :]
-    # wider_data = torch.cat((wider_data, spread.unsqueeze(0)), dim=0)
-    # wider_columns.append("yield_spread_10y_3m")
+    # spread = US_treasury_data[0:1, :] - US_treasury_data[2:3, :]
+    # US_treasury_data = torch.cat((US_treasury_data, spread), dim=0)
+    # US_treasury_columns.append("yield_spread_10y_3m")
 
-    # spread = wider_data[1, :] - wider_data[2, :]
-    # wider_data = torch.cat((wider_data, spread.unsqueeze(0)), dim=0)
-    # wider_columns.append("yield_spread_5y_3m")
+    # spread = US_treasury_data[1:2, :] - US_treasury_data[2:3, :]
+    # US_treasury_data = torch.cat((US_treasury_data, spread), dim=0)
+    # US_treasury_columns.append("yield_spread_5y_3m")
 
-    # change = wider_data[0, 1:] - wider_data[0, :-1]
-    # change = torch.cat((change[:1], change), dim=0)
-    # wider_data = torch.cat((wider_data, change.unsqueeze(0)), dim=0)
-    # wider_columns.append("yield_change_10y_abs")
-
-    # change = wider_data[1, 1:] - wider_data[1, :-1]
-    # change = torch.cat((change[:1], change), dim=0)
-    # wider_data = torch.cat((wider_data, change.unsqueeze(0)), dim=0)
-    # wider_columns.append("yield_change_5y_abs")
-
-    # change = wider_data[2, 1:] - wider_data[2, :-1]
-    # change = torch.cat((change[:1], change), dim=0)
-    # wider_data = torch.cat((wider_data, change.unsqueeze(0)), dim=0)
-    # wider_columns.append("yield_change_3m_abs")
-
-    # sma = calculate_sma(wider_data[0], lookback=20)
-    # wider_data = torch.cat((wider_data, sma.unsqueeze(0)), dim=0)
-    # wider_columns.append("yield_10y_sma_20")
-
-    # sma = calculate_sma(wider_data[1], lookback=20)
-    # wider_data = torch.cat((wider_data, sma.unsqueeze(0)), dim=0)
-    # wider_columns.append("yield_5y_sma_20")
-
-    # sma = calculate_sma(wider_data[2], lookback=20)
-    # wider_data = torch.cat((wider_data, sma.unsqueeze(0)), dim=0)
-    # wider_columns.append("yield_3m_sma_20")
-
-    # sma = calculate_sma(wider_data[3], lookback=20)
-    # wider_data = torch.cat((wider_data, sma.unsqueeze(0)), dim=0)
-    # wider_columns.append("yield_spread_10y_5y_sma_20")
-
-    # sma = calculate_sma(wider_data[4], lookback=20)
-    # wider_data = torch.cat((wider_data, sma.unsqueeze(0)), dim=0)
-    # wider_columns.append("yield_spread_10y_3m_sma_20")
-
-    # sma = calculate_sma(wider_data[5], lookback=20)
-    # wider_data = torch.cat((wider_data, sma.unsqueeze(0)), dim=0)
-    # wider_columns.append("yield_spread_5y_3m_sma_20")
-
-    # sma = calculate_sma(wider_data[6], lookback=20)
-    # wider_data = torch.cat((wider_data, sma.unsqueeze(0)), dim=0)
-    # wider_columns.append("yield_change_10y_abs_sma_20")
-
-    # sma = calculate_sma(wider_data[7], lookback=20)
-    # wider_data = torch.cat((wider_data, sma.unsqueeze(0)), dim=0)
-    # wider_columns.append("yield_change_5y_abs_sma_20")
-
-    # sma = calculate_sma(wider_data[8], lookback=20)
-    # wider_data = torch.cat((wider_data, sma.unsqueeze(0)), dim=0)
-    # wider_columns.append("yield_change_3m_abs_sma_20")
-
-    # # ema = calculate_ema_pandas()
-    # # can add more things (like change in yields, ema, etc.)
-
-    # gold = yf.download(
-    #     "GC=F",
-    #     start=start_date,
-    #     end=end_date,
-    #     progress=True,
-    #     auto_adjust=False,
-    #     back_adjust=False,
+    # US_treasury_data = US_treasury_data.unsqueeze(-1)
+    # US_treasury_data = US_treasury_data.expand(
+    #     US_treasury_data.shape[0], US_treasury_data.shape[1], len(tickers)
     # )
-    # aligned_gold = pd.DataFrame(columns=gold.columns)
-    # for column in gold.columns.levels[0]:
-    #     aligned_gold[column, "GC=F"] = align_financial_dataframes(
-    #         {column: gold},
+    # full_data = torch.cat((full_data, US_treasury_data), dim=0)
+    # columns.extend(US_treasury_columns)
+
+    # gold_data = yf.download(
+    #     "GC=F", start=start_date, end=end_date, progress=False, auto_adjust=False
+    # )
+    # aligned_gold_data = pd.DataFrame(columns=gold_data.columns)
+    # for column in gold_data.columns.levels[0]:
+    #     aligned_gold_data[column, "GC=F"] = align_financial_dataframes(
+    #         {column: gold_data},
     #         target_column=column,
     #         fill_method="ffill",
     #         min_date=start_date,
     #         max_date=end_date,
     #     )
-    # gold = aligned_gold
-    # gold = gold["Close"].to_numpy()
-    # gold = torch.tensor(gold, dtype=torch.float32).squeeze(-1)
-    # gold_wider_data, gold_wider_columns = calculate_wider_economics_indicators(
-    #     gold, "gold"
-    # )
-    # wider_data = torch.cat((wider_data, gold_wider_data), dim=0)
-    # wider_columns = wider_columns + gold_wider_columns
+    # gold_data = aligned_gold_data
+    # gold_data = gold_data.to_numpy()[:, 1:2]
+    # gold_data = torch.tensor(gold_data, dtype=torch.float32)
+    # gold_data = gold_data.transpose(0, 1)
 
-    # crude_oil = yf.download(
-    #     "CL=F",
-    #     start=start_date,
-    #     end=end_date,
-    #     progress=True,
-    #     auto_adjust=False,
-    #     back_adjust=False,
-    # )
-    # aligned_crude_oil = pd.DataFrame(columns=crude_oil.columns)
-    # for column in crude_oil.columns.levels[0]:
-    #     aligned_crude_oil[column, "CL=F"] = align_financial_dataframes(
-    #         {column: crude_oil},
-    #         target_column=column,
-    #         fill_method="ffill",
-    #         min_date=start_date,
-    #         max_date=end_date,
-    #     )
-    # crude_oil = aligned_crude_oil
-    # crude_oil = crude_oil["Close"].to_numpy()
-    # crude_oil = torch.tensor(crude_oil, dtype=torch.float32).squeeze(-1)
-    # crude_oil_wider_data, crude_oil_wider_columns = (
-    #     calculate_wider_economics_indicators(crude_oil, "crude_oil")
-    # )
-    # wider_data = torch.cat((wider_data, crude_oil_wider_data), dim=0)
-    # wider_columns = wider_columns + crude_oil_wider_columns
+    # gold_change = (gold_data[:, :1] - gold_data[:, :-1])/gold_data[:, :-1]
+    # gold_change = torch.cat((gold_change[:, 0:1], gold_change), dim=1)
+    # gold_data = torch.cat((gold_data, gold_change), dim=0)
+    
+    # gold_data = gold_data.unsqueeze(-1)
+    # gold_data = gold_data.expand(gold_data.shape[0], gold_data.shape[1], len(tickers))
+    # full_data = torch.cat((full_data, gold_data), dim=0)
+    # columns.extend(["gold_close", "gold_close_ch"])
+
+    crude_oil = yf.download(
+        "CL=F",
+        start=start_date,
+        end=end_date,
+        progress=True,
+        auto_adjust=False,
+        back_adjust=False,
+    )
+    aligned_crude_oil = pd.DataFrame(columns=crude_oil.columns)
+    for column in crude_oil.columns.levels[0]:
+        aligned_crude_oil[column, "CL=F"] = align_financial_dataframes(
+            {column: crude_oil},
+            target_column=column,
+            fill_method="ffill",
+            min_date=start_date,
+            max_date=end_date,
+        )
+    crude_oil = aligned_crude_oil
+    crude_oil = crude_oil.to_numpy()[:, 1:2]
+    crude_oil = torch.tensor(crude_oil, dtype=torch.float32)
+    crude_oil = crude_oil.transpose(0, 1)
+    crude_oil = crude_oil.unsqueeze(-1)
+    crude_oil = crude_oil.expand(crude_oil.shape[0], crude_oil.shape[1], len(tickers))
+    full_data = torch.cat((full_data, crude_oil), dim=0)
+    columns.extend(["crude_oil_close"])
 
     # copper = yf.download(
     #     "HG=F",
@@ -810,15 +700,15 @@ def download_numerical_financial_data(
     #         fill_method="ffill",
     #         min_date=start_date,
     #         max_date=end_date,
-    #     )
-    # copper = aligned_copper
-    # copper = copper["Close"].to_numpy()
-    # copper = torch.tensor(copper, dtype=torch.float32).squeeze(-1)
-    # copper_wider_data, copper_wider_columns = calculate_wider_economics_indicators(
-    #     copper, "copper"
     # )
-    # wider_data = torch.cat((wider_data, copper_wider_data), dim=0)
-    # wider_columns = wider_columns + copper_wider_columns
+    # copper = aligned_copper
+    # copper = copper.to_numpy()[:, 1:2]
+    # copper = torch.tensor(copper, dtype=torch.float32)
+    # copper = copper.transpose(0, 1)
+    # copper = copper.unsqueeze(-1)
+    # copper = copper.expand(copper.shape[0], copper.shape[1], len(tickers))
+    # full_data = torch.cat((full_data, copper), dim=0)
+    # columns.extend(["copper_close"])
 
     # silver = yf.download(
     #     "SI=F",
@@ -838,13 +728,13 @@ def download_numerical_financial_data(
     #         max_date=end_date,
     #     )
     # silver = aligned_silver
-    # silver = silver["Close"].to_numpy()
-    # silver = torch.tensor(silver, dtype=torch.float32).squeeze(-1)
-    # silver_wider_data, silver_wider_columns = calculate_wider_economics_indicators(
-    #     silver, "silver"
-    # )
-    # wider_data = torch.cat((wider_data, silver_wider_data), dim=0)
-    # wider_columns = wider_columns + silver_wider_columns
+    # silver = silver.to_numpy()[:, 1:2]
+    # silver = torch.tensor(silver, dtype=torch.float32)
+    # silver = silver.transpose(0, 1)
+    # silver = silver.unsqueeze(-1)
+    # silver = silver.expand(silver.shape[0], silver.shape[1], len(tickers))
+    # full_data = torch.cat((full_data, silver), dim=0)
+    # columns.extend(["silver_close"])
 
     # usd_index = yf.download(
     #     "DX-Y.NYB",
@@ -864,23 +754,14 @@ def download_numerical_financial_data(
     #         max_date=end_date,
     #     )
     # usd_index = aligned_usd_index
-    # usd_index = usd_index["Close"].to_numpy()
-    # usd_index = torch.tensor(usd_index, dtype=torch.float32).squeeze(-1)
-    # usd_index_wider_data, usd_index_columns = calculate_wider_economics_indicators(
-    #     usd_index, "usd_index"
-    # )
-    # wider_data = torch.cat((wider_data, usd_index_wider_data))
-    # wider_columns = wider_columns + usd_index_columns
+    # usd_index = usd_index.to_numpy()[:, 1:2]
+    # usd_index = torch.tensor(usd_index, dtype=torch.float32)
+    # usd_index = usd_index.transpose(0, 1)
+    # usd_index = usd_index.unsqueeze(-1)
+    # usd_index = usd_index.expand(usd_index.shape[0], usd_index.shape[1], len(tickers))
+    # full_data = torch.cat((full_data, usd_index), dim=0)
+    # columns.extend(["usd_index_close"])
 
-    # wider_data = wider_data[:, : -max(target_dates)]
-    # wider_data = wider_data.unsqueeze(-1)
-    # wider_data = wider_data.tile(1, 1, len(tickers))
-    # wider_data = wider_data[:, 20:, :]
-
-    # data = torch.cat((data, wider_data), dim=0)
-    # columns = columns + wider_columns
-
-    # # alpha calculation
     # snp_500 = yf.download(
     #     "^GSPC",
     #     start=start_date,
@@ -899,36 +780,28 @@ def download_numerical_financial_data(
     #         max_date=end_date,
     #     )
     # snp_500 = aligned_snp_500
-    # snp_500 = snp_500["Close"].to_numpy()
+    # snp_500 = snp_500.to_numpy()[:, 1:2]
     # snp_500 = torch.tensor(snp_500, dtype=torch.float32)
-    # snp_500 = snp_500[: -max(target_dates)]
-    # snp_500_returns = (snp_500[1:] - snp_500[:-1]) / snp_500[:-1]
-    # snp_500_returns = torch.cat((snp_500[0:1], snp_500_returns), dim=0)
-    # snp_500_returns = snp_500_returns[20:]
-    # alphas = data[0, :, :] - snp_500_returns.repeat(1, len(tickers))
-    # data = torch.cat((data, alphas.unsqueeze(0)), dim=0)
-    # columns.append("alpha_snp_500_returns")
-
-    # temp = []
+    # snp_500 = snp_500.transpose(0, 1)
+    # snp_500 = snp_500.unsqueeze(-1)
+    # snp_500 = snp_500.expand(snp_500.shape[0], snp_500.shape[1], len(tickers))
+    # snp_500_change = empty_like(snp_500)
+    # snp_500_change[:, 1:, :] = (snp_500[:, 1:, :] - snp_500[:, :-1, :]) / snp_500[:, :-1, :]
+    # snp_500_change[:, 0, :] = snp_500_change[:, 1, :]
+    # alphas = full_data[0:1, :, :] - snp_500_change[:, :, :]
+    # full_data = torch.cat((full_data, alphas), dim=0)
+    # columns.extend(["alpha_returns_close"])
+    # full_emas = []
     # for i in range(len(tickers)):
-    #     ema = calculate_ema_pandas(alphas[:, i], lookback=5)
-    #     temp.append(ema)
-    # data = torch.cat((data, torch.stack(temp, dim=1).unsqueeze(0)), dim=0)
-    # columns.append("alpha_snp_500_returns_ema_5")
+    #   ema_data, ema_columns = feature_ema(alphas[0, :, i], prefix="alpha_returns_close_")
+    #   full_emas.append(ema_data)
+    # full_data = torch.cat((full_data, torch.cat(full_emas, dim=-1)), dim=0)
+    # columns.extend(ema_columns)
 
-    # temp = []
-    # for i in range(len(tickers)):
-    #     ema = calculate_ema_pandas(alphas[:, i], lookback=10)
-    #     temp.append(ema)
-    # data = torch.cat((data, torch.stack(temp, dim=1).unsqueeze(0)), dim=0)
-    # columns.append("alpha_snp_500_returns_ema_10")
-
-    # temp = []
-    # for i in range(len(tickers)):
-    #     ema = calculate_ema_pandas(alphas[:, i], lookback=20)
-    #     temp.append(ema)
-    # data = torch.cat((data, torch.stack(temp, dim=1).unsqueeze(0)), dim=0)
-    # columns.append("alpha_snp_500_returns_ema_20")
+    data = torch.empty(full_data.shape[0], max(target_dates), full_data.shape[1]-max(target_dates), full_data.shape[2], dtype=torch.float32)
+    for i in range(max(target_dates)):
+        data[:,i,:,:] = full_data[:,i:-(max(target_dates)-i),:]
+    data = data[:, :, 20:, :]  # (features, target_inputs, time series, tickers)
 
     # relative volatility
     # rel_volatility = data[column_to_id["returns_volatility_5"]] / data[column_to_id["returns_volatility_10"]]

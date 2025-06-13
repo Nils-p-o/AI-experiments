@@ -22,7 +22,8 @@ base_3_g_sh_vol_c = np.array([0.5413, 0.5418, 0.5423]) # best so far
 # sma and ema
 base_3_g_sh_vol_c_sma_c = np.array([0.5415, 0.5415, 0.5417]) # same-ish
 base_3_g_sh_vol_c_sma_chlov = np.array([0.5362, 0.5365, 0.5353]) # better
-base_3_g_sh_vol_c_ema_chlov = np.array([0.5236, 0.5243, 0.5235, 0.5239, 0.5247, 0.5241, 0.5247, 0.5241]) # best so far # TODO run some more for better baseline
+base_3_g_sh_vol_c_ema_chlov = np.array([0.5236, 0.5243, 0.5235, 0.5239, 0.5247, 0.5241, 0.5247, 0.5241]) # best so far
+# sometimes called 3_base_ema
 
 # ema_chlov_mfi = np.array([0.5241, 0.524, 0.5245])
 # ema_chlov_mfi_ch = np.array([0.5242, 0.5239, 0.5238])
@@ -31,7 +32,7 @@ ema_chlov_vpt_chlo = np.array([0.5228, 0.5229, 0.5222])
 # ema_chlov_vpt_ch = np.array([0.5235, 0.5234, 0.5248])
 # ema_chlov_vpt_m = np.array([0.5242, 0.525, 0.5237])
 # ema_chlov_vpt_m_ch = np.array([0.5242, 0.5239, 0.5234])
-ema_chlov_atr_div = np.array([0.523, 0.523, 0.5232, 0.525, 0.5239])
+# ema_chlov_atr_div = np.array([0.523, 0.523, 0.5232, 0.525, 0.5239])
 
 # ema_chlov_ppo_c = np.array([0.523, 0.5237, 0.5224])
 # ema_chlov_ppo_chlo = np.array([0.5217, 0.5236, 0.522, 0.5218, 0.5238])
@@ -40,7 +41,13 @@ ema_chlov_ppo_chlov = np.array([0.5206, 0.5202, 0.5197, 0.5199])
 # ema_chlov_rsi_chlo = np.array([0.524, 0.5238, 0.5255])
 
 ema_chlov_clv = np.array([0.5229, 0.523, 0.5229, 0.5242, 0.5234])
-ema_chlov_vix_c_simple = np.array([0.5237, 0.5237, 0.5233])
+# ema_chlov_vix_c_simple = np.array([0.5237, 0.5237, 0.5233])
+ema_chlov_vix_chlo_simple = np.array([0.5226, 0.523, 0.5229])
+# ema_chlov_vix_chlo_com = np.array([0.5239, 0.5225, 0.5228])
+
+ema_USt = np.array([0.524, 0.5236, 0.5231])
+# ema_gold_c_ch = np.array([0.524, 0.5255, 0.5236])
+ema_gold_chlov = np.array([0.5231, 0.5237, 0.5226])
 
 # normal test (8 samples min)
 _, p_value = stats.normaltest(base_3_global)
@@ -85,9 +92,9 @@ print(f"Mean ema_chlov_vpt_chlo: {np.mean(ema_chlov_vpt_chlo)}")
 print("Welch's t-test: base_3_g_sh_vol_c_ema_chlov vs ema_chlov_vpt")
 welch_t_test(base_3_g_sh_vol_c_ema_chlov, ema_chlov_vpt_chlo) # better? 0.004
 
-print(f"Mean ema_chlov_atr_div: {np.mean(ema_chlov_atr_div)}")
-print("Welch's t-test: base_3_g_sh_vol_c_ema_chlov vs ema_chlov_atr_div")
-welch_t_test(base_3_g_sh_vol_c_ema_chlov, ema_chlov_atr_div) # same-ish (0.28)
+# print(f"Mean ema_chlov_atr_div: {np.mean(ema_chlov_atr_div)}")
+# print("Welch's t-test: base_3_g_sh_vol_c_ema_chlov vs ema_chlov_atr_div")
+# welch_t_test(base_3_g_sh_vol_c_ema_chlov, ema_chlov_atr_div) # same-ish (0.28)
 
 # print(f"Mean ema_chlov_ppo_c: {np.mean(ema_chlov_ppo_c)}")
 # print("Welch's t-test: base_3_g_sh_vol_c_ema_chlov vs ema_chlov_ppo_c")
@@ -113,6 +120,26 @@ print(f"Mean ema_chlov_clv: {np.mean(ema_chlov_clv)}")
 print("Welch's t-test: base_3_g_sh_vol_c_ema_chlov vs ema_chlov_clv")
 welch_t_test(base_3_g_sh_vol_c_ema_chlov, ema_chlov_clv) # 0.025 better
 
-print(f"Mean ema_chlov_vix_c_simple: {np.mean(ema_chlov_vix_c_simple)}")
-print("Welch's t-test: base_3_g_sh_vol_c_ema_chlov vs ema_chlov_vix_c_simple")
-welch_t_test(base_3_g_sh_vol_c_ema_chlov, ema_chlov_vix_c_simple) # 0.03
+# print(f"Mean ema_chlov_vix_c_simple: {np.mean(ema_chlov_vix_c_simple)}")
+# print("Welch's t-test: base_3_g_sh_vol_c_ema_chlov vs ema_chlov_vix_c_simple")
+# welch_t_test(base_3_g_sh_vol_c_ema_chlov, ema_chlov_vix_c_simple) # 0.03
+
+print(f"Mean ema_chlov_vix_chlo_simple: {np.mean(ema_chlov_vix_chlo_simple)}")
+print("Welch's t-test: base_3_g_sh_vol_c_ema_chlov vs ema_chlov_vix_chlo_simple")
+welch_t_test(base_3_g_sh_vol_c_ema_chlov, ema_chlov_vix_chlo_simple) # 0.00019 better
+
+# print(f"Mean ema_chlov_vix_chlo_com: {np.mean(ema_chlov_vix_chlo_com)}")
+# print("Welch's t-test: base_3_g_sh_vol_c_ema_chlov vs ema_chlov_vix_chlo_com")
+# welch_t_test(base_3_g_sh_vol_c_ema_chlov, ema_chlov_vix_chlo_com) # 0.11
+
+print(f"Mean ema_USt: {np.mean(ema_USt)}")
+print("Welch's t-test: base_3_g_sh_vol_c_ema_chlov vs ema_USt")
+welch_t_test(base_3_g_sh_vol_c_ema_chlov, ema_USt) # 0.15 better?
+
+# print(f"Mean ema_gold_c_ch: {np.mean(ema_gold_c_ch)}")
+# print("Welch's t-test: base_3_g_sh_vol_c_ema_chlov vs ema_gold_c_ch")
+# welch_t_test(base_3_g_sh_vol_c_ema_chlov, ema_gold_c_ch) # 0.52 
+
+print(f"Mean ema_gold_chlov: {np.mean(ema_gold_chlov)}")
+print("Welch's t-test: base_3_g_sh_vol_c_ema_chlov vs ema_gold_chlov")
+welch_t_test(base_3_g_sh_vol_c_ema_chlov, ema_gold_chlov) # 0.06 better?
