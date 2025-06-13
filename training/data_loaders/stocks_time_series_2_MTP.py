@@ -497,22 +497,22 @@ def download_numerical_financial_data(
     # full_data = torch.cat((full_data, clv_data), dim=0)
     # columns.extend(["clv"])
 
-    vix_data = yf.download(
-        "^VIX", start=start_date, end=end_date, progress=False, auto_adjust=False
-    )
-    aligned_vix_data = pd.DataFrame(columns=vix_data.columns)
-    for column in vix_data.columns.levels[0]:
-        aligned_vix_data[column, "^VIX"] = align_financial_dataframes(
-            {column: vix_data},
-            target_column=column,
-            fill_method="ffill",
-            min_date=start_date,
-            max_date=end_date,
-        )
-    vix_data = aligned_vix_data
-    vix_data = vix_data.to_numpy()[:, 1:-1]
-    vix_data = torch.tensor(vix_data, dtype=torch.float32)
-    vix_data = vix_data.transpose(0, 1)
+    # vix_data = yf.download(
+    #     "^VIX", start=start_date, end=end_date, progress=False, auto_adjust=False
+    # )
+    # aligned_vix_data = pd.DataFrame(columns=vix_data.columns)
+    # for column in vix_data.columns.levels[0]:
+    #     aligned_vix_data[column, "^VIX"] = align_financial_dataframes(
+    #         {column: vix_data},
+    #         target_column=column,
+    #         fill_method="ffill",
+    #         min_date=start_date,
+    #         max_date=end_date,
+    #     )
+    # vix_data = aligned_vix_data
+    # vix_data = vix_data.to_numpy()[:, 1:-1]
+    # vix_data = torch.tensor(vix_data, dtype=torch.float32)
+    # vix_data = vix_data.transpose(0, 1)
     # full_vix = []
     # vix_wider_data, vix_wider_columns = calculate_wider_economics_indicators(
     #     vix_data[0, :], indicator_name="vix_close"
@@ -539,10 +539,38 @@ def download_numerical_financial_data(
     # full_vix = full_vix.expand(full_vix.shape[0], full_vix.shape[1], len(tickers))
     # full_data = torch.cat((full_data, full_vix), dim=0)
 
-    vix_data = vix_data.unsqueeze(-1)
-    vix_data = vix_data.expand(vix_data.shape[0], vix_data.shape[1], len(tickers))
-    full_data = torch.cat((full_data, vix_data), dim=0)
-    columns.extend(["vix_close", "vix_high", "vix_low", "vix_open"])
+    # vix_data = vix_data.unsqueeze(-1)
+    # vix_data = vix_data.expand(vix_data.shape[0], vix_data.shape[1], len(tickers))
+    # full_data = torch.cat((full_data, vix_data), dim=0)
+    # columns.extend(["vix_close", "vix_high", "vix_low", "vix_open"])
+
+    gold_data = yf.download(
+        "GC=F", start=start_date, end=end_date, progress=False, auto_adjust=False
+    )
+    aligned_gold_data = pd.DataFrame(columns=gold_data.columns)
+    for column in gold_data.columns.levels[0]:
+        aligned_gold_data[column, "GC=F"] = align_financial_dataframes(
+            {column: gold_data},
+            target_column=column,
+            fill_method="ffill",
+            min_date=start_date,
+            max_date=end_date,
+        )
+    gold_data = aligned_gold_data
+    gold_data = gold_data.to_numpy()[:, 1:2]
+    gold_data = torch.tensor(gold_data, dtype=torch.float32)
+    gold_data = gold_data.transpose(0, 1)
+
+    gold_change = (gold_data[:, :1] - gold_data[:, :-1])/gold_data[:, :-1]
+    gold_change = torch.cat((gold_change[:, 0:1], gold_change), dim=1)
+    gold_data = torch.cat((gold_data, gold_change), dim=0)
+    
+    gold_data = gold_data.unsqueeze(-1)
+    gold_data = gold_data.expand(gold_data.shape[0], gold_data.shape[1], len(tickers))
+    full_data = torch.cat((full_data, gold_data), dim=0)
+    # columns.extend(["gold_close_ch", "gold_high_ch", "gold_low_ch", "gold_open_ch", "gold_volume_ch"])
+    columns.extend(["gold_close", "gold_close_ch"])
+
 
 
     data = torch.empty(full_data.shape[0], max(target_dates), full_data.shape[1]-max(target_dates), full_data.shape[2], dtype=torch.float32)
