@@ -261,24 +261,11 @@ def download_numerical_financial_data(
     #     #     columns.extend(price_ema_columns)
 
     #     # column_to_id = {col: idx for idx, col in enumerate(columns)}
-
-    #     # ppo_data, ppo_columns = feature_ppo(temp_data, column_to_id)
-    #     # temp_data = torch.cat((temp_data, ppo_data), dim=0)
-    #     # if i == 0:
-    #     #     columns.extend(ppo_columns)
         
     #     # macd_data, macd_columns = feature_macd(temp_data, column_to_id)
     #     # temp_data = torch.cat((temp_data, macd_data), dim=0)
     #     # if i == 0:
     #     #     columns.extend(macd_columns)
-
-    #     # # more metrics
-    #     # clv = calculate_close_line_values(
-    #     #     close=temp_raw_data[0], high=temp_raw_data[1], low=temp_raw_data[2]
-    #     # )
-    #     # temp_data = torch.cat((temp_data, clv.unsqueeze(0)), dim=0)
-    #     # if i == 0:
-    #     #     columns.append("CLV")
 
     #     # ad_data, ad_columns = feature_ad_sma(clv, temp_raw_data[4])
     #     # temp_data = torch.cat((temp_data, ad_data), dim=0)
@@ -316,11 +303,6 @@ def download_numerical_financial_data(
     #     #     columns.append("open")
     #     #     columns.append("volume")
 
-    #     # rsi_data, rsi_columns = feature_rsi(temp_raw_data[0])
-    #     # temp_data = torch.cat((temp_data, rsi_data), dim=0)
-    #     # if i == 0:
-    #     #     columns.extend(rsi_columns)
-
     #     # k_percent, d_percent = calculate_stochastic_oscillator(
     #     #     temp_raw_data[1, :],
     #     #     temp_raw_data[2, :],
@@ -349,16 +331,13 @@ def download_numerical_financial_data(
     #     # if i == 0:
     #     #     columns.extend(chaikin_columns)
         
-        
-    #     # atr_data, atr_columns = feature_atr(temp_raw_data[1], temp_raw_data[2], temp_raw_data[0])
-    #     # temp_data = torch.cat((temp_data, atr_data), dim=0)
-    #     # if i == 0:
-    #     #     columns.extend(atr_columns)
 
     #     full_data.append(
     #         temp_data[:, 20:].unsqueeze(-1)
     #     )  # getting rid of some trashy-ish data points
+
     # TODO maybe norm ema and such using same values as returns and such
+    # TODO revisit vpt with sma/ema of itself
     full_data = (raw_data[:,1:,:] - raw_data[:,:-1,:]) / raw_data[:,:-1,:]  # (features, time series, tickers)
     full_data = torch.cat((torch.zeros_like(full_data[:,0:1,:]), full_data), dim=1)
     full_data[4, 5929] = full_data[4, 5928] # ffil fix for inf
@@ -422,23 +401,92 @@ def download_numerical_financial_data(
     full_data = torch.cat((full_data, torch.cat(full_ema, dim=-1)), dim=0)
     columns.extend(ema_columns)
 
-    # vpt_data = calculate_volume_price_trend_standard(raw_data[:4], raw_data[4:]) - calculate_sma(raw_data[:4], lookback=50) # seems to not be useful (with global norm at least)
-    # vpt_data[:, 1:] = (vpt_data[:, 1:] - vpt_data[:, :-1])/(vpt_data[:, :-1] + 1e-6)
-    # vpt_data[:, :1] = vpt_data[:, 1:2]
-    # full_data = torch.cat((full_data, vpt_data), dim=0)
-    # columns.extend(["vpt_close_change", "vpt_high_change", "vpt_low_change", "vpt_open_change"])
+    # full_vpt = []
+    # vpt_data = calculate_volume_price_trend_standard(raw_data[:4], raw_data[4:])
+    # full_vpt.append(vpt_data)
+    # full_vpt.append(calculate_sma(vpt_data, lookback=5))
+    # full_vpt.append(calculate_sma(vpt_data, lookback=10))
+    # full_vpt.append(calculate_sma(vpt_data, lookback=20))
+    # full_vpt.append(calculate_sma(vpt_data, lookback=50))
+    # # vpt_data[:, 1:] = (vpt_data[:, 1:] - vpt_data[:, :-1])/(vpt_data[:, :-1] + 1e-6)
+    # # vpt_data[:, :1] = vpt_data[:, 1:2]
+    # full_data = torch.cat((full_data, torch.cat(full_vpt, dim=0)), dim=0)
+    # columns.extend(["vpt_close", "vpt_high", "vpt_low", "vpt_open"])
+    # columns.extend(["vpt_close_sma_5", "vpt_high_sma_5", "vpt_low_sma_5", "vpt_open_sma_5"])
+    # columns.extend(["vpt_close_sma_10", "vpt_high_sma_10", "vpt_low_sma_10", "vpt_open_sma_10"])
+    # columns.extend(["vpt_close_sma_20", "vpt_high_sma_20", "vpt_low_sma_20", "vpt_open_sma_20"])
+    # columns.extend(["vpt_close_sma_50", "vpt_high_sma_50", "vpt_low_sma_50", "vpt_open_sma_50"])
 
     # mfi_data, mfi_columns = feature_mfi(raw_data[0], raw_data[1], raw_data[2], raw_data[4]) # meh global norm
     # mfi_data[:, 1:] = (mfi_data[:, 1:] - mfi_data[:, :-1])/(mfi_data[:, :-1] + 1e-6) # change
     # mfi_data[:, :1] = mfi_data[:, 1:2]
     # full_data = torch.cat((full_data, mfi_data), dim=0)
     # columns.extend(mfi_columns)
-    full_atr = []
-    for i in range(len(tickers)):
-        atr_data, atr_columns = feature_atr(raw_data[0, :, i], raw_data[1, :, i], raw_data[2, :, i])
-        full_atr.append(atr_data)
-    full_data = torch.cat((full_data, torch.stack(full_atr, dim=-1)), dim=0)
-    columns.extend(atr_columns)
+
+    # full_atr = []
+    # for i in range(len(tickers)):
+    #     atr_data, atr_columns = feature_atr(raw_data[0, :, i], raw_data[1, :, i], raw_data[2, :, i])
+    #     full_atr.append(atr_data)
+    # full_data = torch.cat((full_data, torch.stack(full_atr, dim=-1)), dim=0)
+    # columns.extend(atr_columns)
+
+    # full_ppo = []
+    # for i in range(len(tickers)):
+    #     ppo_data, ppo_columns = feature_ppo(raw_data[0, :, i], prefix="close_")
+    #     full_ppo.append(ppo_data)
+    # full_data = torch.cat((full_data, torch.stack(full_ppo, dim=-1)), dim=0)
+    # columns.extend(ppo_columns)
+
+    # full_ppo = []
+    # for i in range(len(tickers)):
+    #     ppo_data, ppo_columns = feature_ppo(raw_data[1, :, i], prefix="high_")
+    #     full_ppo.append(ppo_data)
+    # full_data = torch.cat((full_data, torch.stack(full_ppo, dim=-1)), dim=0)
+    # columns.extend(ppo_columns)
+
+    # full_ppo = []
+    # for i in range(len(tickers)):
+    #     ppo_data, ppo_columns = feature_ppo(raw_data[2, :, i], prefix="low_")
+    #     full_ppo.append(ppo_data)
+    # full_data = torch.cat((full_data, torch.stack(full_ppo, dim=-1)), dim=0)
+    # columns.extend(ppo_columns)
+
+    # full_ppo = []
+    # for i in range(len(tickers)):
+    #     ppo_data, ppo_columns = feature_ppo(raw_data[3, :, i], prefix="open_")
+    #     full_ppo.append(ppo_data)
+    # full_data = torch.cat((full_data, torch.stack(full_ppo, dim=-1)), dim=0)
+    # columns.extend(ppo_columns)
+
+    # full_ppo = []
+    # for i in range(len(tickers)):
+    #     ppo_data, ppo_columns = feature_ppo(raw_data[4, :, i], prefix="volume_")
+    #     full_ppo.append(ppo_data)
+    # full_data = torch.cat((full_data, torch.stack(full_ppo, dim=-1)), dim=0)
+    # columns.extend(ppo_columns)
+
+    vix_data = yf.download(
+        "^VIX", start=start_date, end=end_date, progress=False, auto_adjust=False
+    )
+    aligned_vix_data = pd.DataFrame(columns=vix_data.columns)
+    for column in vix_data.columns.levels[0]:
+        aligned_vix_data[column, "^VIX"] = align_financial_dataframes(
+            {column: vix_data},
+            target_column=column,
+            fill_method="ffill",
+            min_date=start_date,
+            max_date=end_date,
+        )
+    vix_data = aligned_vix_data
+    vix_data = vix_data.to_numpy()[:, 1:-1]
+    vix_data = torch.tensor(vix_data, dtype=torch.float32)
+    # vix_wider_data, vix_wider_columns = calculate_wider_economics_indicators(
+    #     vix_data, "vix"
+    # )
+    vix_data = vix_data.transpose(0, 1).unsqueeze(-1)
+    vix_data = vix_data.expand(vix_data.shape[0], vix_data.shape[1], len(tickers))
+    full_data = torch.cat((full_data, vix_data), dim=0)
+    columns.extend(["vix_close", "vix_high", "vix_low", "vix_open"])
 
 
     data = torch.empty(full_data.shape[0], max(target_dates), full_data.shape[1]-max(target_dates), full_data.shape[2], dtype=torch.float32)
@@ -823,41 +871,6 @@ def download_numerical_financial_data(
     data = torch.cat((data, time_data), dim=0)
     columns.extend(time_columns)
 
-    # adding targets old
-    # target_data = []
-    # for i in range(len(tickers)):
-    #     temp_raw_data = raw_data[:, :, i]
-    #     reference_period = temp_raw_data[0, : -max(target_dates)]
-    #     if max(target_dates) == 1:
-    #         temp_data = (
-    #             (temp_raw_data[0, 1:] - reference_period) / reference_period
-    #         ).unsqueeze(0)
-    #     else:
-    #         temp_data = (
-    #             (temp_raw_data[0, 1 : -(max(target_dates) - 1)] - reference_period)
-    #             / reference_period
-    #         ).unsqueeze(0)
-    #     for j in range(1, len(target_dates)):
-    #         if target_dates[j] == max(target_dates):
-    #             temp_data = torch.cat(
-    #                 (temp_data,((temp_raw_data[0, max(target_dates) :] - reference_period)/ reference_period
-    #                     ).unsqueeze(0),
-    #                 ),
-    #                 dim=0,
-    #             )
-    #         else:
-    #             temp_data = torch.cat(
-    #                 (temp_data,((temp_raw_data[0,target_dates[j] : -(max(target_dates) - target_dates[j])]- reference_period)/ reference_period
-    #                     ).unsqueeze(0),
-    #                 ),
-    #                 dim=0,
-    #             )
-
-    #     target_data.append(temp_data.unsqueeze(-1))
-
-    # target_data = torch.cat(target_data, dim=-1)
-    # target_data = target_data[:, 20:]
-    # data = torch.cat((target_data, data), dim=0)
 
     MTP_targets = torch.empty(
         (5, max(target_dates), data.shape[2]+20, len(tickers)), dtype=torch.float32
@@ -869,11 +882,6 @@ def download_numerical_financial_data(
             MTP_targets[:, i, :, :] = MTP_full[:, i:, :]
         else:
             MTP_targets[:, i, :, :] = MTP_full[:, i:-(max(target_dates) - i - 1), :]
-    # for i in range(max(target_dates)):
-    #     if i == max(target_dates) - 1:
-    #         MTP_targets[:, i, :, :] = (raw_data[:, i+1:, :] - raw_data[:, i:-1, :]) / raw_data[:, i:-1, :]
-    #     else:
-    #         MTP_targets[:, i, :, :] = (raw_data[:, i+1 : -(max(target_dates) - i - 1), :] - raw_data[:, i:-(max(target_dates) - i), :]) / raw_data[:, i:-(max(target_dates) - i), :]
     MTP_targets = MTP_targets[:, :, 20:, :]
 
     column_to_id = {column: i for i, column in enumerate(columns)}
@@ -1119,19 +1127,23 @@ def feature_ema(
 
     return ema_data, ema_columns
 
-def feature_ppo(data: torch.Tensor, column_ids: Dict[str, int]) -> torch.Tensor:
+def feature_ppo(price: torch.Tensor, prefix: str = "price_") -> torch.Tensor:
     ppo_columns = []
-    ppo = (data[column_ids["price_ema_5"]] - data[column_ids["price_ema_10"]]) / data[column_ids["price_ema_10"]]
+    ema_5 = calculate_ema_pandas(price, lookback=5)
+    ema_10 = calculate_ema_pandas(price, lookback=10)
+    ema_20 = calculate_ema_pandas(price, lookback=20)
+
+    ppo = (ema_5 - ema_10) / ema_10
     ppo_data = ppo.unsqueeze(0)
-    ppo_columns.append("ppo_5_10")
+    ppo_columns.append(prefix+"ppo_5_10")
 
-    ppo = (data[column_ids["price_ema_10"]] - data[column_ids["price_ema_20"]]) / data[column_ids["price_ema_20"]]
+    ppo = (ema_10 - ema_20) / ema_20
     ppo_data = torch.cat((ppo_data, ppo.unsqueeze(0)), dim=0)
-    ppo_columns.append("ppo_10_20")
+    ppo_columns.append(prefix+"ppo_10_20")
 
-    ppo = (data[column_ids["price_ema_5"]] - data[column_ids["price_ema_20"]]) / data[column_ids["price_ema_20"]]
+    ppo = (ema_5 - ema_20) / ema_20
     ppo_data = torch.cat((ppo_data, ppo.unsqueeze(0)), dim=0)
-    ppo_columns.append("ppo_5_20")
+    ppo_columns.append(prefix+"ppo_5_20")
 
     return ppo_data, ppo_columns
 
@@ -1786,7 +1798,7 @@ def calculate_wider_economics_indicators(indicator: torch.Tensor, indicator_name
     change = (indicator[1:] - indicator[:-1]) / indicator[:-1]
     change = torch.cat((change[:1], change), dim=0)
     indicator_data = torch.cat((indicator.unsqueeze(0), change.unsqueeze(0)), dim=0)
-    indicator_columns = [indicator_name + "_close", indicator_name + "_change"]
+    indicator_columns = [indicator_name, indicator_name + "_change"]
 
     # removed because duplicates????
     # sma = calculate_sma(indicator.unsqueeze(0), lookback=5, dim=0)
