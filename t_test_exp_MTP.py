@@ -48,6 +48,18 @@ ema_chlov_vix_chlo_simple = np.array([0.5226, 0.523, 0.5229])
 ema_USt = np.array([0.524, 0.5236, 0.5231])
 # ema_gold_c_ch = np.array([0.524, 0.5255, 0.5236])
 ema_gold_chlov = np.array([0.5231, 0.5237, 0.5226])
+# ema_crude_oil_c = np.array([0.5249, 0.5238, 0.5242])
+ema_copper_chlov = np.array([0.5237, 0.5233, 0.5233])
+ema_crude_oil_chlov = np.array([0.5238, 0.5237, 0.5239])
+# ema_silver_chlov = np.array([0.5236, 0.524, 0.524])
+# ema_usd_index_chlov = np.array([0.5237, 0.5247, 0.523])
+# ema_alphas = np.array([0.523, 0.5241, 0.524])
+# ema_rel_vol_div = np.array([0.5233, 0.524, 0.5242])
+# ema_rel_vol_sub = np.array([0.5246, 0.5236, 0.5251])
+ema_old_adr = np.array([0.5227, 0.5237, 0.5227])
+# ema_bb_ret_c = np.array([0.524, 0.5244, 0.5234])
+# ema_bb_price_c_signal = np.array([0.525, 0.5229, 0.5237, 0.5235])
+
 
 # normal test (8 samples min)
 _, p_value = stats.normaltest(base_3_global)
@@ -142,4 +154,48 @@ welch_t_test(base_3_g_sh_vol_c_ema_chlov, ema_USt) # 0.15 better?
 
 print(f"Mean ema_gold_chlov: {np.mean(ema_gold_chlov)}")
 print("Welch's t-test: base_3_g_sh_vol_c_ema_chlov vs ema_gold_chlov")
-welch_t_test(base_3_g_sh_vol_c_ema_chlov, ema_gold_chlov) # 0.06 better?
+welch_t_test(base_3_g_sh_vol_c_ema_chlov, ema_gold_chlov) # 0.069 better?
+
+# print(f"Mean ema_crude_oil_c: {np.mean(ema_crude_oil_c)}")
+# print("Welch's t-test: base_3_g_sh_vol_c_ema_chlov vs ema_crude_oil_c")
+# welch_t_test(base_3_g_sh_vol_c_ema_chlov, ema_crude_oil_c) # 0.64
+
+print(f"Mean ema_crude_oil_chlov: {np.mean(ema_crude_oil_chlov)}")
+print("Welch's t-test: base_3_g_sh_vol_c_ema_chlov vs ema_crude_oil_chlov")
+welch_t_test(base_3_g_sh_vol_c_ema_chlov, ema_crude_oil_chlov) # 0.099 better?
+
+print(f"Mean ema_copper_chlov: {np.mean(ema_copper_chlov)}")
+print("Welch's t-test: base_3_g_sh_vol_c_ema_chlov vs ema_copper_chlov")
+welch_t_test(base_3_g_sh_vol_c_ema_chlov, ema_copper_chlov) # 0.0125 better
+
+# print(f"Mean ema_silver_chlov: {np.mean(ema_silver_chlov)}")
+# print("Welch's t-test: base_3_g_sh_vol_c_ema_chlov vs ema_silver_chlov")
+# welch_t_test(base_3_g_sh_vol_c_ema_chlov, ema_silver_chlov) # 0.272 better?
+
+# print(f"Mean ema_usd_index_chlov: {np.mean(ema_usd_index_chlov)}")
+# print("Welch's t-test: base_3_g_sh_vol_c_ema_chlov vs ema_usd_index_chlov")
+# welch_t_test(base_3_g_sh_vol_c_ema_chlov, ema_usd_index_chlov) # 0.59
+
+# print(f"Mean ema_alphas: {np.mean(ema_alphas)}")
+# print("Welch's t-test: base_3_g_sh_vol_c_ema_chlov vs ema_alphas")
+# welch_t_test(base_3_g_sh_vol_c_ema_chlov, ema_alphas) # 0.36
+
+# print(f"Mean ema_rel_vol_div: {np.mean(ema_rel_vol_div)}")
+# print("Welch's t-test: base_3_g_sh_vol_c_ema_chlov vs ema_rel_vol_div")
+# welch_t_test(base_3_g_sh_vol_c_ema_chlov, ema_rel_vol_div) # 0.43
+
+# print(f"Mean ema_rel_vol_sub: {np.mean(ema_rel_vol_sub)}")
+# print("Welch's t-test: base_3_g_sh_vol_c_ema_chlov vs ema_rel_vol_sub")
+# welch_t_test(base_3_g_sh_vol_c_ema_chlov, ema_rel_vol_sub) # 0.55
+
+print(f"Mean ema_old_adr: {np.mean(ema_old_adr)}")
+print("Welch's t-test: base_3_g_sh_vol_c_ema_chlov vs ema_old_adr")
+welch_t_test(base_3_g_sh_vol_c_ema_chlov, ema_old_adr) # 0.06 better?
+
+# print(f"Mean ema_bb_ret: {np.mean(ema_bb_ret)}")
+# print("Welch's t-test: base_3_g_sh_vol_c_ema_chlov vs ema_bb_ret")
+# welch_t_test(base_3_g_sh_vol_c_ema_chlov, ema_bb_ret) # 0.62
+
+# print(f"Mean ema_bb_price_c_signal: {np.mean(ema_bb_price_c_signal)}")
+# print("Welch's t-test: base_3_g_sh_vol_c_ema_chlov vs ema_bb_price_c_signal")
+# welch_t_test(base_3_g_sh_vol_c_ema_chlov, ema_bb_price_c_signal) # 0.51
