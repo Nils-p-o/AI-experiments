@@ -6,12 +6,13 @@ def welch_t_test(a, b):
     print(f"Welch's T statistic: {t_value}")
     print(f"Welch's T statistic p-value: {p_value}")
     return
-# compare against some base (currently base_small)
-# TODO look into automatically getting results from log files
-# paired by seeds for paired tests
-# mann-whitney u and wilcoxon signed rank tests
 
-# best achived val_loss_unseen
+# TODO look into automatically getting results from log files
+# TODO paired by seeds for paired tests
+# TODO mann-whitney u and wilcoxon signed rank tests
+
+# by best achived val_loss_unseen
+
 base_3_global = np.array([0.5423, 0.5428, 0.544, 0.5438, 0.5437, 0.543, 0.5426, 0.5444])
 base_3_global_shorter = np.array([0.5445, 0.5432, 0.5439])
 # combined vol
@@ -23,7 +24,7 @@ base_3_g_sh_vol_c = np.array([0.5413, 0.5418, 0.5423]) # best so far
 base_3_g_sh_vol_c_sma_c = np.array([0.5415, 0.5415, 0.5417]) # same-ish
 base_3_g_sh_vol_c_sma_chlov = np.array([0.5362, 0.5365, 0.5353]) # better
 base_3_g_sh_vol_c_ema_chlov = np.array([0.5236, 0.5243, 0.5235, 0.5239, 0.5247, 0.5241, 0.5247, 0.5241]) # best so far
-# sometimes called 3_base_ema
+# sometimes called 3_base_ema (current baseline to be compared with)
 
 # ema_chlov_mfi = np.array([0.5241, 0.524, 0.5245])
 # ema_chlov_mfi_ch = np.array([0.5242, 0.5239, 0.5238])
@@ -59,6 +60,13 @@ ema_crude_oil_chlov = np.array([0.5238, 0.5237, 0.5239])
 ema_old_adr = np.array([0.5227, 0.5237, 0.5227])
 # ema_bb_ret_c = np.array([0.524, 0.5244, 0.5234])
 # ema_bb_price_c_signal = np.array([0.525, 0.5229, 0.5237, 0.5235])
+# ema_macd_c = np.array([0.528, 0.5302, 0.5248])
+# ema_chaikin_old = np.array([0.5243, 0.5236, 0.5241, 0.5248])
+ema_ad = np.array([0.5238, 0.5234, 0.5223])
+# ema_ad_old = np.array([0.5251, 0.5245, 0.5236])
+# ema_chaikin_standard = np.array([0.5241, 0.5248, 0.5247])
+# ema_stochastic_oscillator = np.array([0.5249, 0.5244, 0.5236])
+# ema_vpt_old_c = np.array([0.5235, 0.5247, 0.5237])
 
 
 # normal test (8 samples min)
@@ -102,7 +110,7 @@ print(f"Mean base_3_g_sh_vol_c_ema_chlov: {np.mean(base_3_g_sh_vol_c_ema_chlov)}
 
 print(f"Mean ema_chlov_vpt_chlo: {np.mean(ema_chlov_vpt_chlo)}")
 print("Welch's t-test: base_3_g_sh_vol_c_ema_chlov vs ema_chlov_vpt")
-welch_t_test(base_3_g_sh_vol_c_ema_chlov, ema_chlov_vpt_chlo) # better? 0.004
+welch_t_test(base_3_g_sh_vol_c_ema_chlov, ema_chlov_vpt_chlo) # 0.004
 
 # print(f"Mean ema_chlov_atr_div: {np.mean(ema_chlov_atr_div)}")
 # print("Welch's t-test: base_3_g_sh_vol_c_ema_chlov vs ema_chlov_atr_div")
@@ -199,3 +207,31 @@ welch_t_test(base_3_g_sh_vol_c_ema_chlov, ema_old_adr) # 0.06 better?
 # print(f"Mean ema_bb_price_c_signal: {np.mean(ema_bb_price_c_signal)}")
 # print("Welch's t-test: base_3_g_sh_vol_c_ema_chlov vs ema_bb_price_c_signal")
 # welch_t_test(base_3_g_sh_vol_c_ema_chlov, ema_bb_price_c_signal) # 0.51
+
+# print(f"Mean ema_macd_c: {np.mean(ema_macd_c)}")
+# print("Welch's t-test: base_3_g_sh_vol_c_ema_chlov vs ema_macd_c")
+# welch_t_test(base_3_g_sh_vol_c_ema_chlov, ema_macd_c) # 0.15 worse
+
+# print(f"Mean ema_chaikin_old: {np.mean(ema_chaikin_old)}")
+# print("Welch's t-test: base_3_g_sh_vol_c_ema_chlov vs ema_chaikin_old")
+# welch_t_test(base_3_g_sh_vol_c_ema_chlov, ema_chaikin_old) # 0.77 worse ish
+
+print(f"Mean ema_ad: {np.mean(ema_ad)}")
+print("Welch's t-test: base_3_g_sh_vol_c_ema_chlov vs ema_ad")
+welch_t_test(base_3_g_sh_vol_c_ema_chlov, ema_ad) # 0.15 better
+
+# print(f"Mean ema_ad_old: {np.mean(ema_ad_old)}")
+# print("Welch's t-test: base_3_g_sh_vol_c_ema_chlov vs ema_ad_old")
+# welch_t_test(base_3_g_sh_vol_c_ema_chlov, ema_ad_old) # 0.58 worse
+
+# print(f"Mean ema_chaikin_standard: {np.mean(ema_chaikin_standard)}")
+# print("Welch's t-test: base_3_g_sh_vol_c_ema_chlov vs ema_chaikin_standard")
+# welch_t_test(base_3_g_sh_vol_c_ema_chlov, ema_chaikin_standard) # 0.19 worse
+
+# print(f"Mean ema_stochastic_oscillator: {np.mean(ema_stochastic_oscillator)}")
+# print("Welch's t-test: base_3_g_sh_vol_c_ema_chlov vs ema_stochastic_oscillator")
+# welch_t_test(base_3_g_sh_vol_c_ema_chlov, ema_stochastic_oscillator) # 0.68 worse
+
+# print(f"Mean ema_vpt_old_c: {np.mean(ema_vpt_old_c)}")
+# print("Welch's t-test: base_3_g_sh_vol_c_ema_chlov vs ema_vpt_old_c")
+# welch_t_test(base_3_g_sh_vol_c_ema_chlov, ema_vpt_old_c) # 0.74

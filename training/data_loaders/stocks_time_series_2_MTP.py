@@ -328,21 +328,11 @@ def download_numerical_financial_data(
     full_data = torch.cat((full_data, torch.cat(full_ema, dim=-1)), dim=0)
     columns.extend(ema_columns)
 
-    # full_vpt = []
-    # vpt_data = calculate_volume_price_trend_standard(raw_data[:4], raw_data[4:])
-    # full_vpt.append(vpt_data)
-    # full_vpt.append(calculate_sma(vpt_data, lookback=5))
-    # full_vpt.append(calculate_sma(vpt_data, lookback=10))
-    # full_vpt.append(calculate_sma(vpt_data, lookback=20))
-    # full_vpt.append(calculate_sma(vpt_data, lookback=50))
-    # # vpt_data[:, 1:] = (vpt_data[:, 1:] - vpt_data[:, :-1])/(vpt_data[:, :-1] + 1e-6)
-    # # vpt_data[:, :1] = vpt_data[:, 1:2]
-    # full_data = torch.cat((full_data, torch.cat(full_vpt, dim=0)), dim=0)
-    # columns.extend(["vpt_close", "vpt_high", "vpt_low", "vpt_open"])
-    # columns.extend(["vpt_close_sma_5", "vpt_high_sma_5", "vpt_low_sma_5", "vpt_open_sma_5"])
-    # columns.extend(["vpt_close_sma_10", "vpt_high_sma_10", "vpt_low_sma_10", "vpt_open_sma_10"])
-    # columns.extend(["vpt_close_sma_20", "vpt_high_sma_20", "vpt_low_sma_20", "vpt_open_sma_20"])
-    # columns.extend(["vpt_close_sma_50", "vpt_high_sma_50", "vpt_low_sma_50", "vpt_open_sma_50"])
+    full_vpt = []
+    vpt_data = calculate_volume_price_trend_standard(raw_data[:4], raw_data[4:])
+    full_vpt.append(vpt_data)
+    full_data = torch.cat((full_data, torch.cat(full_vpt, dim=0)), dim=0)
+    columns.extend(["vpt_close", "vpt_high", "vpt_low", "vpt_open"])
 
     # mfi_data, mfi_columns = feature_mfi(raw_data[0], raw_data[1], raw_data[2], raw_data[4]) # meh global norm
     # mfi_data[:, 1:] = (mfi_data[:, 1:] - mfi_data[:, :-1])/(mfi_data[:, :-1] + 1e-6) # change
@@ -357,40 +347,40 @@ def download_numerical_financial_data(
     # full_data = torch.cat((full_data, torch.stack(full_atr, dim=-1)), dim=0)
     # columns.extend(atr_columns)
 
-    # full_ppo = []
-    # for i in range(len(tickers)):
-    #     ppo_data, ppo_columns = feature_ppo(raw_data[0, :, i], prefix="close_")
-    #     full_ppo.append(ppo_data)
-    # full_data = torch.cat((full_data, torch.stack(full_ppo, dim=-1)), dim=0)
-    # columns.extend(ppo_columns)
+    full_ppo = []
+    for i in range(len(tickers)):
+        ppo_data, ppo_columns = feature_ppo(raw_data[0, :, i], prefix="close_")
+        full_ppo.append(ppo_data)
+    full_data = torch.cat((full_data, torch.stack(full_ppo, dim=-1)), dim=0)
+    columns.extend(ppo_columns)
 
-    # full_ppo = []
-    # for i in range(len(tickers)):
-    #     ppo_data, ppo_columns = feature_ppo(raw_data[1, :, i], prefix="high_")
-    #     full_ppo.append(ppo_data)
-    # full_data = torch.cat((full_data, torch.stack(full_ppo, dim=-1)), dim=0)
-    # columns.extend(ppo_columns)
+    full_ppo = []
+    for i in range(len(tickers)):
+        ppo_data, ppo_columns = feature_ppo(raw_data[1, :, i], prefix="high_")
+        full_ppo.append(ppo_data)
+    full_data = torch.cat((full_data, torch.stack(full_ppo, dim=-1)), dim=0)
+    columns.extend(ppo_columns)
 
-    # full_ppo = []
-    # for i in range(len(tickers)):
-    #     ppo_data, ppo_columns = feature_ppo(raw_data[2, :, i], prefix="low_")
-    #     full_ppo.append(ppo_data)
-    # full_data = torch.cat((full_data, torch.stack(full_ppo, dim=-1)), dim=0)
-    # columns.extend(ppo_columns)
+    full_ppo = []
+    for i in range(len(tickers)):
+        ppo_data, ppo_columns = feature_ppo(raw_data[2, :, i], prefix="low_")
+        full_ppo.append(ppo_data)
+    full_data = torch.cat((full_data, torch.stack(full_ppo, dim=-1)), dim=0)
+    columns.extend(ppo_columns)
 
-    # full_ppo = []
-    # for i in range(len(tickers)):
-    #     ppo_data, ppo_columns = feature_ppo(raw_data[3, :, i], prefix="open_")
-    #     full_ppo.append(ppo_data)
-    # full_data = torch.cat((full_data, torch.stack(full_ppo, dim=-1)), dim=0)
-    # columns.extend(ppo_columns)
+    full_ppo = []
+    for i in range(len(tickers)):
+        ppo_data, ppo_columns = feature_ppo(raw_data[3, :, i], prefix="open_")
+        full_ppo.append(ppo_data)
+    full_data = torch.cat((full_data, torch.stack(full_ppo, dim=-1)), dim=0)
+    columns.extend(ppo_columns)
 
-    # full_ppo = []
-    # for i in range(len(tickers)):
-    #     ppo_data, ppo_columns = feature_ppo(raw_data[4, :, i], prefix="volume_")
-    #     full_ppo.append(ppo_data)
-    # full_data = torch.cat((full_data, torch.stack(full_ppo, dim=-1)), dim=0)
-    # columns.extend(ppo_columns)
+    full_ppo = []
+    for i in range(len(tickers)):
+        ppo_data, ppo_columns = feature_ppo(raw_data[4, :, i], prefix="volume_")
+        full_ppo.append(ppo_data)
+    full_data = torch.cat((full_data, torch.stack(full_ppo, dim=-1)), dim=0)
+    columns.extend(ppo_columns)
 
     # full_rsi = []
     # for i in range(len(tickers)):
@@ -420,56 +410,31 @@ def download_numerical_financial_data(
     # full_data = torch.cat((full_data, torch.stack(full_rsi, dim=-1)), dim=0)
     # columns.extend(rsi_columns)
 
-    # clv_data = calculate_close_line_values(raw_data[0], raw_data[1], raw_data[2]).unsqueeze(0)
-    # full_data = torch.cat((full_data, clv_data), dim=0)
-    # columns.extend(["clv"])
+    clv_data = calculate_close_line_values(raw_data[0], raw_data[1], raw_data[2]).unsqueeze(0)
+    full_data = torch.cat((full_data, clv_data), dim=0)
+    columns.extend(["clv"])
 
-    # vix_data = yf.download(
-    #     "^VIX", start=start_date, end=end_date, progress=False, auto_adjust=False
-    # )
-    # aligned_vix_data = pd.DataFrame(columns=vix_data.columns)
-    # for column in vix_data.columns.levels[0]:
-    #     aligned_vix_data[column, "^VIX"] = align_financial_dataframes(
-    #         {column: vix_data},
-    #         target_column=column,
-    #         fill_method="ffill",
-    #         min_date=start_date,
-    #         max_date=end_date,
-    #     )
-    # vix_data = aligned_vix_data
-    # vix_data = vix_data.to_numpy()[:, 1:-1]
-    # vix_data = torch.tensor(vix_data, dtype=torch.float32)
-    # vix_data = vix_data.transpose(0, 1)
-    # full_vix = []
-    # vix_wider_data, vix_wider_columns = calculate_wider_economics_indicators(
-    #     vix_data[0, :], indicator_name="vix_close"
-    # )
-    # full_vix.append(vix_wider_data)
-    # columns.extend(vix_wider_columns)
-    # vix_wider_data, vix_wider_columns = calculate_wider_economics_indicators(
-    #     vix_data[1, :], indicator_name="vix_high"
-    # )
-    # full_vix.append(vix_wider_data)
-    # columns.extend(vix_wider_columns)
-    # vix_wider_data, vix_wider_columns = calculate_wider_economics_indicators(
-    #     vix_data[2, :], indicator_name="vix_low"
-    # )
-    # full_vix.append(vix_wider_data)
-    # columns.extend(vix_wider_columns)
-    # vix_wider_data, vix_wider_columns = calculate_wider_economics_indicators(
-    #     vix_data[3, :], indicator_name="vix_open"
-    # )
-    # full_vix.append(vix_wider_data)
-    # columns.extend(vix_wider_columns)
+    vix_data = yf.download(
+        "^VIX", start=start_date, end=end_date, progress=False, auto_adjust=False
+    )
+    aligned_vix_data = pd.DataFrame(columns=vix_data.columns)
+    for column in vix_data.columns.levels[0]:
+        aligned_vix_data[column, "^VIX"] = align_financial_dataframes(
+            {column: vix_data},
+            target_column=column,
+            fill_method="ffill",
+            min_date=start_date,
+            max_date=end_date,
+        )
+    vix_data = aligned_vix_data
+    vix_data = vix_data.to_numpy()[:, 1:-1]
+    vix_data = torch.tensor(vix_data, dtype=torch.float32)
+    vix_data = vix_data.transpose(0, 1)
 
-    # full_vix = torch.cat(full_vix, dim=0).unsqueeze(-1)
-    # full_vix = full_vix.expand(full_vix.shape[0], full_vix.shape[1], len(tickers))
-    # full_data = torch.cat((full_data, full_vix), dim=0)
-
-    # vix_data = vix_data.unsqueeze(-1)
-    # vix_data = vix_data.expand(vix_data.shape[0], vix_data.shape[1], len(tickers))
-    # full_data = torch.cat((full_data, vix_data), dim=0)
-    # columns.extend(["vix_close", "vix_high", "vix_low", "vix_open"])
+    vix_data = vix_data.unsqueeze(-1)
+    vix_data = vix_data.expand(vix_data.shape[0], vix_data.shape[1], len(tickers))
+    full_data = torch.cat((full_data, vix_data), dim=0)
+    columns.extend(["vix_close", "vix_high", "vix_low", "vix_open"])
 
     # US_treasury_yields = yf.download(
     #     "^TNX", start=start_date, end=end_date, progress=False
@@ -572,18 +537,14 @@ def download_numerical_financial_data(
     #         max_date=end_date,
     #     )
     # gold_data = aligned_gold_data
-    # gold_data = gold_data.to_numpy()[:, 1:2]
+    # gold_data = gold_data.to_numpy()[:, 1:]
     # gold_data = torch.tensor(gold_data, dtype=torch.float32)
     # gold_data = gold_data.transpose(0, 1)
-
-    # gold_change = (gold_data[:, :1] - gold_data[:, :-1])/gold_data[:, :-1]
-    # gold_change = torch.cat((gold_change[:, 0:1], gold_change), dim=1)
-    # gold_data = torch.cat((gold_data, gold_change), dim=0)
     
     # gold_data = gold_data.unsqueeze(-1)
     # gold_data = gold_data.expand(gold_data.shape[0], gold_data.shape[1], len(tickers))
     # full_data = torch.cat((full_data, gold_data), dim=0)
-    # columns.extend(["gold_close", "gold_close_ch"])
+    # columns.extend(["gold_close", "gold_high", "gold_low", "gold_open", "gold_volume"])
 
     # crude_oil = yf.download(
     #     "CL=F",
@@ -611,31 +572,31 @@ def download_numerical_financial_data(
     # full_data = torch.cat((full_data, crude_oil), dim=0)
     # columns.extend(["crude_oil_close", "crude_oil_open", "crude_oil_high", "crude_oil_low", "crude_oil_volume"])
 
-    # copper = yf.download(
-    #     "HG=F",
-    #     start=start_date,
-    #     end=end_date,
-    #     progress=True,
-    #     auto_adjust=False,
-    #     back_adjust=False,
-    # )
-    # aligned_copper = pd.DataFrame(columns=copper.columns)
-    # for column in copper.columns.levels[0]:
-    #     aligned_copper[column, "HG=F"] = align_financial_dataframes(
-    #         {column: copper},
-    #         target_column=column,
-    #         fill_method="ffill",
-    #         min_date=start_date,
-    #         max_date=end_date,
-    # )
-    # copper = aligned_copper
-    # copper = copper.to_numpy()[:, 1:2]
-    # copper = torch.tensor(copper, dtype=torch.float32)
-    # copper = copper.transpose(0, 1)
-    # copper = copper.unsqueeze(-1)
-    # copper = copper.expand(copper.shape[0], copper.shape[1], len(tickers))
-    # full_data = torch.cat((full_data, copper), dim=0)
-    # columns.extend(["copper_close"])
+    copper = yf.download(
+        "HG=F",
+        start=start_date,
+        end=end_date,
+        progress=True,
+        auto_adjust=False,
+        back_adjust=False,
+    )
+    aligned_copper = pd.DataFrame(columns=copper.columns)
+    for column in copper.columns.levels[0]:
+        aligned_copper[column, "HG=F"] = align_financial_dataframes(
+            {column: copper},
+            target_column=column,
+            fill_method="ffill",
+            min_date=start_date,
+            max_date=end_date,
+    )
+    copper = aligned_copper
+    copper = copper.to_numpy()[:, 1:]
+    copper = torch.tensor(copper, dtype=torch.float32)
+    copper = copper.transpose(0, 1)
+    copper = copper.unsqueeze(-1)
+    copper = copper.expand(copper.shape[0], copper.shape[1], len(tickers))
+    full_data = torch.cat((full_data, copper), dim=0)
+    columns.extend(["copper_close", "copper_open", "copper_high", "copper_low", "copper_volume"])
 
     # silver = yf.download(
     #     "SI=F",
@@ -754,7 +715,6 @@ def download_numerical_financial_data(
     # full_data = torch.cat((full_data, adr_data), dim=0)
     # columns.extend(adr_columns)
 
-    # TODO macd, ad_old, vpt_old, chaikin_old, stockastic_osc, chaikin_standard,  etc.
 
     # bollinger_data, bollinger_columns = feature_bollinger_bands_returns(full_data[0:1, :, :], prefix="close_returns_")
     # full_data = torch.cat((full_data, bollinger_data), dim=0)
@@ -764,14 +724,14 @@ def download_numerical_financial_data(
     # full_data = torch.cat((full_data, bollinger_data), dim=0)
     # columns.extend(bollinger_columns)
 
-    full_macd = []
-    for i in range(len(tickers)):
-      macd_data, macd_columns = feature_macd(raw_data[0, :, i], prefix="close_")
-      full_macd.append(macd_data)
-    full_data = torch.cat((full_data, torch.stack(full_macd, dim=-1)), dim=0)
-    columns.extend(macd_columns)
+    # full_macd = []
+    # for i in range(len(tickers)):
+    #   macd_data, macd_columns = feature_macd(raw_data[0, :, i], prefix="close_")
+    #   full_macd.append(macd_data)
+    # full_data = torch.cat((full_data, torch.stack(full_macd, dim=-1)), dim=0)
+    # columns.extend(macd_columns)
 
-    # clv = calculate_close_line_values(raw_data[0:1, :, :], raw_data[1:2, :, :], raw_data[2:3, :, :])
+    clv = calculate_close_line_values(raw_data[0:1, :, :], raw_data[1:2, :, :], raw_data[2:3, :, :])
     # ad_old_data, ad_old_columns = feature_ad_old(clv, raw_data[4:5, :, :])
     # full_data = torch.cat((full_data, ad_old_data), dim=0)
     # columns.extend(ad_old_columns)
@@ -1930,19 +1890,7 @@ def calculate_wider_economics_indicators(indicator: torch.Tensor, indicator_name
     return indicator_data, indicator_columns
 
 
-# D. Broader Market / Economic Indicators (using yfinance):
-# You're already using VIX. Consider adding:
-# Interest Rates:
-# 10-Year Treasury Yield (^TNX)
-# 2-Year Treasury Yield (^FVX)
-# Federal Funds Rate (might need a different source or find a proxy ETF if daily updates are needed, e.g., FEDFUNDS from FRED, but yfinance might not have it directly).
-# Processing: Download their historical series. Calculate returns/changes, SMAs, EMAs just like you did for VIX. Concatenate these to your data tensor, repeating for each stock (similar to VIX).
-# Commodity Prices:
-# Crude Oil (CL=F)
-# Gold (GC=F)
-# Process these like VIX/Interest Rates.
-# US Dollar Index (DX-Y.NYB):
-# Can indicate risk-on/risk-off sentiment or international capital flows.
+
 # E. Fundamental Data (More Involved - yf.Ticker().info, .financials, etc.):
 # Examples: P/E Ratio, EPS, P/S Ratio, Dividend Yield, Market Cap, Beta.
 # Challenge: This data is usually reported quarterly or annually.
@@ -1954,6 +1902,7 @@ def calculate_wider_economics_indicators(indicator: torch.Tensor, indicator_name
 # Merge these daily-aligned fundamental features with your existing temp_data.
 # Normalization: Fundamental ratios can have very different scales, so normalization will be key.
 # This is a significant addition and requires careful data handling and alignment.
+
 # F. Feature Interactions & Relative Strength:
 # Stock Return vs. Market Return (Alpha Component):
 # You're already downloading ^GSPC (S&P 500) as one of your tickers. If ^GSPC is at index j in your tickers list:
@@ -1971,8 +1920,6 @@ def calculate_wider_economics_indicators(indicator: torch.Tensor, indicator_name
 # stock_volatility_feature - vix_feature (after both are on comparable scales/forms, e.g., both as % or normalized).
 
 
-# Okay, it sounds like you've diligently expanded your feature set with solid technical and time-based indicators! It's common for individual feature additions to yield incremental rather than breakthrough improvements, especially if the model was already reasonably good or if the new features have some overlapping information with existing ones.
-# Now that you have a rich set of intra-stock and basic market context (VIX) features, the next logical steps involve:
 # Deeper Contextual Understanding (More Market & Economic Data): The market doesn't operate in a vacuum.
 # Capturing Cross-Asset Relationships (If Applicable): How stocks influence each other.
 # Fundamental Data (A Bigger Step): Company-specific financial health.
@@ -1983,21 +1930,8 @@ def calculate_wider_economics_indicators(indicator: torch.Tensor, indicator_name
 # You've got VIX. Expand this to other macro factors. This is often where significant, less correlated signals can be found.
 # 1. Interest Rates (Crucial):
 # Why: Rates affect discount rates, company borrowing costs, economic growth expectations, and sector rotations.
-# Data:
-# US Treasury Yields: Fetch via yfinance:
-# 10-Year Treasury Yield: ^TNX
-# 5-Year Treasury Yield: ^FVX
-# 2-Year Treasury Yield: ^IRX (often represents short-term rate expectations)
-# (Possibly) 3-Month Treasury Bill: ^BIL (or similar ETF)
-# Yield Curve Spreads: Calculate spreads between these, e.g.:
-# Spread_10Y_2Y = ^TNX - ^IRX (A common recession indicator when it inverts)
-# Spread_10Y_3M
-# Processing:
-# Download their historical series.
-# Calculate changes or returns in these rates/spreads (rates are already percentages, so a simple difference rate_t - rate_t-1 is often used).
-# Also, consider their SMAs, EMAs.
-# Concatenate these derived rate features to your data tensor, repeating for each stock (just like you did for VIX).
-# Column Names: Add appropriate names like vix_Close, vix_Returns, tnx_Close, tnx_Change, spread_10y_2y_Value.
+
+
 # 2. Commodity Prices:
 # Why: Can indicate inflation, industrial demand, and global economic health.
 # Data:
@@ -2015,56 +1949,13 @@ def calculate_wider_economics_indicators(indicator: torch.Tensor, indicator_name
 # II. Advanced Feature Engineering & Interaction Terms (using existing & new features):
 # Once you have more contextual features, you can create interaction terms or relative strength indicators.
 # 1. Stock Return vs. Market Return (Relative Strength / "Alpha"):
-# You have individual stock returns and (if ^GSPC is one of your tickers) S&P 500 returns.
-# Feature: Stock_Return_t - Market_Return_t
-# This explicitly tells the model how much a stock is outperforming or underperforming the market on a given day. This can be a powerful feature.
-# Implementation:
-# Calculate this after you have the base return for each stock and the market index.
-# This feature will be specific to each stock (except for the market index itself, where it would be 0).
-# You'll need to add this as a new feature row in your data tensor. If data is (features, time, target_dim, tickers), you'd compute this and then torch.cat it along the features dimension. Ensure the new column names are added.
+
 # 2. Volatility Spreads / Ratios:
 # Stock HV vs. VIX: Normalized_Stock_HV_t - Normalized_VIX_t (or ratio). Is the stock more or less volatile than its typical relationship with market volatility?
 # Short-term HV vs. Long-term HV for the same stock: HV_10_day / HV_50_day. Can indicate changing volatility regimes for the stock.
-# 3. Distance from Moving Averages (Normalized):
-# You have SMAs. A useful feature is how far the current price (or return) is from its moving average, normalized by volatility or the MA itself.
-# Distance_SMA20 = (Close_Price_t - SMA20_t) / SMA20_t
-# Or Distance_SMA20_Vol_Normalized = (Close_Price_t - SMA20_t) / ATR_t
-# This quantifies "overbought/oversold" relative to a trend.
+
 # III. Model Architecture & Training Considerations (Briefly):
 # Capacity: With more features, ensure your d_model is sufficiently large to create rich embeddings. If you have ~100 features, a d_model of 128-256 might be reasonable.
 # Normalization within Model: nn.RMSNorm is good. Ensure it's applied appropriately.
 # Attention Mechanism: Money_former_DINT suggests you're using a custom attention. Ensure it can effectively route and weigh information from these diverse feature types.
 # Learning Rate & Schedule: Adding many new features might sometimes require a bit more warmup or a slightly different learning rate initially as the model learns to incorporate new information streams.
-# Implementation Steps in stocks_time_series_2.py:
-# Add New Tickers for Macro Data:
-# In download_numerical_financial_data, modify the initial yf.download to include ^TNX, ^FVX, ^IRX, CL=F, GC=F, DX-Y.NYB alongside your existing stock tickers and ^VIX.
-# yfinance will return a MultiIndex DataFrame. You'll need to carefully extract the 'Close' price (or relevant price) for these new instruments.
-# Process Macro Data:
-# After downloading, loop through these new macro symbols.
-# Calculate their changes/returns, SMAs, EMAs.
-# Store these as separate tensors (e.g., tnx_features (num_tnx_derived_features, time), oil_features, etc.).
-# For each individual stock in your main loop (for i in range(len(tickers)):), you will torch.cat these macro feature tensors (repeated or aligned) to that stock's temp_data.
-# This means if a stock's data starts later than the macro data, you'll need to align them by date index first. This is the trickiest part – ensuring all time series are correctly aligned before concatenation.
-# Alternatively, process all stocks first to get your data (features, time, target_dim, tickers) tensor. Then, process macro features separately to get macro_data (macro_features, time, target_dim, 1). Then, tile macro_data along the tickers dimension and torch.cat it to data along the features dimension. This requires careful date alignment between data and macro_data before the cat.
-# Calculate Relative Strength/Interaction Features:
-# This is best done after all base individual stock features and global macro features have been assembled into a primary data tensor.
-# Example for stock return vs market return:
-# # Assuming 'data' is (features, time, target_dim_in_feat, tickers)
-# # And you know the feature index for 'returns' (e.g., RETURN_FEAT_IDX)
-# # And you know the ticker index for S&P 500 (e.g., GSPC_TICKER_IDX)
-
-# stock_returns = data[RETURN_FEAT_IDX, :, 0, :] # Assuming target_dim_in_feat=0 for base returns
-# market_returns = data[RETURN_FEAT_IDX, :, 0, GSPC_TICKER_IDX].unsqueeze(-1) # Keep as (time, 1)
-
-# alpha_features = stock_returns - market_returns.repeat(1, data.shape[3]) # (time, tickers)
-# alpha_features[:, GSPC_TICKER_IDX] = 0 # Alpha of market against itself is 0
-
-# # Reshape alpha_features to (1, time, 1, tickers) to cat with data
-# alpha_features = alpha_features.unsqueeze(0).unsqueeze(2)
-# data = torch.cat((data, alpha_features), dim=0)
-# columns.append("Alpha_vs_Market")
-# Prioritize:
-# Interest Rates: These are often very influential. Start with 10Y and 2Y yields and their spread.
-# Key Commodities: Oil and Gold.
-# Relative Strength (Stock vs. Market): This is a direct measure of individual performance.
-# Adding these will significantly enrich the context your model has, potentially allowing it to uncover more nuanced predictive relationships. Remember that data alignment (dates) is the most critical and often trickiest part when combining different series. Your existing structure where VIX is repeated for each stock is a good pattern to follow for other global macro features.

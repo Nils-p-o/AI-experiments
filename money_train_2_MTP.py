@@ -113,7 +113,7 @@ def proceed(args: argparse.Namespace):
         name = name + "_" + extra_descriptor
 
     logger = TensorBoardLogger(
-        "lightning_logs",
+        "Money_logs",
         name=name,  # seq, d_model, d_ff mult, num_layers, nhead
     )  # Optional logging
     # --- Data Loading ---
