@@ -19,6 +19,7 @@
     "t_total": 5000,
     "indices_to_predict": [1, 2, 3],
     "predict_gaussian": false,
+    "unique_inputs_ratio": [1,1],
     "input_features": 0,
     "tickers": ["AAPL","^GSPC", "MSFT", "INTC", "NVDA", "AMZN"],
     "orthograd":false,
@@ -27,6 +28,6 @@
     "dataset":"Money",
     "type": "",
     "extra_descriptor":"",
-    "experiment_notes": "all good global znorm features so far (vpt_chlo, ppo_chlov, clv, vix_chlo, copper_chlov) , ema's of chlov returns, global znorm volatility (ret, from c), returns, time data, bias, global znorm, sus in architecture (but it gives better results, so)",
+    "experiment_notes": "unique input ratio 1, all good global znorm features so far (vpt_chlo, ppo_chlov, clv, vix_chlo, copper_chlov, emas of chlov returns, vol of c returns)",
     "folder_name": "post_causality_fix/tests/MTP_preds/3bee_6tickers/"
 }

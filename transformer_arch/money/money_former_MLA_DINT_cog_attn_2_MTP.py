@@ -33,12 +33,15 @@ class Money_former_MLA_DINT_cog_attn_MTP(nn.Module): # TODO MTP blocks
         self.input_features = args.input_features
 
         self.ticker_embedding = nn.Embedding(len(args.tickers), self.d_model)
+        self.shared_value_input_dim = (self.d_model // sum(args.unique_inputs_ratio) * args.unique_inputs_ratio[1])
         self.shared_value_input = nn.Linear(
-            self.input_features, (self.d_model // 4 * 3), bias=args.bias
+            self.input_features, self.shared_value_input_dim, bias=args.bias
         )
+
+        self.unique_value_input_dim = (self.d_model // sum(args.unique_inputs_ratio) * args.unique_inputs_ratio[0])
         self.unique_value_input = nn.ModuleList(
             [
-                nn.Linear(self.input_features, (self.d_model // 4), bias=args.bias)
+                nn.Linear(self.input_features, self.unique_value_input_dim, bias=args.bias)
                 for _ in range(len(args.tickers))
             ]
         )
@@ -104,7 +107,7 @@ class Money_former_MLA_DINT_cog_attn_MTP(nn.Module): # TODO MTP blocks
         batch_size, targets, seq_len, num_sequences, _ = x.size()
         shared_temp_x = self.shared_value_input(x)
         unique_temp_x = torch.zeros(
-            batch_size, targets, seq_len, num_sequences, self.d_model // 4, device=x.device
+            batch_size, targets, seq_len, num_sequences, self.unique_value_input_dim
         )
         for i in range(num_sequences):
             unique_temp_x[:, :, :, i, :] = self.unique_value_input[i](x[:, :, :, i, :])
