@@ -118,7 +118,8 @@ def proceed(args: argparse.Namespace):
     )  # Optional logging
     # --- Data Loading ---
     if args.dataset == "Money":  # yahoo finance stock data
-        download_numerical_financial_data(
+
+        args.normalization_means, args.normalization_stds = download_numerical_financial_data(
             tickers=args.tickers,
             seq_len=seq_len,
             check_if_already_downloaded=False,  # TODO make this better/check which features are missing
@@ -185,15 +186,15 @@ def proceed(args: argparse.Namespace):
     # Checkpointing
     checkpoint_callback = ModelCheckpoint(
         dirpath="checkpoints/",
-        filename="{name}-{epoch}-{val_loss:.2f}-{val_perplexity:.2f}",
+        filename="{name}-{epoch}-{val_loss:.2f}",
         save_top_k=3,
-        monitor="Loss/val_loss",
+        monitor="Losses_seen_unseen/val_loss_unseen",
         mode="min",
     )
 
     # Early Stopping
     early_stopping_callback = EarlyStopping(
-        monitor="Loss/val_loss", patience=1000, verbose=True, mode="min"
+        monitor="Losses_seen_unseen/val_loss_unseen", patience=1000, verbose=True, mode="min"
     )
 
     trainer = pl.Trainer(

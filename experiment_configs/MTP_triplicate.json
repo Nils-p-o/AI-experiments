@@ -20,7 +20,7 @@
     "indices_to_predict": [1, 2, 3],
     "predict_gaussian": false,
     "input_features": 0,
-    "tickers": ["AAPL","^GSPC"],
+    "tickers": ["AAPL","^GSPC", "MSFT", "INTC", "NVDA", "AMZN"],
     "orthograd":false,
     "bias": true,
     "dtype":"fp32",
@@ -28,5 +28,5 @@
     "type": "",
     "extra_descriptor":"",
     "experiment_notes": "all good global znorm features so far (vpt_chlo, ppo_chlov, clv, vix_chlo, copper_chlov) , ema's of chlov returns, global znorm volatility (ret, from c), returns, time data, bias, global znorm, sus in architecture (but it gives better results, so)",
-    "folder_name": "post_causality_fix/tests/MTP_feats/3_base_ema_everything_/"
+    "folder_name": "post_causality_fix/tests/MTP_preds/3bee_6tickers/"
 }

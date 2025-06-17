@@ -465,22 +465,22 @@ class MoneyExperiment(pl.LightningModule):
                 for i in range(len(self.pred_indices)):
                     seen_current_preds = preds[:, :, :-1, i, :]
                     seen_current_targets = targets[:, :, :-1, i, :]
-                    seen_MSE = self.MSE(seen_current_preds, seen_current_targets)
+                    # seen_MSE = self.MSE(seen_current_preds, seen_current_targets)
                     seen_MAE = self.MAE(seen_current_preds, seen_current_targets)
 
                     unseen_current_preds = preds[:, :, -1:, i, :]
                     unseen_current_targets = targets[:, :, -1:, i, :]
-                    unseen_MSE = self.MSE(unseen_current_preds, unseen_current_targets)
+                    # unseen_MSE = self.MSE(unseen_current_preds, unseen_current_targets)
                     unseen_MAE = self.MAE(unseen_current_preds, unseen_current_targets)
 
-                    relative_MSE = unseen_MSE / (seen_MSE + 1e-6)
+                    # relative_MSE = unseen_MSE / (seen_MSE + 1e-6)
                     relative_MAE = unseen_MAE / (seen_MAE + 1e-6)
 
-                    self.log(
-                        f"Split_Error/{stage}_relative_MSE_{self.pred_indices[i]}",
-                        relative_MSE,
-                        **current_log_opts,
-                    )
+                    # self.log(
+                    #     f"Split_Error/{stage}_relative_MSE_{self.pred_indices[i]}",
+                    #     relative_MSE,
+                    #     **current_log_opts,
+                    # )
                     self.log(
                         f"Split_Error/{stage}_relative_MAE_{self.pred_indices[i]}",
                         relative_MAE,
@@ -619,85 +619,26 @@ class MoneyExperiment(pl.LightningModule):
                     **current_log_opts,
                 )
 
-                # # log relative losses per target
-                # temp_naive_MSE = self.MSE(
-                #     torch.zeros_like(current_target_targets), current_target_targets
-                # )
-                # temp_naive_MAE = self.MAE(
-                #     torch.zeros_like(current_target_targets), current_target_targets
-                # )
-                # temp_MSSE = temp_MSE / (temp_naive_MSE + 1e-6)
-                # temp_MASE = temp_MAE / (temp_naive_MAE + 1e-6)
-                # self.log(
-                #     f"Relative_Losses_target/{stage}_target_{self.pred_indices[i]}_MSSE",
-                #     temp_MSSE,
-                #     **current_log_opts,
-                # )
-                # self.log(
-                #     f"Relative_Losses_target/{stage}_target_{self.pred_indices[i]}_MASE",
-                #     temp_MASE,
-                #     **current_log_opts,
-                # )
-                # # log loss by target
-                # temp_loss = self.loss_fn(current_target_preds, current_target_targets)
-                # temp_loss = temp_loss / (temp_naive_MSE + 1e-6)
-                # temp_loss = temp_loss / (acc_target[i] + 1e-6)
-                # self.log(
-                #     f"Losses_target/{stage}_target_{self.pred_indices[i]}",
-                #     temp_loss,
-                #     **current_log_opts,
-                # )
+            for i in range(self.num_sequences):
+                seen_current_preds = preds[:, :, :-1, :, i]
+                seen_current_targets = targets[:, :, :-1, :, i]
+                seen_MAE = self.MAE(seen_current_preds, seen_current_targets)
 
-            # for i in range(self.num_sequences):
-            #     self.log(
-            #         f"Target_Accuracy/{stage}_sequence_{self.tickers[i]}",
-            #         acc_sequence[i],
-            #         **current_log_opts,
-            #     )
-            #     # Log losses per sequence
-            #     current_seq_preds = preds[:, :, :, i : i + 1]
-            #     current_seq_targets = targets[:, :, :, i : i + 1]
-            #     temp_MSE = self.MSE(current_seq_preds, current_seq_targets)
-            #     temp_MAE = self.MAE(current_seq_preds, current_seq_targets)
-            #     self.log(
-            #         f"Losses_sequence/{stage}_sequence_{i}_MSE",
-            #         temp_MSE,
-            #         **current_log_opts,
-            #     )
-            #     self.log(
-            #         f"Losses_sequence/{stage}_sequence_{i}_MAE",
-            #         temp_MAE,
-            #         **current_log_opts,
-            #     )
+                unseen_current_preds = preds[:, :, -1:, :, i]
+                unseen_current_targets = targets[:, :, -1:, :, i]
+                unseen_MAE = self.MAE(unseen_current_preds, unseen_current_targets)
 
-            #     # log relative losses per sequence
-            #     temp_naive_MSE = self.MSE(
-            #         torch.zeros_like(current_seq_targets), current_seq_targets
-            #     )
-            #     temp_naive_MAE = self.MAE(
-            #         torch.zeros_like(current_seq_targets), current_seq_targets
-            #     )
-            #     temp_MSSE = temp_MSE / (temp_naive_MSE + 1e-6)
-            #     temp_MASE = temp_MAE / (temp_naive_MAE + 1e-6)
-            #     self.log(
-            #         f"Relative_Losses_sequence/{stage}_sequence_{self.tickers[i]}_MSSE",
-            #         temp_MSSE,
-            #         **current_log_opts,
-            #     )
-            #     self.log(
-            #         f"Relative_Losses_sequence/{stage}_sequence_{self.tickers[i]}_MASE",
-            #         temp_MASE,
-            #         **current_log_opts,
-            #     )
-            #     # log loss by sequence
-            #     temp_loss = self.loss_fn(current_seq_preds, current_seq_targets)
-            #     temp_loss = temp_loss / (temp_naive_MSE + 1e-6)
-            #     temp_loss = temp_loss / (acc_sequence[i] + 1e-6)
-            #     self.log(
-            #         f"Losses_sequence/{stage}_sequence_{self.tickers[i]}",
-            #         temp_loss,
-            #         **current_log_opts,
-            #     )
+                self.log(
+                    f"Split_Error/{stage}_seen_{self.tickers[i]}_MAE",
+                    seen_MAE,
+                    **current_log_opts,
+                )
+                self.log(
+                    f"Split_Error/{stage}_unseen_{self.tickers[i]}_MAE",
+                    unseen_MAE,
+                    **current_log_opts,
+                )
+
 
             if stage == "train":
                 cummulative_times["metrics"] += (

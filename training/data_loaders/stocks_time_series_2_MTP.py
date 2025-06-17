@@ -12,17 +12,9 @@ import pandas as pd
 # TODO add indicators and other metrics (diluted EPS, etc.)
 
 # TODO noise
-# TODO potentially different shape for storage (already in sequence chunks) (precompute z-norm and such?)
 
 # TODO save means and stds for inference
 # TODO comparison metrics for later
-
-
-# mfi was actually pos mfr
-# ad index is supposed to be infinite lookback
-# ^^ vpt too
-# avg true range was just sma of daily range
-# adr was wrong
 
 
 class FinancialNumericalDataset(Dataset):
@@ -227,9 +219,6 @@ def download_numerical_financial_data(
     )  # (Time, Features, tickers)
     raw_data = raw_data.transpose(0, 1)  # (Features, Time series, tickers)
 
-    # TODO write somewhere else, maybe in another function
-
-    # TODO rewrite without for loop over tickers (adapt calculate functions for multiple tickers at once)
     raw_data = raw_data[1:, :, :]
     columns = columns[1:]
 
@@ -731,7 +720,7 @@ def download_numerical_financial_data(
     # full_data = torch.cat((full_data, torch.stack(full_macd, dim=-1)), dim=0)
     # columns.extend(macd_columns)
 
-    clv = calculate_close_line_values(raw_data[0:1, :, :], raw_data[1:2, :, :], raw_data[2:3, :, :])
+    # clv = calculate_close_line_values(raw_data[0:1, :, :], raw_data[1:2, :, :], raw_data[2:3, :, :])
     # ad_old_data, ad_old_columns = feature_ad_old(clv, raw_data[4:5, :, :])
     # full_data = torch.cat((full_data, ad_old_data), dim=0)
     # columns.extend(ad_old_columns)
@@ -820,24 +809,12 @@ def download_numerical_financial_data(
     train_data[: -15] = (train_data[: -15] - means) / (stds + 1e-8)
     val_data[: -15] = (val_data[: -15] - means) / (stds + 1e-8)
     test_data[: -15] = (test_data[: -15] - means) / (stds + 1e-8)
-    # means_close_ret = means[:1]
-    # stds_close_ret = stds[:1]
-    # train_data[:len(target_dates)] = (train_data[:len(target_dates)] - means_close_ret) / stds_close_ret
-    # val_data[:len(target_dates)] = (val_data[:len(target_dates)] - means_close_ret) / stds_close_ret
-    # test_data[:len(target_dates)] = (test_data[:len(target_dates)] - means_close_ret) / stds_close_ret
 
     MTP_targets = (MTP_targets - means[:5]) / stds[:5]
 
     train_MTP_targets, val_MTP_targets, test_MTP_targets = torch.split(
         MTP_targets, [train_data_length, val_data_length, test_data_length], dim=2
     )
-    # train_MTP_targets = (train_MTP_targets - means.unsqueeze(0)) / stds.unsqueeze(0)
-    # val_MTP_targets = (val_MTP_targets - means.unsqueeze(0)) / stds.unsqueeze(0)
-    # test_MTP_targets = (test_MTP_targets - means.unsqueeze(0)) / stds.unsqueeze(0) 
-
-    # train_data = torch.cat([train_data, means_close_ret.repeat(1, train_data.shape[1], 1), stds_close_ret.repeat(1, train_data.shape[1], 1)], dim=0)
-    # val_data = torch.cat([val_data, means_close_ret.repeat(1, val_data.shape[1], 1), stds_close_ret.repeat(1, val_data.shape[1], 1)], dim=0)
-    # test_data = torch.cat([test_data, means_close_ret.repeat(1, test_data.shape[1], 1), stds_close_ret.repeat(1, test_data.shape[1], 1)], dim=0)
 
     save_indexes_to_csv(train_indexes, os.path.join(output_dir, "train.csv"))
     save_indexes_to_csv(val_indexes, os.path.join(output_dir, "val.csv"))
@@ -869,6 +846,8 @@ def download_numerical_financial_data(
 
     with open(os.path.join(output_dir, "metadata.json"), "w") as f:
         json.dump(metadata, f, indent=4)
+    
+    return means[:, 0,0,:].tolist(), stds[:, 0,0,:].tolist()
 
 
 if __name__ == "__main__":
@@ -1923,32 +1902,8 @@ def calculate_wider_economics_indicators(indicator: torch.Tensor, indicator_name
 # Deeper Contextual Understanding (More Market & Economic Data): The market doesn't operate in a vacuum.
 # Capturing Cross-Asset Relationships (If Applicable): How stocks influence each other.
 # Fundamental Data (A Bigger Step): Company-specific financial health.
-# Advanced Feature Engineering & Interaction Terms: Creating more sophisticated signals.
-# Model Architecture and Training Refinements: Ensuring your model can effectively use the features.
-# Let's focus on a few high-impact areas from these.
-# I. Deeper Contextual Understanding (More Market & Economic Data):
-# You've got VIX. Expand this to other macro factors. This is often where significant, less correlated signals can be found.
 # 1. Interest Rates (Crucial):
 # Why: Rates affect discount rates, company borrowing costs, economic growth expectations, and sector rotations.
-
-
-# 2. Commodity Prices:
-# Why: Can indicate inflation, industrial demand, and global economic health.
-# Data:
-# Crude Oil Futures: CL=F
-# Gold Futures: GC=F
-# (Optional) Copper Futures: HG=F (often seen as an economic bellwether, "Dr. Copper")
-# Processing:
-# Calculate returns or log returns.
-# SMAs, EMAs of these returns or prices.
-# Add to your global context features, repeated per stock.
-# 3. US Dollar Index (DXY):
-# Why: Affects multinational company earnings, commodity prices, and capital flows.
-# Data: DX-Y.NYB (ICE US Dollar Index Futures)
-# Processing: Returns, SMAs, EMAs.
-# II. Advanced Feature Engineering & Interaction Terms (using existing & new features):
-# Once you have more contextual features, you can create interaction terms or relative strength indicators.
-# 1. Stock Return vs. Market Return (Relative Strength / "Alpha"):
 
 # 2. Volatility Spreads / Ratios:
 # Stock HV vs. VIX: Normalized_Stock_HV_t - Normalized_VIX_t (or ratio). Is the stock more or less volatile than its typical relationship with market volatility?
