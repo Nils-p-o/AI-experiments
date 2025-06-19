@@ -164,6 +164,82 @@ def save_indexes_to_csv(indexes, output_file):
     with open(output_file, "w") as f:
         f.write("\n".join(str(s) for s in indexes))
 
+def download_with_retry(tickers, max_retries=5, delay_seconds=3, **kwargs):
+    """
+    Downloads data from Yahoo Finance with a robust retry mechanism that handles
+    partial failures while preserving the default column structure (OHLCV, Ticker).
+
+    Args:
+        tickers (str or list): A single ticker string or a list of ticker strings.
+        max_retries (int): The maximum number of download attempts.
+        delay_seconds (int): The number of seconds to wait between retries.
+        **kwargs: Additional keyword arguments to pass to yf.download().
+
+    Returns:
+        pd.DataFrame: A DataFrame containing the data. For multiple tickers,
+                      columns are a MultiIndex with OHLCV at level 0 and tickers at level 1.
+
+    Raises:
+        Exception: Re-raises the last caught exception if all retries fail.
+    """
+    requested_tickers = [tickers] if isinstance(tickers, str) else tickers
+    last_exception = None
+
+    if 'progress' not in kwargs:
+        kwargs['progress'] = False
+
+    for attempt in range(max_retries):
+        try:
+            print(f"Attempt {attempt + 1}/{max_retries} to download data for: {requested_tickers}...")
+            # DO NOT use group_by='ticker' to preserve the desired (OHLCV, Ticker) structure
+            data = yf.download(tickers, **kwargs)
+
+            # --- ROBUST VALIDATION STEP ---
+
+            # 1. Check for a completely empty DataFrame (total failure)
+            if data.empty:
+                raise ValueError("Downloaded data is empty.")
+
+            # 2. Check for partial failures by validating each ticker's data
+            failed_tickers = []
+            if len(requested_tickers) > 1:
+                # Multi-ticker case: DataFrame has MultiIndex columns
+                downloaded_tickers = data.columns.get_level_values(1)
+                for ticker in requested_tickers:
+                    if ticker not in downloaded_tickers:
+                        # Ticker is completely missing from the result
+                        failed_tickers.append(ticker)
+                    else:
+                        # Ticker is present, check if its data is all NaN
+                        # Use xs() to select the cross-section for this ticker
+                        ticker_data = data.xs(ticker, level=1, axis=1)
+                        if ticker_data.isnull().all().all():
+                            failed_tickers.append(ticker)
+            else:
+                # Single-ticker case: DataFrame has simple columns
+                if data.isnull().all().all():
+                    failed_tickers.append(requested_tickers[0])
+
+            if failed_tickers:
+                raise ValueError(f"Data for tickers failed (all NaN or missing): {failed_tickers}")
+            
+            # If we reach here, all checks passed.
+            print("Download successful for all requested tickers.")
+            return data
+
+        except Exception as e:
+            print(f"Download attempt {attempt + 1} failed: {e}")
+            last_exception = e
+            if attempt < max_retries - 1:
+                print(f"Retrying in {delay_seconds} seconds...")
+                time.sleep(delay_seconds)
+            else:
+                print(f"Failed to download data after {max_retries} attempts.")
+                if last_exception:
+                    raise last_exception
+                raise Exception("All download retries failed.")
+    
+    return pd.DataFrame()
 
 def download_numerical_financial_data(
     tickers: List[str],
@@ -182,14 +258,9 @@ def download_numerical_financial_data(
     if check_if_already_downloaded and is_already_downloaded(tickers, output_dir):
         print("Data already downloaded.")
         return
-    # download all available data by default
-    raw_data = yf.download(
-        tickers,
-        start=start_date,
-        end=end_date,
-        progress=True,
-        auto_adjust=False,
-        back_adjust=False,
+    
+    raw_data = download_with_retry(
+        tickers, start=start_date, end=end_date, progress=True, auto_adjust=False, back_adjust=False,
     )
     aligned_raw_data = pd.DataFrame(columns=raw_data.columns)
     for i in range(len(tickers)):
@@ -403,8 +474,11 @@ def download_numerical_financial_data(
     full_data = torch.cat((full_data, clv_data), dim=0)
     columns.extend(["clv"])
 
-    vix_data = yf.download(
-        "^VIX", start=start_date, end=end_date, progress=False, auto_adjust=False
+    # vix_data = yf.download(
+    #     "^VIX", start=start_date, end=end_date, progress=False, auto_adjust=False
+    # )
+    vix_data = download_with_retry(
+        "^VIX", start=start_date, end=end_date, progress=True, auto_adjust=False
     )
     aligned_vix_data = pd.DataFrame(columns=vix_data.columns)
     for column in vix_data.columns.levels[0]:
@@ -561,7 +635,7 @@ def download_numerical_financial_data(
     # full_data = torch.cat((full_data, crude_oil), dim=0)
     # columns.extend(["crude_oil_close", "crude_oil_open", "crude_oil_high", "crude_oil_low", "crude_oil_volume"])
 
-    copper = yf.download(
+    copper = download_with_retry(
         "HG=F",
         start=start_date,
         end=end_date,

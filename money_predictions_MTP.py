@@ -11,6 +11,7 @@ import yfinance as yf
 import matplotlib.pyplot as plt # For plotting later
 import yaml
 import math
+import time
 
 # Assuming your project structure allows these imports
 from transformer_arch.money.money_former_MLA_DINT_cog_attn_2_MTP import Money_former_MLA_DINT_cog_attn_MTP
@@ -32,75 +33,82 @@ OPTIMIZATION_INITIAL_CAPITAL = 100000.0
 OPTIMIZATION_TRANSACTION_COST = 0.0005
 OPTIMIZATION_SIGNAL_HORIZON_NAME = "1-day (Opt.)"
 
-# def load_config_and_args_from_metadata(metadata_path):
-#     """Loads experiment configuration from metadata.json"""
-#     if not os.path.exists(metadata_path):
-#         raise FileNotFoundError(f"Metadata file not found: {metadata_path}")
-#     with open(metadata_path, "r") as f:
-#         metadata = json.load(f)
+def download_with_retry(tickers, max_retries=5, delay_seconds=3, **kwargs):
+    """
+    Downloads data from Yahoo Finance with a robust retry mechanism that handles
+    partial failures while preserving the default column structure (OHLCV, Ticker).
+
+    Args:
+        tickers (str or list): A single ticker string or a list of ticker strings.
+        max_retries (int): The maximum number of download attempts.
+        delay_seconds (int): The number of seconds to wait between retries.
+        **kwargs: Additional keyword arguments to pass to yf.download().
+
+    Returns:
+        pd.DataFrame: A DataFrame containing the data. For multiple tickers,
+                      columns are a MultiIndex with OHLCV at level 0 and tickers at level 1.
+
+    Raises:
+        Exception: Re-raises the last caught exception if all retries fail.
+    """
+    requested_tickers = [tickers] if isinstance(tickers, str) else tickers
+    last_exception = None
+
+    if 'progress' not in kwargs:
+        kwargs['progress'] = False
+
+    for attempt in range(max_retries):
+        try:
+            print(f"Attempt {attempt + 1}/{max_retries} to download data for: {requested_tickers}...")
+            # DO NOT use group_by='ticker' to preserve the desired (OHLCV, Ticker) structure
+            data = yf.download(tickers, **kwargs)
+
+            # --- ROBUST VALIDATION STEP ---
+
+            # 1. Check for a completely empty DataFrame (total failure)
+            if data.empty:
+                raise ValueError("Downloaded data is empty.")
+
+            # 2. Check for partial failures by validating each ticker's data
+            failed_tickers = []
+            if len(requested_tickers) > 1:
+                # Multi-ticker case: DataFrame has MultiIndex columns
+                downloaded_tickers = data.columns.get_level_values(1)
+                for ticker in requested_tickers:
+                    if ticker not in downloaded_tickers:
+                        # Ticker is completely missing from the result
+                        failed_tickers.append(ticker)
+                    else:
+                        # Ticker is present, check if its data is all NaN
+                        # Use xs() to select the cross-section for this ticker
+                        ticker_data = data.xs(ticker, level=1, axis=1)
+                        if ticker_data.isnull().all().all():
+                            failed_tickers.append(ticker)
+            else:
+                # Single-ticker case: DataFrame has simple columns
+                if data.isnull().all().all():
+                    failed_tickers.append(requested_tickers[0])
+
+            if failed_tickers:
+                raise ValueError(f"Data for tickers failed (all NaN or missing): {failed_tickers}")
+            
+            # If we reach here, all checks passed.
+            print("Download successful for all requested tickers.")
+            return data
+
+        except Exception as e:
+            print(f"Download attempt {attempt + 1} failed: {e}")
+            last_exception = e
+            if attempt < max_retries - 1:
+                print(f"Retrying in {delay_seconds} seconds...")
+                time.sleep(delay_seconds)
+            else:
+                print(f"Failed to download data after {max_retries} attempts.")
+                if last_exception:
+                    raise last_exception
+                raise Exception("All download retries failed.")
     
-#     # Convert list for indices_to_predict back to list if it's not (JSON might make it so)
-#     if "indices_to_predict" in metadata and not isinstance(metadata["indices_to_predict"], list):
-#         try:
-#             # Attempt to parse if it's a string representation of a list
-#             parsed_indices = json.loads(metadata["indices_to_predict"].replace("'", "\""))
-#             metadata["indices_to_predict"] = parsed_indices
-#         except:
-#             # Fallback or raise error if parsing fails
-#             print(f"Warning: Could not parse indices_to_predict: {metadata['indices_to_predict']}")
-#             # You might want a default or to ensure it's always saved as a proper list
-#             if isinstance(metadata["indices_to_predict"], int): # If it was a single int
-#                  metadata["indices_to_predict"] = [metadata["indices_to_predict"]]
-
-
-#     # Reconstruct args Namespace. Some args might be in the root, others in 'args' sub-dict
-#     # Be flexible based on how your metadata.json is structured from training.
-#     # This is a common pattern if args were saved directly.
-#     args_dict = metadata.copy() 
-#     if 'args' in metadata: # If training script saved args under an 'args' key
-#         args_dict.update(metadata['args'])
-
-#     # Ensure essential args for model instantiation are present
-#     required_model_args = ['d_model', 'nhead', 'num_layers', 'd_ff', 'dropout', 
-#                            'input_features', 'tickers', 'indices_to_predict', 
-#                            'predict_gaussian', 'bias', 'head_dim', 
-#                            'kv_compression_dim', 'q_compression_dim', 'qk_rope_dim'] # Add all required by your MTP model
-    
-#     for req_arg in required_model_args:
-#         if req_arg not in args_dict:
-#             # Try to find it in the root of metadata if not in args_dict directly
-#             if req_arg in metadata:
-#                 args_dict[req_arg] = metadata[req_arg]
-#             else:
-#                 raise KeyError(f"Required argument '{req_arg}' not found in metadata or args dictionary.")
-
-#     # Convert to Namespace
-#     args_namespace = argparse.Namespace(**args_dict)
-    
-#     # Make sure critical fields from metadata are directly on args_namespace if model expects them
-#     args_namespace.tickers = metadata.get("tickers", args_namespace.tickers)
-#     args_namespace.indices_to_predict = metadata.get("indices_to_predict", args_namespace.indices_to_predict)
-#     args_namespace.input_features = metadata.get("input_features", args_namespace.input_features if hasattr(args_namespace, 'input_features') else len(metadata.get("columns", [])))
-    
-#     # Add normalization stats if saved (CRITICAL for MTP)
-#     if "normalization_means" in metadata and "normalization_stds" in metadata:
-#         args_namespace.normalization_means = torch.tensor(metadata["normalization_means"])
-#         args_namespace.normalization_stds = torch.tensor(metadata["normalization_stds"])
-#     else:
-#         print("Warning: Normalization stats not found in metadata. Loading raw data...")
-#         all_dates = open("time_series_data/train.csv", "r").readlines()
-#         args_namespace.start_date = all_dates[0]
-#         args_namespace.end_date = all_dates[-1]
-#         raw_data = yf.download(args_namespace.tickers, start=args_namespace.start_date, end=args_namespace.end_date, progress=True, auto_adjust=False, back_adjust=False)
-#         raw_data = torch.tensor(raw_data.values, dtype=torch.float32).reshape(
-#             -1, 6, len(args_namespace.tickers)
-#         )  # (Time, Features, tickers)
-#         raw_data = raw_data.transpose(0, 1)
-#         raw_data = raw_data[1:,:,:]
-#         args_namespace.normalization_means = torch.mean(raw_data, dim=1)
-#         args_namespace.normalization_stds = torch.std(raw_data, dim=1)
-
-#     return args_namespace
+    return pd.DataFrame()
 
 def load_config_and_args_from_metadata(metadata_path):
     """Loads experiment configuration from a YAML metadata file using FullLoader."""
@@ -225,9 +233,17 @@ def download_and_process_inference_data(args, start_date, end_date, seq_len_need
     print("Downloading and processing inference data...")
     tickers = args.tickers
     target_dates = args.indices_to_predict
+    # TODO add retry mechanism to downloads
 
-
-    raw_data = yf.download(
+    # raw_data = yf.download(
+    #     tickers,
+    #     start=start_date,
+    #     end=end_date,
+    #     progress=True,
+    #     auto_adjust=False,
+    #     back_adjust=False,
+    # )
+    raw_data = download_with_retry(
         tickers,
         start=start_date,
         end=end_date,
@@ -348,8 +364,11 @@ def download_and_process_inference_data(args, start_date, end_date, seq_len_need
     full_data = torch.cat((full_data, clv_data), dim=0)
     columns.extend(["clv"])
 
-    vix_data = yf.download(
-        "^VIX", start=start_date, end=end_date, progress=False, auto_adjust=False
+    # vix_data = yf.download(
+    #     "^VIX", start=start_date, end=end_date, progress=True, auto_adjust=False
+    # )
+    vix_data = download_with_retry(
+        "^VIX", start=start_date, end=end_date, progress=True, auto_adjust=False
     )
     aligned_vix_data = pd.DataFrame(columns=vix_data.columns)
     for column in vix_data.columns.levels[0]:
@@ -370,7 +389,15 @@ def download_and_process_inference_data(args, start_date, end_date, seq_len_need
     full_data = torch.cat((full_data, vix_data), dim=0)
     columns.extend(["vix_close", "vix_high", "vix_low", "vix_open"])
 
-    copper = yf.download(
+    # copper = yf.download(
+    #     "HG=F",
+    #     start=start_date,
+    #     end=end_date,
+    #     progress=True,
+    #     auto_adjust=False,
+    #     back_adjust=False,
+    # )
+    copper = download_with_retry(
         "HG=F",
         start=start_date,
         end=end_date,
@@ -426,126 +453,8 @@ def download_and_process_inference_data(args, start_date, end_date, seq_len_need
 
     return data, MTP_full, columns
 
-    # --- Placeholder Feature Engineering (to be replaced) ---
-    print("WARNING: Using placeholder data processing for inference. Implement full feature engineering.")
-    
-    # Fetching raw data (simplified for example)
-    raw_yf_data = yf.download(args.tickers, start=start_date_str, end=end_date_str, progress=False)
-    if raw_yf_data.empty or 'Close' not in raw_yf_data:
-        raise ValueError("Could not download sufficient data for inference.")
-    
-    # Assuming 'Close' prices are what we'll use for true_chlov_returns and a dummy feature
-    # In reality, you'd align and process all OHLCV for all tickers
-    
-    # For true_chlov_returns (used to calculate actual 1-day returns for backtest)
-    # We need nr_of_days_to_check + 1 prices.
-    # The processing length needs to be seq_len + nr_of_days_to_check
-    # Let's assume end_date_str is the last day OF the backtest.
-    # So we need prices from (end_date - (nr_of_days_to_check) days) to end_date.
-    # And for features, we need seq_len before the first prediction day.
-    
-    all_raw_prices_list = []
-    min_len = float('inf')
-    for ticker in args.tickers:
-        try:
-            # Ensure we get OHLCV for each ticker
-            ticker_data = raw_yf_data['Close'][ticker].ffill().bfill() # Example, get Close
-            if ticker_data.empty:
-                raise ValueError(f"No data for {ticker}")
-            all_raw_prices_list.append(ticker_data.values)
-            min_len = min(min_len, len(ticker_data.values))
-        except KeyError:
-            raise KeyError(f"Ticker {ticker} not found in downloaded YFinance data. Available: {raw_yf_data['Close'].columns}")
 
-
-    if not all_raw_prices_list:
-        raise ValueError("No price data could be processed.")
-
-    # Trim all series to the minimum common length from the end
-    all_raw_prices_np = np.array([s[-min_len:] for s in all_raw_prices_list]).T # (time, tickers)
-    true_prices_for_backtest = torch.from_numpy(all_raw_prices_np).float() # (time, tickers)
-
-    # Now, create dummy `full_input_features_mtp` based on `args.input_features`
-    # and `max(args.indices_to_predict)`
-    # The time dimension for this full_input_features_mtp should be `min_len - max(args.indices_to_predict)`
-    # because of how the MTP input is constructed.
-    mtp_time_dim = min_len - max(args.indices_to_predict)
-    if mtp_time_dim < seq_len_needed : # seq_len_needed is for the *input* to the model
-        raise ValueError(f"Not enough historical data to form sequences. Need {seq_len_needed} time steps for features, got {mtp_time_dim} after MTP structuring.")
-
-    # This is where your full feature pipeline from stocks_time_series_2_MTP.py goes
-    # For now, a placeholder:
-    # Let's assume 'full_data' (features, time, tickers) has been created.
-    # For this placeholder, let's just use returns as the only feature for all tickers.
-    dummy_full_data_returns = (true_prices_for_backtest[1:] - true_prices_for_backtest[:-1]) / (true_prices_for_backtest[:-1] + 1e-8)
-    dummy_full_data_returns = torch.cat([dummy_full_data_returns[0:1,:], dummy_full_data_returns], dim=0) # Pad first return
-    
-    # Expand to match args.input_features by repeating this single return feature
-    dummy_full_data = dummy_full_data_returns.T.unsqueeze(0).repeat(args.input_features, 1, 1)
-    # dummy_full_data shape: (input_features, time, num_tickers)
-
-    # Construct MTP-style input
-    max_pred_horizon = max(args.indices_to_predict)
-    # Ensure dummy_full_data has enough length for the MTP shifts
-    if dummy_full_data.shape[1] < max_pred_horizon:
-        raise ValueError("Dummy full data too short for MTP processing.")
-
-    # This part mimics the MTP input creation in your dataloader
-    num_base_features = dummy_full_data.shape[0]
-    num_time_steps_for_mtp_input = dummy_full_data.shape[1] - max_pred_horizon
-    
-    # The number of "target horizons" in the input is `max_pred_horizon`
-    # (i.e., you prepare input features aligned for predicting 1 step ahead, 2 steps ahead... up to max_pred_horizon steps ahead)
-    num_target_horizons_in_input = max_pred_horizon 
-
-    mtp_input_features = torch.empty(
-        num_base_features,
-        num_target_horizons_in_input,
-        num_time_steps_for_mtp_input,
-        len(args.tickers),
-        dtype=torch.float32, device=args_from_metadata.normalization_means.device # Ensure same device
-    )
-    for i in range(num_target_horizons_in_input):
-        # The i-th slice of target_horizons_in_input corresponds to features prepared
-        # as if we are `i+1` steps into the future relative to the start of a prediction window.
-        # `full_data[:, i : num_time_steps_for_mtp_input + i, :]`
-        # This matches the dataloader: `data[:,i,:,:] = full_data[:,i:-(max(target_dates)-i),:]`
-        # where loop is `for i in range(max(target_dates))`
-        # So, target_horizon_idx `j` uses `full_data[:, j : num_time_steps_for_mtp_input + j, :]`
-        mtp_input_features[:, i, :, :] = dummy_full_data[:, i : num_time_steps_for_mtp_input + i, :]
-    
-    # Apply global Z-normalization (excluding time features, if any were added)
-    # Assuming normalization_means/stds are (num_base_features, 1, 1) for broadcasting
-    # This placeholder only has return-like features, so all get normalized.
-    # In your real code, slice out time features before this.
-    norm_means = args_from_metadata.normalization_means.unsqueeze(1).unsqueeze(-1) # (features,1,1,1)
-    norm_stds = args_from_metadata.normalization_stds.unsqueeze(1).unsqueeze(-1)   # (features,1,1,1)
-    
-    # mtp_input_features_norm = (mtp_input_features - norm_means) / (norm_stds + 1e-8)
-    # For the MTP structure, normalization_means/stds are (features, 1, num_tickers)
-    # The input mtp_input_features is (features, target_horizons, time, num_tickers)
-    # norm_means must be broadcastable. Let's assume means/stds are (features, 1, num_tickers)
-    # and need to be expanded for the target_horizons and time dimensions.
-    norm_means_expanded = args_from_metadata.normalization_means.unsqueeze(1).unsqueeze(2) # (features, 1, 1, num_tickers)
-    norm_stds_expanded = args_from_metadata.normalization_stds.unsqueeze(1).unsqueeze(2)   # (features, 1, 1, num_tickers)
-    
-    mtp_input_features_norm = (mtp_input_features - norm_means_expanded) / (norm_stds_expanded + 1e-8)
-
-
-    # Placeholder: just returning the last `seq_len_needed` part of the MTP input features
-    # and the corresponding segment of true_chlov_returns for backtesting.
-    # The actual slicing for rolling predictions will happen in the main loop.
-    print(f"Shape of mtp_input_features_norm before returning: {mtp_input_features_norm.shape}")
-    print(f"Shape of true_prices_for_backtest before returning: {true_prices_for_backtest.shape}")
-    
-    # This function should return all processed features that are then sliced in the main loop.
-    # Also, need the column names if feature selection is done by name.
-    # For now, assume args.columns has the right names.
-    
-    return mtp_input_features_norm, true_prices_for_backtest, args_from_metadata.columns # Or columns from processing
-
-
-def run_trading_strategy_1day_signal(
+def run_trading_strategy_1day_signal_simple(
     predictions_1day_ahead: torch.Tensor, # Model's predicted 1-day returns
     actual_1d_returns: torch.Tensor,      # Actual 1-day returns for P&L calculation
     trade_threshold_up: float =0.01,
@@ -553,15 +462,15 @@ def run_trading_strategy_1day_signal(
     initial_capital: float =100000.0,
     transaction_cost_pct: float =0.0005,
     signal_horizon_name: str ="1-day",
-    verbose: int =0
+    verbose: int = 0
 ):
     """
     Simulates a trading strategy using 1-day predictions, executing trades
     evaluated on the next 1-day actual return. Allows for asymmetric thresholds.
     """
     # Ensure inputs are on CPU for numpy operations if not already
-    predictions_1day_ahead = predictions_1day_ahead.cpu()
-    actual_1d_returns = actual_1d_returns.cpu()
+    predictions_1day_ahead = predictions_1day_ahead.cpu().float()
+    actual_1d_returns = actual_1d_returns.cpu().float()
 
     num_days, num_tickers = predictions_1day_ahead.shape
     if num_days != actual_1d_returns.shape[0] or num_tickers != actual_1d_returns.shape[1]:
@@ -569,8 +478,11 @@ def run_trading_strategy_1day_signal(
             "Predictions and actual 1-day returns must have the same shape (num_days, num_tickers)."
         )
 
-    portfolio_values = [initial_capital] # Start with initial capital before day 1
-    daily_portfolio_returns = []
+    # portfolio_values = [initial_capital] # Start with initial capital before day 1
+    # daily_portfolio_returns = []
+    portfolio_values_ts = torch.zeros(num_days + 1, dtype=torch.float64)
+    portfolio_values_ts[0] = initial_capital
+    daily_portfolio_returns_ts = torch.zeros(num_days, dtype=torch.float64)
     current_capital = initial_capital
     
     if verbose > 0:
@@ -581,73 +493,86 @@ def run_trading_strategy_1day_signal(
         print(f"Transaction Cost (per trade leg): {transaction_cost_pct*100:.4f}%")
 
     for day_idx in range(num_days):
-        capital_at_start_of_day = current_capital
-        daily_pnl = 0.0
+        # Capital at the start of the day from the tensor
+        capital_at_start_of_day = portfolio_values_ts[day_idx] # This is a torch.float64 scalar tensor
+
+        daily_pnl_tensor = torch.tensor(0.0, dtype=torch.float64) # Accumulate P&L as a tensor
         num_long_trades_today = 0
         num_short_trades_today = 0
 
-        signals_today = predictions_1day_ahead[day_idx]       # Predictions for today's close, made using data up to yesterday's close
-        realized_1d_returns_today = actual_1d_returns[day_idx] # Actual returns for today
+        signals_today = predictions_1day_ahead[day_idx]       
+        realized_1d_returns_today = actual_1d_returns[day_idx] 
 
         active_signals = []
         for ticker_idx in range(num_tickers):
-            if signals_today[ticker_idx] > trade_threshold_up:
+            # Ensure thresholds are float64 for comparison if signals_today is float64
+            if signals_today[ticker_idx] > torch.tensor(trade_threshold_up, dtype=torch.float64):
                 active_signals.append({"action": "long", "ticker_idx": ticker_idx})
-            elif signals_today[ticker_idx] < -trade_threshold_down: # trade_threshold_down is positive
+            elif signals_today[ticker_idx] < -torch.tensor(trade_threshold_down, dtype=torch.float64): 
                 active_signals.append({"action": "short", "ticker_idx": ticker_idx})
 
         if not active_signals:
-            daily_portfolio_returns.append(0.0)
-            portfolio_values.append(current_capital)
+            daily_portfolio_returns_ts[day_idx] = torch.tensor(0.0, dtype=torch.float64)
+            portfolio_values_ts[day_idx + 1] = capital_at_start_of_day # No change
+            # current_capital python float is no longer the primary tracker
+
             if verbose > 1 and (day_idx < 5 or day_idx == num_days -1 ):
-                 print(f"Day {day_idx+1}: No trades. Capital: ${current_capital:,.2f}")
+                 print(f"Day {day_idx+1}: No trades. Capital: ${capital_at_start_of_day.item():,.2f}")
             continue
 
-        capital_per_trade = capital_at_start_of_day / len(active_signals)
+        # Ensure capital_per_trade is float64
+        capital_per_trade = capital_at_start_of_day / torch.tensor(len(active_signals), dtype=torch.float64)
 
         for trade in active_signals:
             ticker_idx = trade["ticker_idx"]
-            invested_amount = capital_per_trade # Amount allocated to this specific trade leg
-
-            # Cost to enter the position
-            cost_entry = invested_amount * transaction_cost_pct
+            # Ensure invested_amount is float64
+            invested_amount = capital_per_trade 
             
-            pnl_from_position = 0.0
+            # Ensure transaction_cost_pct is float64
+            tc_pct_tensor = torch.tensor(transaction_cost_pct, dtype=torch.float64)
+
+            cost_entry = invested_amount * tc_pct_tensor
+            
+            pnl_from_position_tensor = torch.tensor(0.0, dtype=torch.float64)
             if trade["action"] == "long":
-                pnl_from_position = invested_amount * realized_1d_returns_today[ticker_idx]
+                # realized_1d_returns_today[ticker_idx] is already float64
+                pnl_from_position_tensor = invested_amount * realized_1d_returns_today[ticker_idx]
                 num_long_trades_today +=1
             elif trade["action"] == "short":
-                pnl_from_position = invested_amount * (-realized_1d_returns_today[ticker_idx])
+                pnl_from_position_tensor = invested_amount * (-realized_1d_returns_today[ticker_idx])
                 num_short_trades_today +=1
             
-            # Value of position before exit cost
-            value_before_exit = invested_amount + pnl_from_position
-            cost_exit = value_before_exit * transaction_cost_pct # Cost to exit the position
+            value_before_exit = invested_amount + pnl_from_position_tensor
+            cost_exit = value_before_exit * tc_pct_tensor
 
-            net_pnl_for_trade = pnl_from_position - cost_entry - cost_exit
-            daily_pnl += net_pnl_for_trade
+            net_pnl_for_trade_tensor = pnl_from_position_tensor - cost_entry - cost_exit
+            daily_pnl_tensor += net_pnl_for_trade_tensor
         
-        current_capital += daily_pnl
-        day_return_pct = (daily_pnl / capital_at_start_of_day) if capital_at_start_of_day > 1e-9 else 0.0
+        # Update portfolio value tensor
+        portfolio_values_ts[day_idx + 1] = capital_at_start_of_day + daily_pnl_tensor
         
-        daily_portfolio_returns.append(day_return_pct)
-        portfolio_values.append(current_capital) # Capital at END of day_idx
-
+        # Calculate daily return tensor
+        if capital_at_start_of_day.abs().item() > 1e-9:
+            daily_portfolio_returns_ts[day_idx] = daily_pnl_tensor / capital_at_start_of_day
+        else:
+            daily_portfolio_returns_ts[day_idx] = torch.tensor(0.0, dtype=torch.float64)
+        
+        # For verbose printing, use .item() to get Python floats
         if verbose > 1 and (len(active_signals) > 0 or day_idx < 5 or day_idx == num_days - 1):
-            print(f"Day {day_idx+1}: Longs: {num_long_trades_today}, Shorts: {num_short_trades_today}. Day P&L: ${daily_pnl:,.2f}. Day Ret: {day_return_pct*100:.3f}%. EOD Capital: ${current_capital:,.2f}")
-
-
+            print(f"Day {day_idx+1}: Longs: {num_long_trades_today}, Shorts: {num_short_trades_today}. Day P&L: ${daily_pnl_tensor.item():,.2f}. Day Ret: {daily_portfolio_returns_ts[day_idx].item()*100:.3f}%. EOD Capital: ${portfolio_values_ts[day_idx + 1].item():,.2f}")
+    
+    
     # --- Performance Statistics Calculation ---
     # portfolio_values is EOD capital, so its length is num_days + 1.
     # daily_portfolio_returns has length num_days.
     portfolio_df = pd.DataFrame({
-        "portfolio_value": portfolio_values[1:], # Use EOD values for alignment with returns
-        "daily_return": daily_portfolio_returns
+        "portfolio_value": portfolio_values_ts[1:].numpy(), # Use EOD values for alignment with returns
+        "daily_return": daily_portfolio_returns_ts.numpy()
     })
     # If using portfolio_values[0] in the df, then daily_return needs a 0 at the start.
     # For stats, usually just use the daily_returns series.
 
-    if not daily_portfolio_returns: # Handles case where num_days = 0
+    if daily_portfolio_returns_ts.numel() == 0: # Handles case where num_days = 0
         total_return = 0.0
         annualized_return = 0.0
         annualized_volatility = 0.0
@@ -657,8 +582,9 @@ def run_trading_strategy_1day_signal(
         num_losing_days = 0
         win_loss_ratio = 0.0
     else:
-        daily_returns_np = np.array(daily_portfolio_returns)
-        total_return = (current_capital / initial_capital) - 1.0
+        # daily_returns_np = np.array(daily_portfolio_returns)
+        daily_returns_np = daily_portfolio_returns_ts.numpy()
+        total_return = (portfolio_values_ts[-1] / initial_capital) - 1.0
         
         # Annualization: ( (1 + total_ret) ^ (252/num_days) ) - 1
         if num_days > 0:
@@ -713,29 +639,1566 @@ def run_trading_strategy_1day_signal(
     return portfolio_df, stats_dict
 
 
-def objective_function_mtp(long_threshold_raw, short_threshold_raw, min_step=0.001):
+def run_strategy_simple_with_turnover_costs(
+    predictions_1day_ahead: torch.Tensor, # Model's predicted 1-day returns
+    actual_1d_returns: torch.Tensor,      # Actual 1-day returns for P&L calculation
+    trade_threshold_up: float = 0.01,
+    trade_threshold_down: float = 0.01, # Absolute value for short threshold
+    initial_capital: float = 100000.0,
+    transaction_cost_pct: float = 0.0005,
+    signal_horizon_name: str = "1-day signal with turnover costs",
+    verbose: int = 0
+):
+    """
+    Simulates a day-trading strategy identical to the 'simple' version in terms of P&L,
+    but applies transaction costs only on the net change (turnover) in positions
+    from one day to the next.
+
+    This function WILL produce identical results to the simple version if transaction_cost_pct is 0.
+    """
+    # Ensure inputs are on CPU and have the correct data type for precision
+    predictions_1day_ahead = predictions_1day_ahead.cpu().to(torch.float64)
+    actual_1d_returns = actual_1d_returns.cpu().to(torch.float64)
+
+    num_days, num_tickers = predictions_1day_ahead.shape
+    if num_days != actual_1d_returns.shape[0] or num_tickers != actual_1d_returns.shape[1]:
+        raise ValueError(
+            "Predictions and actual 1-day returns must have the same shape (num_days, num_tickers)."
+        )
+
+    # --- State and Tracking Initialization ---
+    portfolio_values_ts = torch.zeros(num_days + 1, dtype=torch.float64)
+    portfolio_values_ts[0] = initial_capital
+    daily_portfolio_returns_ts = torch.zeros(num_days, dtype=torch.float64)
+    
+    # State variable to track the dollar value of positions at the END of the previous day.
+    # This is used ONLY for calculating turnover.
+    positions_at_prev_eod = torch.zeros(num_tickers, dtype=torch.float64)
+    
+    tc_pct_tensor = torch.tensor(transaction_cost_pct, dtype=torch.float64)
+    trade_thresh_up_tensor = torch.tensor(trade_threshold_up, dtype=torch.float64)
+    trade_thresh_down_tensor = torch.tensor(trade_threshold_down, dtype=torch.float64)
+
+    if verbose > 0:
+        print(f"\n--- Running Trading Strategy ({signal_horizon_name}) ---")
+        print(f"Initial Capital: ${initial_capital:,.2f}, T.Cost (on turnover): {transaction_cost_pct*100:.4f}%")
+
+    for day_idx in range(num_days):
+        capital_at_start_of_day = portfolio_values_ts[day_idx]
+        signals_today = predictions_1day_ahead[day_idx]
+        realized_1d_returns_today = actual_1d_returns[day_idx]
+
+        # 1. Determine today's target positions based on today's signals and SOD capital.
+        # This mirrors the logic of the 'simple' function exactly.
+        long_signals = signals_today > trade_thresh_up_tensor
+        short_signals = signals_today < -trade_thresh_down_tensor
+        num_active_signals = long_signals.sum() + short_signals.sum()
+
+        target_positions_today = torch.zeros_like(positions_at_prev_eod)
+        if num_active_signals > 0:
+            capital_per_trade = capital_at_start_of_day / num_active_signals
+            target_positions_today[long_signals] = capital_per_trade
+            target_positions_today[short_signals] = -capital_per_trade
+        
+        # 2. Calculate P&L for today based on these target positions.
+        # This ensures P&L is identical to the 'simple' model's calculation.
+        pnl_today = torch.sum(target_positions_today * realized_1d_returns_today)
+
+        # 3. Calculate turnover and transaction costs.
+        # This is the ONLY part that uses memory of the previous day's state.
+        trade_delta = target_positions_today - positions_at_prev_eod
+        turnover = torch.sum(torch.abs(trade_delta))
+        transaction_cost_today = turnover * tc_pct_tensor
+
+        # 4. Calculate final End-of-Day (EOD) portfolio value.
+        eod_portfolio_value = capital_at_start_of_day + pnl_today - transaction_cost_today
+        portfolio_values_ts[day_idx + 1] = eod_portfolio_value
+        
+        # 5. Calculate daily return.
+        if capital_at_start_of_day.abs().item() > 1e-9:
+            daily_portfolio_returns_ts[day_idx] = (eod_portfolio_value / capital_at_start_of_day) - 1.0
+        else:
+            daily_portfolio_returns_ts[day_idx] = torch.tensor(0.0, dtype=torch.float64)
+
+        # 6. Update state for the next day. The new EOD positions are the target positions
+        #    after being marked-to-market with today's returns.
+        positions_at_prev_eod = target_positions_today * (1 + realized_1d_returns_today)
+
+        if verbose > 1 and (day_idx < 5 or day_idx == num_days - 1 or turnover > 0):
+             print(f"Day {day_idx+1: >3}: Start Cap: ${capital_at_start_of_day:11,.2f} | "
+                   f"Day P&L: ${pnl_today:9,.2f} | "
+                   f"Turnover: ${turnover:11,.2f} | "
+                   f"T.Cost: ${transaction_cost_today:8,.2f} | "
+                   f"EOD Cap: ${eod_portfolio_value:11,.2f}")
+
+    # --- Performance Statistics Calculation ---
+    # ... (The stats calculation part is the same and can be copied)
+    portfolio_df = pd.DataFrame({
+        "portfolio_value": portfolio_values_ts[1:].numpy(),
+        "daily_return": daily_portfolio_returns_ts.numpy()
+    })
+
+    final_capital = portfolio_values_ts[-1]
+
+    if daily_portfolio_returns_ts.numel() == 0: # Handles case where num_days = 0
+        total_return = 0.0
+        annualized_return = 0.0
+        annualized_volatility = 0.0
+        sharpe_ratio = 0.0
+        max_drawdown = 0.0
+        num_winning_days = 0
+        num_losing_days = 0
+        win_loss_ratio = 0.0
+    else:
+        # daily_returns_np = np.array(daily_portfolio_returns)
+        daily_returns_np = daily_portfolio_returns_ts.numpy()
+        total_return = (portfolio_values_ts[-1] / initial_capital) - 1.0
+        
+        # Annualization: ( (1 + total_ret) ^ (252/num_days) ) - 1
+        if num_days > 0:
+            annualized_return = ((1 + total_return) ** (252.0 / num_days)) - 1.0
+            annualized_volatility = np.std(daily_returns_np) * np.sqrt(252.0)
+            sharpe_ratio = (annualized_return / annualized_volatility) if annualized_volatility > 1e-9 else 0.0
+        else:
+            annualized_return = 0.0
+            annualized_volatility = 0.0
+            sharpe_ratio = 0.0
+
+        cumulative_returns_pd = (1 + pd.Series(daily_returns_np)).cumprod()
+        # Ensure cumulative_returns_pd is not empty before calling .expanding or .min
+        if not cumulative_returns_pd.empty:
+            peak = cumulative_returns_pd.expanding(min_periods=1).max()
+            drawdown = (cumulative_returns_pd / peak) - 1.0
+            max_drawdown = drawdown.min()
+        else:
+            max_drawdown = 0.0
+        
+        num_winning_days = (daily_returns_np > 0).sum()
+        num_losing_days = (daily_returns_np < 0).sum()
+        win_loss_ratio = num_winning_days / num_losing_days if num_losing_days > 0 else float("inf")
+
+
+    stats_dict = {
+        "Signal Horizon Used": signal_horizon_name,
+        "Trade Threshold Up": trade_threshold_up,
+        "Trade Threshold Down (abs)": trade_threshold_down,
+        "Total Return": total_return,
+        "Annualized Return": annualized_return,
+        "Annualized Volatility": annualized_volatility,
+        "Sharpe Ratio": sharpe_ratio,
+        "Max Drawdown": max_drawdown,
+        "Number of Trading Days": num_days,
+        "Number of Winning Days": int(num_winning_days),
+        "Number of Losing Days": int(num_losing_days),
+        "Win/Loss Day Ratio": win_loss_ratio,
+        "Final Capital": final_capital,
+    }
+
+    if verbose > 0:
+        print(f"\n--- Strategy Summary ({signal_horizon_name}) ---")
+        # (Full stats printing from previous answers)
+        for k, v in stats_dict.items(): print(f"{k}: {v}")
+
+    return portfolio_df, stats_dict
+
+def run_strategy_with_flexible_allocation(
+    predictions_1day_ahead: torch.Tensor,
+    actual_1d_returns: torch.Tensor,
+    trade_threshold_up: float = 0.01,
+    trade_threshold_down: float = 0.01,
+    initial_capital: float = 100000.0,
+    transaction_cost_pct: float = 0.0005,
+    allocation_strategy: str = 'equal', # 'equal' or 'signal_strength'
+    signal_horizon_name: str = "1-day signal with turnover costs",
+    verbose: int = 0
+):
+    """
+    Simulates a day-trading strategy with transaction costs on turnover,
+    offering multiple capital allocation strategies.
+
+    Args:
+        ... (previous args) ...
+        allocation_strategy (str): Method for allocating capital.
+            - 'equal': Divides capital equally among all active signals.
+            - 'signal_strength': Allocates capital proportionally to the
+              absolute strength of the signal prediction.
+        ...
+    """
+    # --- Initial Setup (same as before) ---
+    predictions_1day_ahead = predictions_1day_ahead.cpu().to(torch.float64)
+    actual_1d_returns = actual_1d_returns.cpu().to(torch.float64)
+    num_days, num_tickers = predictions_1day_ahead.shape
+    portfolio_values_ts = torch.zeros(num_days + 1, dtype=torch.float64)
+    portfolio_values_ts[0] = initial_capital
+    daily_portfolio_returns_ts = torch.zeros(num_days, dtype=torch.float64)
+    positions_at_prev_eod = torch.zeros(num_tickers, dtype=torch.float64)
+    tc_pct_tensor = torch.tensor(transaction_cost_pct, dtype=torch.float64)
+    trade_thresh_up_tensor = torch.tensor(trade_threshold_up, dtype=torch.float64)
+    trade_thresh_down_tensor = torch.tensor(trade_threshold_down, dtype=torch.float64)
+
+    if verbose > 0:
+        print(f"\n--- Running Trading Strategy ({signal_horizon_name}) ---")
+        print(f"Allocation Strategy: {allocation_strategy}")
+        print(f"Initial Capital: ${initial_capital:,.2f}, T.Cost (on turnover): {transaction_cost_pct*100:.4f}%")
+
+    for day_idx in range(num_days):
+        capital_at_start_of_day = portfolio_values_ts[day_idx]
+        signals_today = predictions_1day_ahead[day_idx]
+        realized_1d_returns_today = actual_1d_returns[day_idx]
+
+        long_signals_mask = signals_today > trade_thresh_up_tensor
+        short_signals_mask = signals_today < -trade_thresh_down_tensor
+        active_signals_mask = long_signals_mask | short_signals_mask
+        
+        target_positions_today = torch.zeros_like(positions_at_prev_eod)
+
+        if torch.any(active_signals_mask):
+            # --- NEW: ALLOCATION LOGIC BLOCK ---
+            if allocation_strategy == 'equal':
+                num_active_signals = active_signals_mask.sum()
+                capital_per_trade = capital_at_start_of_day / num_active_signals
+                target_positions_today[long_signals_mask] = capital_per_trade
+                target_positions_today[short_signals_mask] = -capital_per_trade
+
+            elif allocation_strategy == 'signal_strength':
+                # Get the absolute strength of active signals for weighting
+                active_signal_strengths = torch.abs(signals_today[active_signals_mask])
+                total_weight = torch.sum(active_signal_strengths)
+
+                if total_weight > 0:
+                    # Allocate capital proportionally to signal strength
+                    proportions = active_signal_strengths / total_weight
+                    dollar_allocations = proportions * capital_at_start_of_day
+                    
+                    # Apply the correct sign (long/short)
+                    # Get original signs of the active signals
+                    signs = torch.sign(signals_today[active_signals_mask])
+                    target_positions_today[active_signals_mask] = dollar_allocations * signs
+
+            else:
+                raise ValueError(f"Unknown allocation_strategy: '{allocation_strategy}'. "
+                                 f"Choose from 'equal' or 'signal_strength'.")
+        
+        # --- P&L and Turnover Calculation (same as before) ---
+        pnl_today = torch.sum(target_positions_today * realized_1d_returns_today)
+        trade_delta = target_positions_today - positions_at_prev_eod
+        turnover = torch.sum(torch.abs(trade_delta))
+        transaction_cost_today = turnover * tc_pct_tensor
+        eod_portfolio_value = capital_at_start_of_day + pnl_today - transaction_cost_today
+        portfolio_values_ts[day_idx + 1] = eod_portfolio_value
+        
+        if capital_at_start_of_day.abs().item() > 1e-9:
+            daily_portfolio_returns_ts[day_idx] = (eod_portfolio_value / capital_at_start_of_day) - 1.0
+        else:
+            daily_portfolio_returns_ts[day_idx] = torch.tensor(0.0, dtype=torch.float64)
+
+        positions_at_prev_eod = target_positions_today * (1 + realized_1d_returns_today)
+        # ... (verbose printing can remain the same) ...
+
+    # --- Performance Statistics Calculation (same as before) ---
+    portfolio_df = pd.DataFrame({
+        "portfolio_value": portfolio_values_ts[1:].numpy(),
+        "daily_return": daily_portfolio_returns_ts.numpy()
+    })
+
+    final_capital = portfolio_values_ts[-1]
+
+    if daily_portfolio_returns_ts.numel() == 0: # Handles case where num_days = 0
+        total_return = 0.0
+        annualized_return = 0.0
+        annualized_volatility = 0.0
+        sharpe_ratio = 0.0
+        max_drawdown = 0.0
+        num_winning_days = 0
+        num_losing_days = 0
+        win_loss_ratio = 0.0
+    else:
+        # daily_returns_np = np.array(daily_portfolio_returns)
+        daily_returns_np = daily_portfolio_returns_ts.numpy()
+        total_return = (portfolio_values_ts[-1] / initial_capital) - 1.0
+        
+        # Annualization: ( (1 + total_ret) ^ (252/num_days) ) - 1
+        if num_days > 0:
+            annualized_return = ((1 + total_return) ** (252.0 / num_days)) - 1.0
+            annualized_volatility = np.std(daily_returns_np) * np.sqrt(252.0)
+            sharpe_ratio = (annualized_return / annualized_volatility) if annualized_volatility > 1e-9 else 0.0
+        else:
+            annualized_return = 0.0
+            annualized_volatility = 0.0
+            sharpe_ratio = 0.0
+
+        cumulative_returns_pd = (1 + pd.Series(daily_returns_np)).cumprod()
+        # Ensure cumulative_returns_pd is not empty before calling .expanding or .min
+        if not cumulative_returns_pd.empty:
+            peak = cumulative_returns_pd.expanding(min_periods=1).max()
+            drawdown = (cumulative_returns_pd / peak) - 1.0
+            max_drawdown = drawdown.min()
+        else:
+            max_drawdown = 0.0
+        
+        num_winning_days = (daily_returns_np > 0).sum()
+        num_losing_days = (daily_returns_np < 0).sum()
+        win_loss_ratio = num_winning_days / num_losing_days if num_losing_days > 0 else float("inf")
+
+
+    stats_dict = {
+        "Signal Horizon Used": signal_horizon_name,
+        "Trade Threshold Up": trade_threshold_up,
+        "Trade Threshold Down (abs)": trade_threshold_down,
+        "Total Return": total_return,
+        "Annualized Return": annualized_return,
+        "Annualized Volatility": annualized_volatility,
+        "Sharpe Ratio": sharpe_ratio,
+        "Max Drawdown": max_drawdown,
+        "Number of Trading Days": num_days,
+        "Number of Winning Days": int(num_winning_days),
+        "Number of Losing Days": int(num_losing_days),
+        "Win/Loss Day Ratio": win_loss_ratio,
+        "Final Capital": final_capital,
+    }
+
+    if verbose > 0:
+        print(f"\n--- Strategy Summary ({signal_horizon_name}) ---")
+        # (Full stats printing from previous answers)
+        for k, v in stats_dict.items(): print(f"{k}: {v}")
+    return portfolio_df, stats_dict
+
+
+
+def run_trading_strategy_holding(
+    predictions_1day_ahead: torch.Tensor, # Model's predicted 1-day returns
+    actual_1d_returns: torch.Tensor,      # Actual 1-day returns for P&L calculation
+    trade_threshold_up: float = 0.01,
+    trade_threshold_down: float = 0.01, # Absolute value for short threshold
+    initial_capital: float = 100000.0,
+    transaction_cost_pct: float = 0.0005,
+    signal_horizon_name: str = "1-day with holding",
+    verbose: int = 0
+):
+    """
+    Simulates a trading strategy that holds positions overnight to minimize
+    transaction costs, paying fees only on the net change (turnover)
+    in position values between days.
+    """
+    # Ensure inputs are on CPU and have the correct data type for precision
+    predictions_1day_ahead = predictions_1day_ahead.cpu().to(torch.float64)
+    actual_1d_returns = actual_1d_returns.cpu().to(torch.float64)
+
+    num_days, num_tickers = predictions_1day_ahead.shape
+    if num_days != actual_1d_returns.shape[0] or num_tickers != actual_1d_returns.shape[1]:
+        raise ValueError(
+            "Predictions and actual 1-day returns must have the same shape (num_days, num_tickers)."
+        )
+
+    # --- State and Tracking Initialization ---
+    portfolio_values_ts = torch.zeros(num_days + 1, dtype=torch.float64)
+    portfolio_values_ts[0] = initial_capital
+    daily_portfolio_returns_ts = torch.zeros(num_days, dtype=torch.float64)
+    
+    # NEW: State variable to track dollar value of positions in each ticker
+    # Positive value for long, negative for short.
+    current_positions = torch.zeros(num_tickers, dtype=torch.float64)
+    
+    # Convert constant parameters to tensors for consistent operations
+    tc_pct_tensor = torch.tensor(transaction_cost_pct, dtype=torch.float64)
+    trade_thresh_up_tensor = torch.tensor(trade_threshold_up, dtype=torch.float64)
+    trade_thresh_down_tensor = torch.tensor(trade_threshold_down, dtype=torch.float64)
+
+    if verbose > 0:
+        print(f"\n--- Running Trading Strategy (Signal: {signal_horizon_name}) ---")
+        print(f"Initial Capital: ${initial_capital:,.2f}")
+        print(f"Trade Threshold UP: {trade_threshold_up*100:.3f}%")
+        print(f"Trade Threshold DOWN (abs): {trade_threshold_down*100:.3f}%")
+        print(f"Transaction Cost (on turnover): {transaction_cost_pct*100:.4f}%")
+
+    for day_idx in range(num_days):
+        capital_at_start_of_day = portfolio_values_ts[day_idx]
+        realized_1d_returns_today = actual_1d_returns[day_idx]
+        
+        # 1. Calculate P&L from positions held overnight
+        # This is the "mark-to-market" P&L before any new trades.
+        pnl_from_holding = torch.sum(current_positions * realized_1d_returns_today)
+        
+        # The value of our portfolio after market movement, but before rebalancing
+        portfolio_value_before_rebalancing = capital_at_start_of_day + pnl_from_holding
+        
+        # The value of our individual positions has also changed
+        positions_after_returns = current_positions * (1 + realized_1d_returns_today)
+
+        # 2. Determine today's target positions based on new signals
+        signals_today = predictions_1day_ahead[day_idx]
+        long_signals = signals_today > trade_thresh_up_tensor
+        short_signals = signals_today < -trade_thresh_down_tensor
+        
+        num_active_signals = long_signals.sum() + short_signals.sum()
+
+        target_positions = torch.zeros_like(current_positions)
+        if num_active_signals > 0:
+            # Allocate capital based on the portfolio value *after* holding P&L is realized
+            capital_per_trade = portfolio_value_before_rebalancing / num_active_signals
+            target_positions[long_signals] = capital_per_trade
+            target_positions[short_signals] = -capital_per_trade
+        # If no active signals, target_positions remains all zeros (i.e., liquidate everything)
+
+        # 3. Calculate turnover and transaction costs
+        # Turnover is the sum of absolute changes needed to get from old positions to new target positions
+        trade_delta = target_positions - positions_after_returns
+        turnover = torch.sum(torch.abs(trade_delta))
+        transaction_cost_today = turnover * tc_pct_tensor
+
+        # 4. Calculate final End-of-Day (EOD) portfolio value
+        eod_portfolio_value = portfolio_value_before_rebalancing - transaction_cost_today
+        portfolio_values_ts[day_idx + 1] = eod_portfolio_value
+        
+        # 5. Calculate daily return
+        if capital_at_start_of_day.abs().item() > 1e-9:
+            daily_portfolio_returns_ts[day_idx] = (eod_portfolio_value / capital_at_start_of_day) - 1.0
+        else:
+            daily_portfolio_returns_ts[day_idx] = torch.tensor(0.0, dtype=torch.float64)
+
+        # 6. Update state for the next day
+        # Our new positions are the target positions we just calculated
+        current_positions = target_positions
+
+        if verbose > 1 and (day_idx < 5 or day_idx == num_days - 1 or turnover > 0):
+            print(f"Day {day_idx+1: >3}: "
+                  f"Start Cap: ${capital_at_start_of_day:11,.2f} | "
+                  f"Hold P&L: ${pnl_from_holding:9,.2f} | "
+                  f"Turnover: ${turnover:11,.2f} | "
+                  f"T.Cost: ${transaction_cost_today:8,.2f} | "
+                  f"Day Ret: {daily_portfolio_returns_ts[day_idx]*100:6.3f}% | "
+                  f"EOD Cap: ${eod_portfolio_value:11,.2f}")
+
+    # --- Performance Statistics Calculation (Identical to the original function) ---
+    portfolio_df = pd.DataFrame({
+        "portfolio_value": portfolio_values_ts[1:].numpy(), # EOD values
+        "daily_return": daily_portfolio_returns_ts.numpy()
+    })
+
+    if daily_portfolio_returns_ts.numel() == 0:
+        total_return, annualized_return, annualized_volatility, sharpe_ratio, max_drawdown = 0.0, 0.0, 0.0, 0.0, 0.0
+        num_winning_days, num_losing_days, win_loss_ratio = 0, 0, 0.0
+    else:
+        daily_returns_np = daily_portfolio_returns_ts.numpy()
+        total_return = (portfolio_values_ts[-1].item() / initial_capital) - 1.0
+        
+        if num_days > 0:
+            annualized_return = np.power(1 + total_return, 252.0 / num_days) - 1.0
+            annualized_volatility = np.std(daily_returns_np) * np.sqrt(252.0)
+            sharpe_ratio = (annualized_return / annualized_volatility) if annualized_volatility > 1e-9 else 0.0
+        else:
+            annualized_return, annualized_volatility, sharpe_ratio = 0.0, 0.0, 0.0
+
+        cumulative_returns_pd = (1 + pd.Series(daily_returns_np)).cumprod()
+        if not cumulative_returns_pd.empty:
+            peak = cumulative_returns_pd.expanding(min_periods=1).max()
+            drawdown = (cumulative_returns_pd / peak) - 1.0
+            max_drawdown = drawdown.min()
+        else:
+            max_drawdown = 0.0
+        
+        num_winning_days = (daily_returns_np > 0).sum()
+        num_losing_days = (daily_returns_np < 0).sum()
+        win_loss_ratio = num_winning_days / num_losing_days if num_losing_days > 0 else float("inf")
+
+    stats_dict = {
+        "Signal Horizon Used": signal_horizon_name,
+        "Trade Threshold Up": trade_threshold_up,
+        "Trade Threshold Down (abs)": trade_threshold_down,
+        "Total Return": total_return,
+        "Annualized Return": annualized_return,
+        "Annualized Volatility": annualized_volatility,
+        "Sharpe Ratio": sharpe_ratio,
+        "Max Drawdown": max_drawdown,
+        "Number of Trading Days": num_days,
+        "Number of Winning Days": int(num_winning_days),
+        "Number of Losing Days": int(num_losing_days),
+        "Win/Loss Day Ratio": win_loss_ratio,
+        "Final Capital": portfolio_values_ts[-1].item(),
+    }
+
+    if verbose > 0:
+        print(f"\n--- Strategy Summary (Signal: {signal_horizon_name}) ---")
+        for key, value in stats_dict.items():
+            if isinstance(value, (float, np.floating, torch.Tensor)):
+                val_float = value.item() if isinstance(value, torch.Tensor) else float(value)
+                if key in ["Total Return", "Annualized Return", "Annualized Volatility", "Max Drawdown"]:
+                    print(f"{key}: {val_float*100:.2f}%")
+                elif key in ["Sharpe Ratio", "Win/Loss Day Ratio"]:
+                    print(f"{key}: {val_float:.4f}")
+                elif key in ["Final Capital"]:
+                     print(f"{key}: ${val_float:,.2f}")
+                else:
+                    print(f"{key}: {val_float}")
+            else:
+                print(f"{key}: {value}")
+    
+    return portfolio_df, stats_dict
+
+def run_trading_strategy_hold_or_liquidate(
+    predictions_1day_ahead: torch.Tensor, # Model's predicted 1-day returns
+    actual_1d_returns: torch.Tensor,      # Actual 1-day returns for P&L calculation
+    trade_threshold_up: float = 0.01,
+    trade_threshold_down: float = 0.01, # Absolute value for short threshold
+    initial_capital: float = 100000.0,
+    transaction_cost_pct: float = 0.0005,
+    signal_horizon_name: str = "1-day with hold-or-liquidate logic",
+    verbose: int = 0
+):
+    """
+    Simulates a trading strategy that holds positions based on the previous day's
+    signals. If the previous day had no signals, the portfolio is in cash.
+    Transaction costs are incurred only on the net change required to meet the
+    new target positions determined by the current day's signals.
+    """
+    # Ensure inputs are on CPU and have the correct data type for precision
+    predictions_1day_ahead = predictions_1day_ahead.cpu().to(torch.float64)
+    actual_1d_returns = actual_1d_returns.cpu().to(torch.float64)
+
+    num_days, num_tickers = predictions_1day_ahead.shape
+    if num_days != actual_1d_returns.shape[0] or num_tickers != actual_1d_returns.shape[1]:
+        raise ValueError(
+            "Predictions and actual 1-day returns must have the same shape (num_days, num_tickers)."
+        )
+
+    # --- State and Tracking Initialization ---
+    portfolio_values_ts = torch.zeros(num_days + 1, dtype=torch.float64)
+    portfolio_values_ts[0] = initial_capital
+    daily_portfolio_returns_ts = torch.zeros(num_days, dtype=torch.float64)
+    
+    # This now represents the dollar value of positions established at the END of the previous day.
+    positions_held_overnight = torch.zeros(num_tickers, dtype=torch.float64)
+    
+    # Convert constant parameters to tensors for consistent operations
+    tc_pct_tensor = torch.tensor(transaction_cost_pct, dtype=torch.float64)
+    trade_thresh_up_tensor = torch.tensor(trade_threshold_up, dtype=torch.float64)
+    trade_thresh_down_tensor = torch.tensor(trade_threshold_down, dtype=torch.float64)
+
+    if verbose > 0:
+        print(f"\n--- Running Trading Strategy ({signal_horizon_name}) ---")
+        print(f"Initial Capital: ${initial_capital:,.2f}")
+        print(f"Trade Threshold UP: {trade_threshold_up*100:.3f}%")
+        print(f"Trade Threshold DOWN (abs): {trade_threshold_down*100:.3f}%")
+        print(f"Transaction Cost (on turnover): {transaction_cost_pct*100:.4f}%")
+
+    for day_idx in range(num_days):
+        capital_at_start_of_day = portfolio_values_ts[day_idx]
+        realized_1d_returns_today = actual_1d_returns[day_idx]
+        
+        # 1. Calculate P&L from positions held from yesterday.
+        # If we were in cash yesterday (positions_held_overnight is all zeros), this P&L is zero.
+        # This correctly implements the "cash drag".
+        pnl_from_holding = torch.sum(positions_held_overnight * realized_1d_returns_today)
+        
+        # The value of our portfolio after the market moves, but before any rebalancing trades.
+        portfolio_value_after_holding_pnl = capital_at_start_of_day + pnl_from_holding
+        
+        # The market value of our individual positions has also changed.
+        positions_value_after_returns = positions_held_overnight * (1 + realized_1d_returns_today)
+
+        # 2. Determine NEW target positions for TOMORROW based on TODAY's signals.
+        # This is the crucial change: we decide our end-of-day position based on today's signals.
+        signals_today = predictions_1day_ahead[day_idx]
+        long_signals = signals_today > trade_thresh_up_tensor
+        short_signals = signals_today < -trade_thresh_down_tensor
+        
+        num_active_signals = long_signals.sum() + short_signals.sum()
+
+        target_positions_for_eod = torch.zeros_like(positions_held_overnight)
+        if num_active_signals > 0:
+            # We use the portfolio value *before* transaction costs to determine position size.
+            capital_per_trade = portfolio_value_after_holding_pnl / num_active_signals
+            target_positions_for_eod[long_signals] = capital_per_trade
+            target_positions_for_eod[short_signals] = -capital_per_trade
+        # If no active signals, target_positions_for_eod remains all zeros (liquidate/stay in cash).
+
+        # 3. Calculate turnover and transaction costs.
+        # This is the cost to go from our market-adjusted old positions to our new target positions.
+        trade_delta = target_positions_for_eod - positions_value_after_returns
+        turnover = torch.sum(torch.abs(trade_delta))
+        transaction_cost_today = turnover * tc_pct_tensor
+
+        # 4. Calculate final End-of-Day (EOD) portfolio value.
+        eod_portfolio_value = portfolio_value_after_holding_pnl - transaction_cost_today
+        portfolio_values_ts[day_idx + 1] = eod_portfolio_value
+        
+        # 5. Calculate daily return.
+        if capital_at_start_of_day.abs().item() > 1e-9:
+            daily_portfolio_returns_ts[day_idx] = (eod_portfolio_value / capital_at_start_of_day) - 1.0
+        else:
+            daily_portfolio_returns_ts[day_idx] = torch.tensor(0.0, dtype=torch.float64)
+
+        # 6. Update state for the next day. The positions we will hold overnight are the new targets.
+        positions_held_overnight = target_positions_for_eod
+
+        if verbose > 1 and (day_idx < 5 or day_idx == num_days - 1 or turnover > 0):
+             print(f"Day {day_idx+1: >3}: Start Cap: ${capital_at_start_of_day:11,.2f} | "
+                  f"Hold P&L: ${pnl_from_holding:9,.2f} | "
+                  f"Turnover: ${turnover:11,.2f} | "
+                  f"T.Cost: ${transaction_cost_today:8,.2f} | "
+                  f"EOD Cap: ${eod_portfolio_value:11,.2f}")
+
+    # --- Performance Statistics Calculation (Identical to the original function) ---
+    # ... (The stats calculation part is the same and can be copied from the previous answer)
+    portfolio_df = pd.DataFrame({
+        "portfolio_value": portfolio_values_ts[1:].numpy(),
+        "daily_return": daily_portfolio_returns_ts.numpy()
+    })
+
+    if daily_portfolio_returns_ts.numel() == 0:
+        total_return, annualized_return, annualized_volatility, sharpe_ratio, max_drawdown = 0.0, 0.0, 0.0, 0.0, 0.0
+        num_winning_days, num_losing_days, win_loss_ratio = 0, 0, 0.0
+    else:
+        daily_returns_np = daily_portfolio_returns_ts.numpy()
+        total_return = (portfolio_values_ts[-1].item() / initial_capital) - 1.0
+        
+        if num_days > 0:
+            annualized_return = np.power(1 + total_return, 252.0 / num_days) - 1.0
+            annualized_volatility = np.std(daily_returns_np) * np.sqrt(252.0)
+            sharpe_ratio = (annualized_return / annualized_volatility) if annualized_volatility > 1e-9 else 0.0
+        else:
+            annualized_return, annualized_volatility, sharpe_ratio = 0.0, 0.0, 0.0
+
+        cumulative_returns_pd = (1 + pd.Series(daily_returns_np)).cumprod()
+        if not cumulative_returns_pd.empty:
+            peak = cumulative_returns_pd.expanding(min_periods=1).max()
+            drawdown = (cumulative_returns_pd / peak) - 1.0
+            max_drawdown = drawdown.min()
+        else:
+            max_drawdown = 0.0
+        
+        num_winning_days = (daily_returns_np > 0).sum()
+        num_losing_days = (daily_returns_np < 0).sum()
+        win_loss_ratio = num_winning_days / num_losing_days if num_losing_days > 0 else float("inf")
+
+    stats_dict = {
+        "Signal Horizon Used": signal_horizon_name,
+        "Trade Threshold Up": trade_threshold_up,
+        "Trade Threshold Down (abs)": trade_threshold_down,
+        "Total Return": total_return,
+        "Annualized Return": annualized_return,
+        "Annualized Volatility": annualized_volatility,
+        "Sharpe Ratio": sharpe_ratio,
+        "Max Drawdown": max_drawdown,
+        "Number of Trading Days": num_days,
+        "Number of Winning Days": int(num_winning_days),
+        "Number of Losing Days": int(num_losing_days),
+        "Win/Loss Day Ratio": win_loss_ratio,
+        "Final Capital": portfolio_values_ts[-1].item(),
+    }
+
+    if verbose > 0:
+        print(f"\n--- Strategy Summary ({signal_horizon_name}) ---")
+        for key, value in stats_dict.items():
+            if isinstance(value, (float, np.floating, torch.Tensor)):
+                val_float = value.item() if isinstance(value, torch.Tensor) else float(value)
+                if key in ["Total Return", "Annualized Return", "Annualized Volatility", "Max Drawdown"]:
+                    print(f"{key}: {val_float*100:.2f}%")
+                elif key in ["Sharpe Ratio", "Win/Loss Day Ratio"]:
+                    print(f"{key}: {val_float:.4f}")
+                elif key in ["Final Capital"]:
+                     print(f"{key}: ${val_float:,.2f}")
+                else:
+                    print(f"{key}: {val_float}")
+            else:
+                print(f"{key}: {value}")
+    
+    return portfolio_df, stats_dict
+
+def run_trading_strategy_1day_signal(
+    predictions_1day_ahead: torch.Tensor,
+    actual_1d_returns: torch.Tensor,
+    trade_threshold_up: float = 0.01,
+    trade_threshold_down: float = 0.01, # Absolute value for short threshold
+    initial_capital: float = 100000.0,
+    transaction_cost_pct: float = 0.0005,
+    signal_horizon_name: str = "1-day",
+    verbose: int = 0,
+    ticker_names: list = None,
+    allocation_method: str = "equal_weight" # "equal_weight" or "signal_strength"
+):
+    predictions_1day_ahead = predictions_1day_ahead.cpu().float()
+    actual_1d_returns = actual_1d_returns.cpu().float()
+
+    num_days, num_tickers = predictions_1day_ahead.shape
+    if num_days != actual_1d_returns.shape[0] or num_tickers != actual_1d_returns.shape[1]:
+        raise ValueError("Predictions and actuals must have the same shape.")
+
+    portfolio_values = torch.zeros(num_days + 1, dtype=torch.float64)
+    portfolio_values[0] = initial_capital
+    daily_portfolio_returns = torch.zeros(num_days, dtype=torch.float64)
+    
+    held_positions_start_of_day = torch.zeros(num_tickers, dtype=torch.int8)
+    # capital_in_positions now stores the actual capital value in that position
+    capital_in_positions = torch.zeros(num_tickers, dtype=torch.float64) 
+    current_cash = initial_capital
+
+    if verbose > 0:
+        print(f"\n--- Running Trading Strategy (Signal: {signal_horizon_name}, Allocation: {allocation_method}) ---")
+        print(f"Initial Capital: ${initial_capital:,.2f}")
+        print(f"Trade Threshold UP: {trade_threshold_up*100:.3f}%")
+        print(f"Trade Threshold DOWN (abs): {trade_threshold_down*100:.3f}%")
+        print(f"Transaction Cost (per trade leg): {transaction_cost_pct*100:.4f}%")
+
+    for day_idx in range(num_days):
+        # This is the capital available for trading today, from EOD yesterday
+        capital_available_for_day = portfolio_values[day_idx].item() 
+        
+        daily_pnl_today = 0.0 # Reset daily PnL accumulator
+
+        signals_for_today = predictions_1day_ahead[day_idx]
+        realized_returns_today = actual_1d_returns[day_idx]
+
+        active_trades_for_today = [] # To store {'ticker_idx': idx, 'direction': 1 or -1}
+        for ticker_idx in range(num_tickers):
+            if signals_for_today[ticker_idx] > trade_threshold_up:
+                active_trades_for_today.append({'ticker_idx': ticker_idx, 'direction': 1})
+            elif signals_for_today[ticker_idx] < -trade_threshold_down:
+                active_trades_for_today.append({'ticker_idx': ticker_idx, 'direction': -1})
+
+        num_active_trades = len(active_trades_for_today)
+
+        if num_active_trades > 0:
+            capital_per_trade = capital_available_for_day / num_active_trades
+
+            for trade in active_trades_for_today:
+                ticker_idx = trade['ticker_idx']
+                direction = trade['direction']
+                
+                # Gross P&L for this leg
+                pnl_leg_gross = 0.0
+                if direction == 1: # Long
+                    pnl_leg_gross = capital_per_trade * realized_returns_today[ticker_idx]
+                elif direction == -1: # Short
+                    pnl_leg_gross = capital_per_trade * (-realized_returns_today[ticker_idx])
+                
+                # Transaction costs (will be zero if transaction_cost_pct is zero)
+                cost_entry = capital_per_trade * transaction_cost_pct
+                value_after_gross_pnl = capital_per_trade + pnl_leg_gross
+                cost_exit = value_after_gross_pnl * transaction_cost_pct
+                
+                net_pnl_leg = pnl_leg_gross - cost_entry - cost_exit
+                daily_pnl_today += net_pnl_leg
+        
+        # else: daily_pnl_today remains 0.0
+
+        eod_portfolio_value = capital_available_for_day + daily_pnl_today
+        portfolio_values[day_idx + 1] = eod_portfolio_value
+        daily_portfolio_returns[day_idx] = (eod_portfolio_value / capital_available_for_day) - 1.0 \
+            if capital_available_for_day > 1e-9 else 0.0
+
+        if verbose > 1 and (day_idx < 5 or day_idx == num_days - 1 or num_active_trades > 0):
+             print(f"Day {day_idx+1} (Simplified Match): SOD Cap: ${capital_available_for_day:,.2f}, Trades: {num_active_trades}, Daily PNL: ${daily_pnl_today:,.2f}, "
+                  f"EOD Cap: ${eod_portfolio_value:,.2f}, Day Ret: {daily_portfolio_returns[day_idx].item()*100:.3f}%")
+
+    # --- Performance Statistics Calculation --- (Same as before)
+    # ...
+    portfolio_df = pd.DataFrame({
+        "portfolio_value": portfolio_values[1:].numpy(),
+        "daily_return": daily_portfolio_returns.numpy()
+    })
+    daily_returns_np = daily_portfolio_returns.numpy()
+    # ... (rest of your stats calculation logic)
+    if num_days == 0 or daily_returns_np.size == 0: # Check if daily_returns_np is empty
+        total_return, annualized_return, annualized_volatility, sharpe_ratio, max_drawdown = 0.0, 0.0, 0.0, 0.0, 0.0
+        num_winning_days, num_losing_days, win_loss_ratio = 0, 0, 0.0
+        final_capital = initial_capital
+    else:
+        final_capital = portfolio_values[-1].item()
+        total_return = (final_capital / initial_capital) - 1.0
+        
+        annualized_return = ((1 + total_return) ** (252.0 / num_days)) - 1.0 if num_days > 0 else 0.0
+        annualized_volatility = np.std(daily_returns_np) * np.sqrt(252.0) if num_days > 0 else 0.0
+        sharpe_ratio = (annualized_return / annualized_volatility) if annualized_volatility > 1e-9 else 0.0
+
+        cumulative_returns_pd = (1 + pd.Series(daily_returns_np)).cumprod()
+        if not cumulative_returns_pd.empty:
+            peak = cumulative_returns_pd.expanding(min_periods=1).max()
+            drawdown = (cumulative_returns_pd / peak) - 1.0
+            max_drawdown = drawdown.min() if not drawdown.empty else 0.0
+        else:
+            max_drawdown = 0.0
+        
+        num_winning_days = (daily_returns_np > 0).sum()
+        num_losing_days = (daily_returns_np < 0).sum()
+        win_loss_ratio = num_winning_days / num_losing_days if num_losing_days > 0 else float("inf") if num_winning_days > 0 else 0.0
+    
+    stats_dict = {
+        "Signal Horizon Used": signal_horizon_name,
+        "Allocation Method": allocation_method, # Added
+        "Trade Threshold Up": trade_threshold_up,
+        "Trade Threshold Down (abs)": trade_threshold_down,
+        "Total Return": total_return, "Annualized Return": annualized_return,
+        "Annualized Volatility": annualized_volatility, "Sharpe Ratio": sharpe_ratio,
+        "Max Drawdown": max_drawdown, "Number of Trading Days": num_days,
+        "Number of Winning Days": int(num_winning_days), "Number of Losing Days": int(num_losing_days),
+        "Win/Loss Day Ratio": win_loss_ratio, "Final Capital": final_capital,
+    }
+
+    if verbose > 0:
+        print(f"\n--- Strategy Summary (Signal: {signal_horizon_name}, Allocation: {allocation_method}, with holding logic) ---")
+        for key, value in stats_dict.items():
+            if isinstance(value, (float, np.floating)) and key not in ["Sharpe Ratio", "Win/Loss Day Ratio", "Signal Horizon Used", "Trade Threshold Up", "Trade Threshold Down (abs)", "Allocation Method"]:
+                print(f"{key}: {value*100:.2f}%" if "Return" in key or "Drawdown" in key or "Volatility" in key else f"{key}: {value:.2f}")
+            elif isinstance(value, (float, np.floating)) and key in ["Sharpe Ratio", "Win/Loss Day Ratio", "Trade Threshold Up", "Trade Threshold Down (abs)"]:
+                print(f"{key}: {value:.4f}")
+            else:
+                print(f"{key}: {value}")
+    
+    return portfolio_df, stats_dict
+
+def run_trading_strategy_1day_signal_holding_strength(
+    predictions_1day_ahead: torch.Tensor, # (num_days, num_tickers)
+    actual_1d_returns: torch.Tensor,      # (num_days, num_tickers)
+    trade_threshold_up: float = 0.01,
+    trade_threshold_down: float = 0.01, # Absolute value for short threshold
+    close_threshold_pct: float = 0.001, 
+    initial_capital: float = 100000.0,
+    transaction_cost_pct: float = 0.0005,
+    signal_horizon_name: str = "1-day",
+    verbose: int = 0,
+    ticker_names: list = None, 
+    allocation_method: str = "signal_strength", # "equal_weight" or "signal_strength"
+    capital_base_for_allocation: str = "portfolio_value" # "cash" or "portfolio_value"
+):
+    predictions_1day_ahead = predictions_1day_ahead.cpu().to(dtype=torch.float64)
+    actual_1d_returns = actual_1d_returns.cpu().to(dtype=torch.float64)
+
+    num_days, num_tickers = predictions_1day_ahead.shape
+    if num_days != actual_1d_returns.shape[0] or num_tickers != actual_1d_returns.shape[1]:
+        raise ValueError("Predictions and actuals must have the same shape.")
+
+    portfolio_values_ts = torch.zeros(num_days + 1, dtype=torch.float64)
+    portfolio_values_ts[0] = torch.tensor(initial_capital, dtype=torch.float64)
+    daily_portfolio_returns_ts = torch.zeros(num_days, dtype=torch.float64)
+    
+    current_positions_direction = torch.zeros(num_tickers, dtype=torch.int8) 
+    capital_invested_in_position = torch.zeros(num_tickers, dtype=torch.float64)
+    current_cash = torch.tensor(initial_capital, dtype=torch.float64)
+
+    tc_pct_tensor = torch.tensor(transaction_cost_pct, dtype=torch.float64)
+
+    if verbose > 0:
+        print(f"\n--- Running Trading Strategy (Holding & Allocation: {allocation_method}, Capital Base: {capital_base_for_allocation}, Signal: {signal_horizon_name}) ---")
+        # ... other print statements ...
+
+    for day_idx in range(num_days):
+        sod_portfolio_value = portfolio_values_ts[day_idx] 
+        
+        # --- 1. Mark-to-market existing positions and update cash notionally ---
+        
+        # P&L from overnight moves on held positions. This P&L accrues to the portfolio value.
+        pnl_from_overnight_moves = torch.tensor(0.0, dtype=torch.float64)
+        for ticker_idx in range(num_tickers):
+            if current_positions_direction[ticker_idx] != 0:
+                position_return = actual_1d_returns[day_idx, ticker_idx] * current_positions_direction[ticker_idx]
+                pnl_from_overnight_moves += capital_invested_in_position[ticker_idx] * position_return
+        
+        # Portfolio value after overnight moves, before any new trades/closures for the day
+        portfolio_value_after_overnight_moves = sod_portfolio_value + pnl_from_overnight_moves
+        # Cash hasn't changed yet by *this specific P&L*. It changes from *trades*.
+
+        # --- 2. Determine new target positions based on today's signals ---
+        signals_today = predictions_1day_ahead[day_idx]
+        target_positions_direction = torch.zeros_like(current_positions_direction)
+        signal_strengths_for_allocation = torch.zeros(num_tickers, dtype=torch.float64)
+
+        for ticker_idx in range(num_tickers):
+            if signals_today[ticker_idx] > trade_threshold_up:
+                target_positions_direction[ticker_idx] = 1 
+                signal_strengths_for_allocation[ticker_idx] = signals_today[ticker_idx]
+            elif signals_today[ticker_idx] < -trade_threshold_down:
+                target_positions_direction[ticker_idx] = -1 
+                signal_strengths_for_allocation[ticker_idx] = torch.abs(signals_today[ticker_idx])
+
+        # --- 3. Execute Trades to match target_positions_direction ---
+        
+        # Temporary cash variable for this day's trading decisions. Start with previous EOD cash.
+        cash_available_for_trades_today = current_cash.clone() 
+
+        # A. Process Closures or Reductions based on signal changes
+        for ticker_idx in range(num_tickers):
+            current_dir = current_positions_direction[ticker_idx].item()
+            target_dir = target_positions_direction[ticker_idx].item()
+            # Close if direction flips OR if signal becomes too weak to hold an existing position
+            should_close = (current_dir != 0) and \
+                           (target_dir != current_dir or \
+                            (target_dir == current_dir and torch.abs(signals_today[ticker_idx]) < close_threshold_pct) or \
+                            target_dir == 0) # Explicit signal to go flat
+
+
+            if should_close:
+                # Value of position at the moment of closing (after today's market move)
+                value_of_closing_position = capital_invested_in_position[ticker_idx] * (1 + actual_1d_returns[day_idx, ticker_idx] * current_dir)
+                exit_cost = value_of_closing_position * tc_pct_tensor
+                
+                cash_available_for_trades_today += value_of_closing_position # Add full value back
+                cash_available_for_trades_today -= exit_cost           # Then subtract exit cost
+
+                if verbose > 2: print(f"Day {day_idx+1} Ticker {ticker_names[ticker_idx] if ticker_names else ticker_idx}: Closing position (was {current_dir}). Value: {value_of_closing_position.item():.2f}, Exit cost: {exit_cost.item():.2f}. Cash now: {cash_available_for_trades_today.item():.2f}")
+                
+                capital_invested_in_position[ticker_idx] = 0.0
+                current_positions_direction[ticker_idx] = 0
+        
+        # B. Determine capital base for opening new positions
+        capital_to_deploy_for_new_positions = torch.tensor(0.0, dtype=torch.float64)
+        if capital_base_for_allocation == "cash":
+            # Use only the currently available cash (after closures and their costs)
+            capital_to_deploy_for_new_positions = cash_available_for_trades_today
+        elif capital_base_for_allocation == "portfolio_value":
+            current_mtm_value_of_still_held_positions = torch.tensor(0.0, dtype=torch.float64)
+            for ticker_idx in range(num_tickers):
+                if current_positions_direction[ticker_idx] != 0: # Positions that were NOT closed above
+                    current_mtm_value_of_still_held_positions += capital_invested_in_position[ticker_idx] * \
+                        (1 + actual_1d_returns[day_idx, ticker_idx] * current_positions_direction[ticker_idx])
+            
+            capital_to_deploy_for_new_positions = cash_available_for_trades_today + current_mtm_value_of_still_held_positions
+        else:
+            raise ValueError(f"Unknown capital_base_for_allocation: {capital_base_for_allocation}")
+
+        # Identify positions to be newly opened or re-opened
+        positions_to_open_mask = (target_positions_direction != 0) & (current_positions_direction == 0)
+        num_positions_to_open = positions_to_open_mask.sum().item()
+
+        if num_positions_to_open > 0 and capital_to_deploy_for_new_positions > 1e-6 : # Ensure there's capital
+            
+            relevant_signal_strengths = signal_strengths_for_allocation[positions_to_open_mask]
+            total_strength_for_new_alloc = relevant_signal_strengths.sum()
+
+            if total_strength_for_new_alloc > 1e-9: # Avoid division by zero
+                for ticker_idx in range(num_tickers):
+                    if positions_to_open_mask[ticker_idx]: # If this is a position to open
+                        target_dir = target_positions_direction[ticker_idx].item()
+                        
+                        intended_capital_for_this_trade = torch.tensor(0.0, dtype=torch.float64)
+                        if allocation_method == "signal_strength":
+                            intended_capital_for_this_trade = \
+                                (signal_strengths_for_allocation[ticker_idx] / total_strength_for_new_alloc) * capital_to_deploy_for_new_positions
+                        elif allocation_method == "equal_weight":
+                            intended_capital_for_this_trade = capital_to_deploy_for_new_positions / num_positions_to_open
+                        
+                        actual_investment_this_trade = torch.min(intended_capital_for_this_trade, cash_available_for_trades_today)
+                        
+                        if actual_investment_this_trade <= 1e-6: continue # Skip if negligible or no cash
+
+                        entry_cost = actual_investment_this_trade * tc_pct_tensor
+                        
+                        # Check if we have enough cash for the trade + its entry cost
+                        if cash_available_for_trades_today >= actual_investment_this_trade + entry_cost:
+                            cash_available_for_trades_today -= (actual_investment_this_trade + entry_cost)
+                            
+                            current_positions_direction[ticker_idx] = target_dir
+                            capital_invested_in_position[ticker_idx] = actual_investment_this_trade
+
+                            if verbose > 2: print(f"Day {day_idx+1} Ticker {ticker_names[ticker_idx] if ticker_names else ticker_idx}: Opening {'long' if target_dir==1 else 'short'}. Invested: {actual_investment_this_trade.item():.2f}. Entry cost: {entry_cost.item():.2f}. Cash left: {cash_available_for_trades_today.item():.2f}")
+                        else:
+                            if verbose > 2: print(f"Day {day_idx+1} Ticker {ticker_names[ticker_idx] if ticker_names else ticker_idx}: Insufficient cash to open {'long' if target_dir==1 else 'short'}. Need { (actual_investment_this_trade + entry_cost).item():.2f}, have {cash_available_for_trades_today.item():.2f}")
+
+
+        current_cash = cash_available_for_trades_today # Final cash after all of today's trading ops
+
+        # --- 4. Calculate End-of-Day Portfolio Value ---
+        eod_value_of_open_positions = torch.tensor(0.0, dtype=torch.float64)
+        for ticker_idx in range(num_tickers):
+            if current_positions_direction[ticker_idx] != 0: # If position is held at EOD
+                pnl_on_this_position_today = capital_invested_in_position[ticker_idx] * \
+                                             actual_1d_returns[day_idx, ticker_idx] * \
+                                             current_positions_direction[ticker_idx]
+                eod_value_of_open_positions += capital_invested_in_position[ticker_idx] + pnl_on_this_position_today
+        
+        eod_portfolio_value = current_cash + eod_value_of_open_positions
+        portfolio_values_ts[day_idx + 1] = eod_portfolio_value
+
+        if sod_portfolio_value.abs().item() > 1e-9: # sod_portfolio_value is from portfolio_values_ts[day_idx]
+            daily_portfolio_returns_ts[day_idx] = (eod_portfolio_value / sod_portfolio_value) - 1.0
+        else:
+            daily_portfolio_returns_ts[day_idx] = torch.tensor(0.0, dtype=torch.float64)
+        
+        if verbose > 1 and (day_idx < 5 or day_idx == num_days - 1 or torch.any(target_positions_direction !=0) or torch.any(current_positions_direction[ticker_idx] !=0 for ticker_idx in range(num_tickers)) ): # Added more comprehensive condition
+            active_pos_str = [f"{ticker_names[i] if ticker_names else i}:{'L' if current_positions_direction[i]==1 else 'S' if current_positions_direction[i]==-1 else '-'}(${capital_invested_in_position[i]:.0f})" for i in range(num_tickers) if current_positions_direction[i]!=0 ]
+            print(f"Day {day_idx+1}: SOD Val: ${sod_portfolio_value.item():,.2f}, Cash: ${current_cash.item():,.2f}, PosVal EOD: ${eod_value_of_open_positions.item():,.2f}, EOD PortVal: ${eod_portfolio_value.item():,.2f}. Day Ret: {daily_portfolio_returns_ts[day_idx].item()*100:.3f}%. Held EOD: {active_pos_str}")
+
+    # --- Performance Statistics Calculation ---
+    daily_returns_np = daily_portfolio_returns_ts.numpy()
+    if num_days == 0 or daily_returns_np.size == 0: 
+        total_return, annualized_return, annualized_volatility, sharpe_ratio, max_drawdown = 0.0, 0.0, 0.0, 0.0, 0.0
+        num_winning_days, num_losing_days, win_loss_ratio = 0, 0, 0.0
+        final_capital = initial_capital
+    else:
+        final_capital = portfolio_values_ts[-1].item()
+        total_return = (final_capital / initial_capital) - 1.0
+        
+        annualized_return = ((1 + total_return) ** (252.0 / num_days)) - 1.0 if num_days > 0 else 0.0
+        annualized_volatility = np.std(daily_returns_np) * np.sqrt(252.0) if num_days > 0 else 0.0
+        sharpe_ratio = (annualized_return / annualized_volatility) if annualized_volatility > 1e-9 else 0.0
+
+        cumulative_returns_pd = (1 + pd.Series(daily_returns_np)).cumprod()
+        if not cumulative_returns_pd.empty:
+            peak = cumulative_returns_pd.expanding(min_periods=1).max()
+            drawdown = (cumulative_returns_pd / peak) - 1.0
+            max_drawdown = drawdown.min() if not drawdown.empty else 0.0
+        else:
+            max_drawdown = 0.0
+        
+        num_winning_days = (daily_returns_np > 0).sum()
+        num_losing_days = (daily_returns_np < 0).sum()
+        win_loss_ratio = num_winning_days / num_losing_days if num_losing_days > 0 else float("inf") if num_winning_days > 0 else 0.0
+    
+    stats_dict = {
+        "Signal Horizon Used": signal_horizon_name,
+        "Allocation Method": allocation_method, 
+        "Capital Base for Allocation": capital_base_for_allocation, # Added
+        "Trade Threshold Up": trade_threshold_up,
+        "Trade Threshold Down (abs)": trade_threshold_down,
+        "Close Threshold Pct": close_threshold_pct, 
+        "Total Return": total_return, "Annualized Return": annualized_return,
+        "Annualized Volatility": annualized_volatility, "Sharpe Ratio": sharpe_ratio,
+        "Max Drawdown": max_drawdown, "Number of Trading Days": num_days,
+        "Number of Winning Days": int(num_winning_days), "Number of Losing Days": int(num_losing_days),
+        "Win/Loss Day Ratio": win_loss_ratio, "Final Capital": final_capital,
+    }
+
+    if verbose > 0:
+        print(f"\n--- Strategy Summary (Signal: {signal_horizon_name}, Allocation: {allocation_method}, Capital Base: {capital_base_for_allocation}, Holding Logic) ---")
+        for key, value in stats_dict.items():
+            if isinstance(value, (float, np.floating)) and key not in ["Sharpe Ratio", "Win/Loss Day Ratio", "Signal Horizon Used", "Trade Threshold Up", "Trade Threshold Down (abs)", "Allocation Method", "Close Threshold Pct", "Capital Base for Allocation"]:
+                print(f"{key}: {value*100:.2f}%" if "Return" in key or "Drawdown" in key or "Volatility" in key else f"{key}: {value:.2f}")
+            elif isinstance(value, (float, np.floating)) and key in ["Sharpe Ratio", "Win/Loss Day Ratio", "Trade Threshold Up", "Trade Threshold Down (abs)", "Close Threshold Pct"]:
+                print(f"{key}: {value:.4f}")
+            else:
+                print(f"{key}: {value}")
+                
+    portfolio_df = pd.DataFrame({
+        "portfolio_value": portfolio_values_ts[1:].numpy(),
+        "daily_return": daily_portfolio_returns_ts.numpy()
+    })
+    return portfolio_df, stats_dict
+
+# def run_trading_strategy_1day_signal_holding_rebalance( # Renamed for clarity
+#     predictions_1day_ahead: torch.Tensor,
+#     actual_1d_returns: torch.Tensor,
+#     trade_threshold_up: float = 0.01,
+#     trade_threshold_down: float = 0.01,
+#     close_threshold_pct: float = 0.001, # Determines if a signal is strong enough to warrant a position
+#     initial_capital: float = 100000.0,
+#     transaction_cost_pct: float = 0.0005,
+#     signal_horizon_name: str = "1-day",
+#     verbose: int = 0,
+#     ticker_names: list = None,
+#     allocation_method: str = "signal_strength", # "equal_weight" or "signal_strength"
+#     capital_base_for_allocation: str = "portfolio_value" # "cash" or "portfolio_value"
+# ):
+#     predictions_1day_ahead = predictions_1day_ahead.cpu().to(dtype=torch.float64)
+#     actual_1d_returns = actual_1d_returns.cpu().to(dtype=torch.float64)
+
+#     num_days, num_tickers = predictions_1day_ahead.shape
+
+#     portfolio_values_ts = torch.zeros(num_days + 1, dtype=torch.float64)
+#     portfolio_values_ts[0] = torch.tensor(initial_capital, dtype=torch.float64)
+#     daily_portfolio_returns_ts = torch.zeros(num_days, dtype=torch.float64)
+    
+#     # Position Tracking:
+#     # current_positions_direction: 1 for long, -1 for short, 0 for flat
+#     current_positions_direction = torch.zeros(num_tickers, dtype=torch.int8)
+#     # current_position_value_sod: Mark-to-market value of each position at Start of Day (after prev day's EOD)
+#     # This will be based on the capital allocated previously.
+#     # For simplicity, let's track the *dollar amount invested* (cost basis) in each position.
+#     capital_at_cost_basis = torch.zeros(num_tickers, dtype=torch.float64)
+#     current_cash = torch.tensor(initial_capital, dtype=torch.float64)
+
+#     tc_pct_tensor = torch.tensor(transaction_cost_pct, dtype=torch.float64)
+
+#     if verbose > 0:
+#         print(f"\n--- Running Rebalancing Strategy (Hold & Alloc: {allocation_method}, CapBase: {capital_base_for_allocation}, Signal: {signal_horizon_name}) ---")
+#         # ...
+
+#     for day_idx in range(num_days):
+#         sod_portfolio_total_value = portfolio_values_ts[day_idx] # From EOD yesterday
+
+#         # --- 1. Mark-to-market existing positions based on today's open (conceptually) ---
+#         # Or, more practically, calculate value of positions after *today's* returns, before rebalancing.
+#         sod_value_of_open_positions = torch.tensor(0.0, dtype=torch.float64)
+#         for i in range(num_tickers):
+#             if current_positions_direction[i] != 0:
+#                 sod_value_of_open_positions += capital_at_cost_basis[i] * \
+#                                                (1 + actual_1d_returns[day_idx, i] * current_positions_direction[i])
+        
+#         # Portfolio value after market moves for today, before rebalancing trades
+#         portfolio_value_before_rebalance = current_cash + sod_value_of_open_positions
+
+#         # --- 2. Determine Target Dollar Allocation for EOD based on today's signals ---
+#         signals_today = predictions_1day_ahead[day_idx]
+#         target_dollar_allocations = torch.zeros(num_tickers, dtype=torch.float64) # Desired $ value in each ticker EOD
+#         target_position_directions_new = torch.zeros(num_tickers, dtype=torch.int8)
+
+#         active_signal_indices = []
+#         active_signal_strengths = []
+
+#         for i in range(num_tickers):
+#             if signals_today[i] > trade_threshold_up:
+#                 target_position_directions_new[i] = 1
+#                 active_signal_indices.append(i)
+#                 active_signal_strengths.append(signals_today[i])
+#             elif signals_today[i] < -trade_threshold_down:
+#                 target_position_directions_new[i] = -1
+#                 active_signal_indices.append(i)
+#                 active_signal_strengths.append(torch.abs(signals_today[i]))
+        
+#         capital_base_for_day_allocation = torch.tensor(0.0, dtype=torch.float64)
+#         if capital_base_for_allocation == "cash":
+#             # This interpretation means we only trade with cash, existing positions are largely left alone
+#             # unless explicitly closed by signal reversing or weakening. This is closer to previous.
+#             # For full rebalancing based on cash, it's more complex.
+#             # Let's assume "cash" means new trades are funded from current_cash only.
+#             # For this rebalancing logic, "portfolio_value" is the more distinct mode.
+#             capital_base_for_day_allocation = current_cash # This isn't quite right for full rebalance based on cash.
+#                                                         # Let's focus on portfolio_value rebalancing for now.
+#             if capital_base_for_allocation == "cash":
+#                 print("Warning: 'cash' based allocation with full rebalancing is ambiguous. Defaulting to portfolio_value logic for rebalancing.")
+#                 capital_base_for_day_allocation = portfolio_value_before_rebalance # Default to portfolio for rebalance logic
+        
+#         elif capital_base_for_allocation == "portfolio_value":
+#             capital_base_for_day_allocation = portfolio_value_before_rebalance
+#         else:
+#             raise ValueError(f"Unknown capital_base_for_allocation: {capital_base_for_allocation}")
+
+
+#         if active_signal_indices: # If there are any target positions
+#             active_signal_strengths_tensor = torch.tensor(active_signal_strengths, dtype=torch.float64)
+#             total_strength_for_allocation = active_signal_strengths_tensor.sum()
+
+#             if allocation_method == "signal_strength" and total_strength_for_allocation > 1e-9:
+#                 for k, ticker_idx in enumerate(active_signal_indices):
+#                     target_dollar_allocations[ticker_idx] = \
+#                         (active_signal_strengths_tensor[k] / total_strength_for_allocation) * capital_base_for_day_allocation
+#             elif allocation_method == "equal_weight" or total_strength_for_allocation <= 1e-9 : # Fallback to equal if no strength
+#                 alloc_per_ticker = capital_base_for_day_allocation / len(active_signal_indices)
+#                 for ticker_idx in active_signal_indices:
+#                     target_dollar_allocations[ticker_idx] = alloc_per_ticker
+        
+#         # --- 3. Execute Trades (Rebalance) ---
+#         net_cash_change_from_trades = torch.tensor(0.0, dtype=torch.float64) # Tracks cash flow from buys/sells
+#         total_transaction_costs_today = torch.tensor(0.0, dtype=torch.float64)
+
+#         for i in range(num_tickers):
+#             current_value_of_position_i = torch.tensor(0.0, dtype=torch.float64)
+#             if current_positions_direction[i] != 0:
+#                 current_value_of_position_i = capital_at_cost_basis[i] * \
+#                     (1 + actual_1d_returns[day_idx, i] * current_positions_direction[i])
+
+#             target_value_i = target_dollar_allocations[i] # This is the target exposure in dollars
+#             trade_amount_dollar = target_value_i - current_value_of_position_i # Positive means buy, negative means sell
+
+#             if abs(trade_amount_dollar.item()) > 1e-6 : # If a trade is needed (more than dust)
+#                 cost = torch.abs(trade_amount_dollar) * tc_pct_tensor
+#                 total_transaction_costs_today += cost
+#                 net_cash_change_from_trades -= trade_amount_dollar # Buy reduces cash, Sell increases cash
+#                 net_cash_change_from_trades -= cost             # Costs reduce cash
+
+#                 # Update position based on target direction and value
+#                 if target_position_directions_new[i] != 0:
+#                     current_positions_direction[i] = target_position_directions_new[i]
+#                     # The new "cost basis" is the target dollar allocation
+#                     # This is a simplification; true cost basis tracking is more complex with partial sales.
+#                     # For this model, we are re-establishing the position at target_value_i.
+#                     capital_at_cost_basis[i] = target_value_i # Or target_value_i if that's net of cost
+#                                                               # Let's assume target_value_i is gross exposure.
+#                                                               # The cost is paid from cash.
+#                 else: # Target is flat
+#                     current_positions_direction[i] = 0
+#                     capital_at_cost_basis[i] = 0.0
+                    
+#                 if verbose > 2:
+#                     action = "BUY" if trade_amount_dollar > 0 else "SELL"
+#                     print(f"Day {day_idx+1} Ticker {ticker_names[i] if ticker_names else i}: Rebalance {action} by ${abs(trade_amount_dollar.item()):.2f}. TargetVal: ${target_value_i:.2f}, PrevVal: ${current_value_of_position_i:.2f}, Cost: ${cost:.2f}")
+#             else: # No significant trade, but direction might have changed to flat if signal disappeared
+#                 if target_position_directions_new[i] == 0 and current_positions_direction[i] != 0:
+#                     # Position was held, signal disappeared, but value was already close to zero (no trade needed)
+#                     current_positions_direction[i] = 0
+#                     capital_at_cost_basis[i] = 0.0
+
+
+#         current_cash += net_cash_change_from_trades # Update cash based on net effect of trades and costs
+
+#         # --- 4. Calculate EOD Portfolio Value ---
+#         # # EOD value is simply the sum of new cost bases (which are target EOD values) + remaining cash
+#         # # OR, more robustly: portfolio_value_before_rebalance - total_transaction_costs_today
+#         # # The portfolio_value_before_rebalance already reflects today's market moves on previous positions.
+#         # # The rebalancing trades only change the composition and incur costs.
+#         # eod_portfolio_value = portfolio_value_before_rebalance - total_transaction_costs_today
+        
+#         # # Sanity check: eod_portfolio_value should also be sum of cash + MTM of new positions
+#         # # MTM of new EOD positions: target_dollar_allocations sum (if no costs were deducted from alloc)
+#         # # This needs care. The `eod_portfolio_value = portfolio_value_before_rebalance - total_transaction_costs_today`
+#         # # is the most direct way to track value if rebalancing is perfect.
+
+#         # portfolio_values_ts[day_idx + 1] = eod_portfolio_value
+#         eod_mtm_value_of_final_positions = torch.tensor(0.0, dtype=torch.float64)
+#         for i in range(num_tickers):
+#             if current_positions_direction[i] != 0: # If a position is held at EOD
+#                 # The capital_at_cost_basis[i] is the amount invested based on TODAY's signal.
+#                 # The P&L for this position for TODAY is based on this investment.
+#                 pnl_on_newly_established_position_today = capital_at_cost_basis[i] * \
+#                     actual_1d_returns[day_idx, i] * \
+#                     current_positions_direction[i] # direction is already target direction
+#                 eod_mtm_value_of_final_positions += capital_at_cost_basis[i] + pnl_on_newly_established_position_today
+        
+#         eod_portfolio_value = current_cash + eod_mtm_value_of_final_positions # Cash is after all trades and costs
+        
+#         portfolio_values_ts[day_idx + 1] = eod_portfolio_value
+
+#         if sod_portfolio_total_value.abs().item() > 1e-9:
+#             daily_portfolio_returns_ts[day_idx] = (eod_portfolio_value / sod_portfolio_total_value) - 1.0
+#         else:
+#             daily_portfolio_returns_ts[day_idx] = torch.tensor(0.0, dtype=torch.float64)
+        
+#         if verbose > 1: # Simplified print for rebalancing
+#             active_pos_str = [f"{ticker_names[i] if ticker_names else i}:{'L' if current_positions_direction[i]==1 else 'S' if current_positions_direction[i]==-1 else '-'}(${capital_at_cost_basis[i]:.0f})" for i in range(num_tickers) if current_positions_direction[i]!=0 ]
+#             print(f"Day {day_idx+1}: SOD_PortVal: ${sod_portfolio_total_value.item():,.2f}, Val_Bef_Rebal: ${portfolio_value_before_rebalance.item():,.2f}, Costs: ${total_transaction_costs_today.item():.2f}, Cash_EOD: ${current_cash.item():,.2f}, EOD_PortVal: ${eod_portfolio_value.item():,.2f}. DayRet: {daily_portfolio_returns_ts[day_idx].item()*100:.3f}%. Held EOD: {active_pos_str}")
+
+
+#     # --- Performance Statistics Calculation ---
+#     # ... (Same as before)
+#     daily_returns_np = daily_portfolio_returns_ts.numpy()
+#     # ... (Copy the full stats calculation block from your previous version)
+#     # Use final_capital = portfolio_values_ts[-1].item()
+#     # ... (The rest of your stats_dict and printout) ...
+
+#     # This is a template, ensure it's complete:
+#     if num_days == 0 or daily_returns_np.size == 0:
+#         total_return, annualized_return, annualized_volatility, sharpe_ratio, max_drawdown = 0.0, 0.0, 0.0, 0.0, 0.0
+#         num_winning_days, num_losing_days, win_loss_ratio = 0, 0, 0.0
+#         final_capital = initial_capital
+#     else:
+#         final_capital = portfolio_values_ts[-1].item()
+#         total_return = (final_capital / initial_capital) - 1.0
+#         # ... (rest of calculation)
+#         annualized_return = ((1 + total_return) ** (252.0 / num_days)) - 1.0 if num_days > 0 else 0.0
+#         annualized_volatility = np.std(daily_returns_np) * np.sqrt(252.0) if num_days > 0 else 0.0
+#         sharpe_ratio = (annualized_return / annualized_volatility) if annualized_volatility > 1e-9 else 0.0
+
+#         cumulative_returns_pd = (1 + pd.Series(daily_returns_np)).cumprod()
+#         if not cumulative_returns_pd.empty:
+#             peak = cumulative_returns_pd.expanding(min_periods=1).max()
+#             drawdown = (cumulative_returns_pd / peak) - 1.0
+#             max_drawdown = drawdown.min() if not drawdown.empty else 0.0
+#         else:
+#             max_drawdown = 0.0
+        
+#         num_winning_days = (daily_returns_np > 0).sum()
+#         num_losing_days = (daily_returns_np < 0).sum()
+#         win_loss_ratio = num_winning_days / num_losing_days if num_losing_days > 0 else float("inf") if num_winning_days > 0 else 0.0
+
+
+#     stats_dict = {
+#         "Signal Horizon Used": signal_horizon_name,
+#         "Allocation Method": allocation_method,
+#         "Capital Base for Allocation": capital_base_for_allocation,
+#         "Trade Threshold Up": trade_threshold_up,
+#         "Trade Threshold Down (abs)": trade_threshold_down,
+#         "Close Threshold Pct": close_threshold_pct,
+#         "Total Return": total_return, "Annualized Return": annualized_return,
+#         "Annualized Volatility": annualized_volatility, "Sharpe Ratio": sharpe_ratio,
+#         "Max Drawdown": max_drawdown, "Number of Trading Days": num_days,
+#         "Number of Winning Days": int(num_winning_days), "Number of Losing Days": int(num_losing_days),
+#         "Win/Loss Day Ratio": win_loss_ratio, "Final Capital": final_capital,
+#     }
+#     # ... (verbose printout)
+#     if verbose > 0:
+#         print(f"\n--- Strategy Summary (Signal: {signal_horizon_name}, Allocation: {allocation_method}, Capital Base: {capital_base_for_allocation}, Rebalance Logic) ---")
+#         for key, value in stats_dict.items():
+#             if isinstance(value, (float, np.floating)) and key not in ["Sharpe Ratio", "Win/Loss Day Ratio", "Signal Horizon Used", "Trade Threshold Up", "Trade Threshold Down (abs)", "Allocation Method", "Close Threshold Pct", "Capital Base for Allocation"]:
+#                 print(f"{key}: {value*100:.2f}%" if "Return" in key or "Drawdown" in key or "Volatility" in key else f"{key}: {value:.2f}")
+#             elif isinstance(value, (float, np.floating)) and key in ["Sharpe Ratio", "Win/Loss Day Ratio", "Trade Threshold Up", "Trade Threshold Down (abs)", "Close Threshold Pct"]:
+#                 print(f"{key}: {value:.4f}")
+#             else:
+#                 print(f"{key}: {value}")
+
+#     portfolio_df = pd.DataFrame({
+#         "portfolio_value": portfolio_values_ts[1:].numpy(),
+#         "daily_return": daily_portfolio_returns_ts.numpy()
+#     })
+#     return portfolio_df, stats_dict
+
+def run_trading_strategy_1day_signal_holding_rebalance_DEBUG(
+    predictions_1day_ahead: torch.Tensor,
+    actual_1d_returns: torch.Tensor,
+    trade_threshold_up: float = 0.01,
+    trade_threshold_down: float = 0.01, # Absolute value
+    close_threshold_pct: float = 0.000, # Set to 0 for debug equivalence
+    initial_capital: float = 100000.0,
+    transaction_cost_pct: float = 0.000, # Set to 0 for debug equivalence
+    signal_horizon_name: str = "1-day",
+    verbose: int = 0,
+    ticker_names: list = None,
+    allocation_method: str = "equal_weight", # Set for debug equivalence
+    capital_base_for_allocation: str = "portfolio_value" # Set for debug equivalence
+):
+    # --- Ensure conditions for debug equivalence ---
+    is_debug_equivalence_mode = False
+    if (math.isclose(transaction_cost_pct, 0.0) and
+        allocation_method == "equal_weight" and
+        capital_base_for_allocation == "portfolio_value" and
+        math.isclose(close_threshold_pct, trade_threshold_up)): # Ensure close_threshold is also effectively off
+        is_debug_equivalence_mode = True
+        if verbose > 0: print("--- RUNNING IN DEBUG EQUIVALENCE MODE (should match simple strategy) ---")
+
+    predictions_1day_ahead = predictions_1day_ahead.cpu().to(dtype=torch.float64)
+    actual_1d_returns = actual_1d_returns.cpu().to(dtype=torch.float64)
+
+    num_days, num_tickers = predictions_1day_ahead.shape
+
+    portfolio_values_ts = torch.zeros(num_days + 1, dtype=torch.float64)
+    portfolio_values_ts[0] = torch.tensor(initial_capital, dtype=torch.float64)
+    daily_portfolio_returns_ts = torch.zeros(num_days, dtype=torch.float64)
+    
+    # These are for the full holding strategy, will be minimally used in debug equivalence mode
+    current_positions_direction_held = torch.zeros(num_tickers, dtype=torch.int8) 
+    capital_at_cost_basis_held = torch.zeros(num_tickers, dtype=torch.float64)
+    current_cash_held = torch.tensor(initial_capital, dtype=torch.float64)
+
+    tc_pct_tensor = torch.tensor(transaction_cost_pct, dtype=torch.float64)
+
+    if verbose > 0:
+        print(f"\n--- Running Rebalancing Strategy (Hold & Alloc: {allocation_method}, CapBase: {capital_base_for_allocation}, Signal: {signal_horizon_name}) ---")
+        # ...
+
+    for day_idx in range(num_days):
+        sod_total_portfolio_value = portfolio_values_ts[day_idx] # This is EOD value from day_idx-1
+
+        # --- Determine Signals for Today ---
+        signals_today = predictions_1day_ahead[day_idx]
+        
+        # For debug equivalence, we essentially day-trade the entire sod_total_portfolio_value
+        if is_debug_equivalence_mode:
+            daily_pnl_for_day = torch.tensor(0.0, dtype=torch.float64)
+            
+            active_signals_for_daytrading = []
+            for i in range(num_tickers):
+                if signals_today[i] > trade_threshold_up:
+                    active_signals_for_daytrading.append({'ticker_idx': i, 'direction': 1})
+                elif signals_today[i] < -trade_threshold_down:
+                    active_signals_for_daytrading.append({'ticker_idx': i, 'direction': -1})
+            
+            if active_signals_for_daytrading:
+                capital_per_daytrade_leg = sod_total_portfolio_value / len(active_signals_for_daytrading)
+                for trade in active_signals_for_daytrading:
+                    ticker_idx = trade['ticker_idx']
+                    direction = trade['direction']
+                    # PNL for this leg (no costs in debug equivalence mode)
+                    pnl_leg = capital_per_daytrade_leg * actual_1d_returns[day_idx, ticker_idx] * direction
+                    daily_pnl_for_day += pnl_leg
+            
+            eod_portfolio_value = sod_total_portfolio_value + daily_pnl_for_day
+            portfolio_values_ts[day_idx + 1] = eod_portfolio_value
+            if sod_total_portfolio_value.abs().item() > 1e-9:
+                daily_portfolio_returns_ts[day_idx] = (eod_portfolio_value / sod_total_portfolio_value) - 1.0
+            else:
+                daily_portfolio_returns_ts[day_idx] = torch.tensor(0.0, dtype=torch.float64)
+
+            # Update held state to reflect EOD positions (all cash if day trading) for next iteration if needed
+            # Though for pure simple strategy match, this isn't strictly necessary as it resets each day
+            current_cash_held = eod_portfolio_value # All value is cash EOD for simple comparison
+            capital_at_cost_basis_held.zero_()
+            current_positions_direction_held.zero_()
+
+            if verbose > 1:
+                print(f"Day {day_idx+1} (DebugEquiv): SOD_PortVal: ${sod_total_portfolio_value.item():,.2f}, Trades: {len(active_signals_for_daytrading)}, PNL: ${daily_pnl_for_day.item():.2f}, EOD_PortVal: ${eod_portfolio_value.item():,.2f}. DayRet: {daily_portfolio_returns_ts[day_idx].item()*100:.3f}%")
+
+        else: # --- Full Holding and Rebalancing Logic (when not in debug equivalence mode) ---
+            
+            # 1. MTM of held positions after today's market moves
+            mtm_value_of_sod_held_positions_after_moves = torch.tensor(0.0, dtype=torch.float64)
+            for i in range(num_tickers):
+                if current_positions_direction_held[i] != 0:
+                    mtm_value_of_sod_held_positions_after_moves += capital_at_cost_basis_held[i] * \
+                        (1 + actual_1d_returns[day_idx, i] * current_positions_direction_held[i])
+            
+            portfolio_value_after_moves_before_rebalance = current_cash_held + mtm_value_of_sod_held_positions_after_moves
+
+            # 2. Determine Target Positions & Dollar Allocations for EOD
+            target_eod_directions = torch.zeros(num_tickers, dtype=torch.int8)
+            target_eod_dollar_allocations = torch.zeros(num_tickers, dtype=torch.float64)
+            
+            active_target_indices = []
+            active_target_strengths = []
+            for i in range(num_tickers):
+                if signals_today[i] > trade_threshold_up:
+                    target_eod_directions[i] = 1
+                    active_target_indices.append(i)
+                    active_target_strengths.append(signals_today[i])
+                elif signals_today[i] < -trade_threshold_down:
+                    target_eod_directions[i] = -1
+                    active_target_indices.append(i)
+                    active_target_strengths.append(torch.abs(signals_today[i]))
+            
+            # Determine capital base for allocation
+            capital_alloc_base = torch.tensor(0.0, dtype=torch.float64)
+            if capital_base_for_allocation == "portfolio_value":
+                capital_alloc_base = portfolio_value_after_moves_before_rebalance
+            elif capital_base_for_allocation == "cash":
+                # For holding strategy, "cash" allocation base would typically mean
+                # only cash is used for *new* trades, and existing positions are sized separately
+                # or rebalanced using their own value. This gets complex.
+                # For now, let's assume if "cash", it refers to `current_cash_held` for *new* capital deployment.
+                # But rebalancing the whole portfolio usually implies using total portfolio value.
+                # For this rebalance function, 'portfolio_value' makes more sense.
+                # If we stick to "cash", then it means we'd only allocate cash_held among new signals.
+                capital_alloc_base = current_cash_held # This needs careful thought if it's for full rebalance
+                                                      # We'll assume it's for full rebalance, so using portfolio value is more logical
+                if verbose > 0 and capital_base_for_allocation == "cash": print("Warning: 'cash' base for full rebalance. Targets will be fraction of cash, not total portfolio.")
+
+
+            if active_target_indices:
+                strengths_tensor = torch.tensor(active_target_strengths, dtype=torch.float64)
+                total_strength = strengths_tensor.sum()
+                if allocation_method == "signal_strength" and total_strength > 1e-9:
+                    for k, ticker_idx in enumerate(active_target_indices):
+                        target_eod_dollar_allocations[ticker_idx] = (strengths_tensor[k] / total_strength) * capital_alloc_base
+                else: # Equal weight (also fallback if total_strength is zero)
+                    alloc_per_ticker = capital_alloc_base / len(active_target_indices)
+                    for ticker_idx in active_target_indices:
+                        target_eod_dollar_allocations[ticker_idx] = alloc_per_ticker
+            
+            # 3. Execute Rebalancing Trades
+            cash_after_trades = current_cash_held.clone() # Start with cash from SOD
+            new_cost_basis_eod = torch.zeros_like(capital_at_cost_basis_held)
+            total_costs_today = torch.tensor(0.0, dtype=torch.float64)
+
+            for i in range(num_tickers):
+                current_mtm_value_i = torch.tensor(0.0, dtype=torch.float64)
+                if current_positions_direction_held[i] != 0:
+                    current_mtm_value_i = capital_at_cost_basis_held[i] * \
+                        (1 + actual_1d_returns[day_idx, i] * current_positions_direction_held[i])
+                
+                target_dollar_value_i = target_eod_dollar_allocations[i]
+                trade_dollar_amount = target_dollar_value_i - current_mtm_value_i # >0 buy, <0 sell
+
+                if torch.abs(trade_dollar_amount) > 1e-6: # If trade is needed
+                    cost = torch.abs(trade_dollar_amount) * tc_pct_tensor
+                    total_costs_today += cost
+                    cash_after_trades -= trade_dollar_amount # Buying reduces cash, selling increases
+                    cash_after_trades -= cost
+                
+                if target_eod_directions[i] != 0:
+                    new_cost_basis_eod[i] = target_dollar_value_i # New basis is target EOD value
+                # else it remains 0
+
+            # Update EOD state
+            current_cash_held = cash_after_trades
+            capital_at_cost_basis_held = new_cost_basis_eod
+            current_positions_direction_held = target_eod_directions
+            
+            # 4. EOD Portfolio Value
+            # It's the portfolio value after market moves, minus today's transaction costs
+            eod_portfolio_value = portfolio_value_after_moves_before_rebalance - total_costs_today
+            portfolio_values_ts[day_idx + 1] = eod_portfolio_value
+
+            if sod_total_portfolio_value.abs().item() > 1e-9:
+                daily_portfolio_returns_ts[day_idx] = (eod_portfolio_value / sod_total_portfolio_value) - 1.0
+            else:
+                daily_portfolio_returns_ts[day_idx] = torch.tensor(0.0, dtype=torch.float64)
+
+            if verbose > 1:
+                 # ... (your detailed verbose print for the rebalance case) ...
+                active_pos_str = [f"{ticker_names[i] if ticker_names else i}:{'L' if current_positions_direction_held[i]==1 else 'S' if current_positions_direction_held[i]==-1 else '-'}(${capital_at_cost_basis_held[i]:.0f})" for i in range(num_tickers) if current_positions_direction_held[i]!=0 ]
+                print(f"Day {day_idx+1} (Rebal): SOD_PortVal: ${sod_total_portfolio_value.item():,.2f}, ValAftMoves: ${portfolio_value_after_moves_before_rebalance.item():,.2f}, Costs: ${total_costs_today.item():,.2f}, CashEOD: ${current_cash_held.item():,.2f}, EOD_PortVal: ${eod_portfolio_value.item():,.2f}. DayRet: {daily_portfolio_returns_ts[day_idx].item()*100:.3f}%. HeldEOD: {active_pos_str}")
+
+
+    # --- Performance Statistics Calculation --- (Same as before)
+    daily_returns_np = daily_portfolio_returns_ts.numpy()
+    # ... (Copy the full stats calculation block)
+    if num_days == 0 or daily_returns_np.size == 0: 
+        total_return, annualized_return, annualized_volatility, sharpe_ratio, max_drawdown = 0.0, 0.0, 0.0, 0.0, 0.0
+        num_winning_days, num_losing_days, win_loss_ratio = 0, 0, 0.0
+        final_capital = initial_capital
+    else:
+        final_capital = portfolio_values_ts[-1].item()
+        total_return = (final_capital / initial_capital) - 1.0
+        
+        annualized_return = ((1 + total_return) ** (252.0 / num_days)) - 1.0 if num_days > 0 else 0.0
+        annualized_volatility = np.std(daily_returns_np) * np.sqrt(252.0) if num_days > 0 else 0.0
+        sharpe_ratio = (annualized_return / annualized_volatility) if annualized_volatility > 1e-9 else 0.0
+
+        cumulative_returns_pd = (1 + pd.Series(daily_returns_np)).cumprod()
+        if not cumulative_returns_pd.empty:
+            peak = cumulative_returns_pd.expanding(min_periods=1).max()
+            drawdown = (cumulative_returns_pd / peak) - 1.0
+            max_drawdown = drawdown.min() if not drawdown.empty else 0.0
+        else:
+            max_drawdown = 0.0
+        
+        num_winning_days = (daily_returns_np > 0).sum()
+        num_losing_days = (daily_returns_np < 0).sum()
+        win_loss_ratio = num_winning_days / num_losing_days if num_losing_days > 0 else float("inf") if num_winning_days > 0 else 0.0
+    
+    stats_dict = {
+        "Signal Horizon Used": signal_horizon_name,
+        "Allocation Method": allocation_method,
+        "Capital Base for Allocation": capital_base_for_allocation,
+        "Trade Threshold Up": trade_threshold_up,
+        "Trade Threshold Down (abs)": trade_threshold_down,
+        "Close Threshold Pct": close_threshold_pct,
+        "Total Return": total_return, "Annualized Return": annualized_return,
+        "Annualized Volatility": annualized_volatility, "Sharpe Ratio": sharpe_ratio,
+        "Max Drawdown": max_drawdown, "Number of Trading Days": num_days,
+        "Number of Winning Days": int(num_winning_days), "Number of Losing Days": int(num_losing_days),
+        "Win/Loss Day Ratio": win_loss_ratio, "Final Capital": final_capital,
+    }
+
+    if verbose > 0:
+        # ... (your verbose printout of stats_dict)
+        print(f"\n--- Strategy Summary (Signal: {signal_horizon_name}, Allocation: {allocation_method}, Capital Base: {capital_base_for_allocation}, Logic: {'DEBUG_EQUIV' if is_debug_equivalence_mode else 'REBALANCE'}) ---")
+        for key, value in stats_dict.items():
+            if isinstance(value, (float, np.floating)) and key not in ["Sharpe Ratio", "Win/Loss Day Ratio", "Signal Horizon Used", "Trade Threshold Up", "Trade Threshold Down (abs)", "Allocation Method", "Close Threshold Pct", "Capital Base for Allocation"]:
+                print(f"{key}: {value*100:.2f}%" if "Return" in key or "Drawdown" in key or "Volatility" in key else f"{key}: {value:.2f}")
+            elif isinstance(value, (float, np.floating)) and key in ["Sharpe Ratio", "Win/Loss Day Ratio", "Trade Threshold Up", "Trade Threshold Down (abs)", "Close Threshold Pct"]:
+                print(f"{key}: {value:.4f}")
+            else:
+                print(f"{key}: {value}")
+                
+    portfolio_df = pd.DataFrame({
+        "portfolio_value": portfolio_values_ts[1:].numpy(),
+        "daily_return": daily_portfolio_returns_ts.numpy()
+    })
+    return portfolio_df, stats_dict
+
+def objective_function_mtp(long_threshold_raw, short_threshold_raw, min_step=0.001, **ticker_include_params_raw):
     """Objective function for Bayesian Optimization for MTP (1-day signal)."""
     long_threshold = round(long_threshold_raw / min_step) * min_step
-    short_threshold = round(short_threshold_raw / min_step) * min_step # This is absolute value for short
+    short_threshold = round(short_threshold_raw / min_step) * min_step
 
-    # print(f"  Testing long_thresh: {long_threshold:.4f}, short_thresh_abs: {short_threshold:.4f}")
+    selected_ticker_indices = []
+    for i in range(len(METADATA_ARGS.tickers)):
+        param_name = f'include_ticker_{i}_raw'
+        if ticker_include_params_raw.get(param_name, 0.0) > 0.5:
+            selected_ticker_indices.append(i)
+    
+    if not selected_ticker_indices:
+        # print("  BayesOpt: No tickers selected by parameters, defaulting to include all for this eval.")
+        # Or penalize heavily:
+        return -10.0 
+    
+    preds_for_selected_tickers = OPTIMIZATION_PREDS_1DAY[:, selected_ticker_indices]
+    actual_returns_for_selected_tickers = OPTIMIZATION_ACTUAL_1D_RETURNS[:, selected_ticker_indices]
 
-    _, strategy_stats = run_trading_strategy_1day_signal(
-        predictions_1day_ahead=OPTIMIZATION_PREDS_1DAY, # Global var
-        actual_1d_returns=OPTIMIZATION_ACTUAL_1D_RETURNS, # Global var
+
+    _, strategy_stats = run_strategy_simple_with_turnover_costs(
+        predictions_1day_ahead=preds_for_selected_tickers,
+        actual_1d_returns=actual_returns_for_selected_tickers,
         trade_threshold_up=long_threshold,
         trade_threshold_down=short_threshold, 
         initial_capital=OPTIMIZATION_INITIAL_CAPITAL,
         transaction_cost_pct=OPTIMIZATION_TRANSACTION_COST,
         signal_horizon_name=OPTIMIZATION_SIGNAL_HORIZON_NAME,
-        verbose=0 # Keep optimization quiet unless debugging
+        verbose=0, # Keep optimization quiet unless debugging
+        # ticker_names=METADATA_ARGS.tickers,
+        # allocation_method="signal_strength" # <--- New allocation method
     )
     sharpe = strategy_stats.get("Sharpe Ratio", 0.0)
     if not np.isfinite(sharpe) or sharpe < -5: # Penalize very bad Sharpe ratios
         return -10.0 
     return sharpe
-    # total_return = strategy_stats.get("Total Return", 0.0)
-    # return total_return
 
 
 def get_mtp_predictions_for_backtest(model, all_mtp_input_features, args, nr_of_days_to_check, device):
@@ -857,8 +2320,8 @@ def plot_predicted_vs_actual_returns(
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description="Make predictions with a trained MTP stock model.")
-    parser.add_argument("--model_path", type=str, default="good_models/MTP/aapl_gspc/name=0-epoch=24-val_loss=0.00.ckpt", help="Path to the trained .pth model file.")
-    parser.add_argument("--metadata_path", type=str, default="good_models/MTP/aapl_gspc/hparams.yaml", help="Path to the metadata.json file for the model.")
+    parser.add_argument("--model_path", type=str, default="good_models/MTP/6tickers/8_seq_len/name=0-epoch=30-val_loss=0.00-v5.ckpt", help="Path to the trained .pth model file.")
+    parser.add_argument("--metadata_path", type=str, default="good_models/MTP/6tickers/8_seq_len/hparams.yaml", help="Path to the metadata.json file for the model.")
     parser.add_argument("--days_to_check", type=int, default=1300, help="Number of recent days to generate predictions for and backtest.")
     parser.add_argument("--start_date_data", type=str, default="2020-01-01", help="Start date for downloading historical data.")
     parser.add_argument("--end_date_data", type=str, default="2025-05-25", help="End date for downloading historical data (serves as backtest end).")
@@ -866,7 +2329,7 @@ if __name__ == "__main__":
     parser.add_argument("--transaction_cost", type=float, default=0.0005, help="Transaction cost percentage.")
     parser.add_argument("--plot_equity", type=bool, default=True, help="Plot the equity curve of the optimized strategy.")
     parser.add_argument("--verbose_strategy", type=int, default=0, help="Verbosity level for strategy run printouts (0: silent, 1: summary).")
-
+    parser.add_argument("--plot_individual_returns", type=bool, default=False, help="Plot predicted vs. actual returns for each ticker.")
 
     cli_args = parser.parse_args()
 
@@ -885,17 +2348,10 @@ if __name__ == "__main__":
     model = load_mtp_model(cli_args.model_path, args_from_metadata).to(device)
 
     # 2. Download and Process Data
-    # We need enough data for seq_len inputs for the *last* day of `days_to_check`
-    # The feature processing itself might require earlier data (e.g. for 50-day MAs)
-    # Let's be generous with `seq_len_needed_for_features`
     seq_len_for_model_input = args_from_metadata.seq_len
     max_feature_lookback = 100 # Estimate of max lookback used in any feature
     
     # The MTP input structure means we need `max(indices_to_predict)` extra history
-    # for the shifts in `download_and_process_inference_data` (placeholder currently)
-    # Effective history needed before first pred day = seq_len_for_model_input + max_feature_lookback + max(indices_to_predict)
-    # This is complex due to the MTP input shifting; the placeholder `download_and_process_inference_data`
-    # needs to be accurate. For now, assume it handles date ranges internally.
     
     all_mtp_input_features, true_chlov_returns, columns = download_and_process_inference_data(
         args_from_metadata,
@@ -933,24 +2389,83 @@ if __name__ == "__main__":
     #     num_days_to_plot=min(200, cli_args.days_to_check), # Plot last 100 days or all if fewer
     #     plot_filename_prefix="MTP_returns_comparison"
     # )
-
-    print(f"\n--- Running PRE-OPTIMIZATION Backtest (Trade if |PredReturn| > TxCost) ---")
     
     pre_optim_predictions = model_1day_predictions_denorm.cpu()
     pre_optim_actuals = actual_1d_returns_for_backtest_period.cpu()
     
-    simple_trade_threshold = 10*cli_args.transaction_cost # Trade if signal is stronger than one-way cost
+    simple_trade_threshold = 0*cli_args.transaction_cost # Trade if signal is stronger than one-way cost
 
-    pre_optim_portfolio_df, pre_optim_stats = run_trading_strategy_1day_signal(
+    if cli_args.plot_individual_returns:
+        for i in range(pre_optim_predictions.shape[1]):
+            print(f"\n--- Running PRE-OPTIMIZATION Backtest for {args_from_metadata.tickers[i]} ---")
+            individual_portfolio_df, individual_stats = run_strategy_simple_with_turnover_costs(
+                predictions_1day_ahead=pre_optim_predictions[:, i].unsqueeze(1),
+                actual_1d_returns=pre_optim_actuals[:, i].unsqueeze(1),
+                trade_threshold_up=simple_trade_threshold,
+                trade_threshold_down=simple_trade_threshold,
+                initial_capital=cli_args.initial_capital,
+                transaction_cost_pct=cli_args.transaction_cost,
+                signal_horizon_name="1-day (Pre-Opt signal strength)",
+                verbose=cli_args.verbose_strategy
+            )
+            
+            plt.figure(figsize=(14, 7)) # Create a new figure for this plot
+            
+            # Plot Pre-Optimization Strategy
+            individual_equity_curve = (1 + pd.Series(individual_portfolio_df['daily_return'])).cumprod()
+            plt.plot(individual_equity_curve.index, individual_equity_curve.values, label=f"Pre-Opt Strategy (|Pred| > TxCost)")
+            
+            # Add Buy and Hold for comparison (copied from your existing plot logic)
+            buy_and_hold_returns_single_ticker = actual_1d_returns_for_backtest_period.cpu()[:,i]
+            buy_and_hold_equity_curve_single = (1 + buy_and_hold_returns_single_ticker).cumprod(dim=0)
+            plt.plot(individual_equity_curve.index, buy_and_hold_equity_curve_single.numpy(), label=f"Buy & Hold {args_from_metadata.tickers[i]}", linestyle=":")
+
+            print(f"Annualized return: {individual_stats['Annualized Return']:.4f}")
+            print(f"Sharpe ratio: {individual_stats['Sharpe Ratio']:.4f}")
+            converted_t_value = (individual_stats['Sharpe Ratio'] * math.sqrt(len(individual_portfolio_df)))/(252**0.5)
+            print(f"Converted t-value: {converted_t_value:.4f}")
+            print(f"Win/Loss day ratio: {individual_stats['Win/Loss Day Ratio']:.4f}")
+
+            plt.title(f"Pre-Optimization Strategy vs. Buy & Hold (Tickers: {', '.join(args_from_metadata.tickers)})")
+            plt.xlabel("Trading Day in Backtest Period")
+            plt.ylabel("Cumulative Return (Normalized to 1)")
+            plt.legend()
+            plt.grid(True)
+            plt.show()
+    
+    tickers_to_include = [3,5]
+    print("\n--- Running PRE-OPTIMIZATION Backtest (Trade if |PredReturn| > TxCost) ---")
+    pre_optim_portfolio_df, pre_optim_stats = run_strategy_simple_with_turnover_costs(
         predictions_1day_ahead=pre_optim_predictions,
         actual_1d_returns=pre_optim_actuals,
-        trade_threshold_up=simple_trade_threshold, # Go long if pred > cost
-        trade_threshold_down=simple_trade_threshold, # Go short if pred < -cost (abs value of pred > cost)
+        trade_threshold_up=simple_trade_threshold,
+        trade_threshold_down=simple_trade_threshold,
         initial_capital=cli_args.initial_capital,
-        transaction_cost_pct=0.0,#cli_args.transaction_cost,
-        signal_horizon_name="1-day (Pre-Opt Simple Threshold)",
-        verbose=cli_args.verbose_strategy # Use the command-line verbosity
+        transaction_cost_pct=cli_args.transaction_cost,
+        signal_horizon_name="1-day (Pre-Opt signal strength)",
+        verbose=cli_args.verbose_strategy,
+        # allocation_strategy="signal_strength",
+        # ticker_names=args_from_metadata.tickers, # Pass ticker names
+        # capital_base_for_allocation="portfolio_value"
     )
+
+    pre_optim_portfolio_df_simple, pre_optim_stats_simple = run_trading_strategy_1day_signal_simple(
+        predictions_1day_ahead=pre_optim_predictions,
+        actual_1d_returns=pre_optim_actuals,
+        trade_threshold_up=simple_trade_threshold,
+        trade_threshold_down=simple_trade_threshold,
+        initial_capital=cli_args.initial_capital,
+        transaction_cost_pct=cli_args.transaction_cost,
+        signal_horizon_name="1-day (Pre-Opt Signal Strength)",
+        verbose=cli_args.verbose_strategy        
+    )
+
+    pre_optim_equity_curve = (1 + pd.Series(pre_optim_portfolio_df['daily_return'])).cumprod()
+    # print(f"new: \n{pre_optim_equity_curve.values}")
+    pre_optim_equity_curve_simple = (1 + pd.Series(pre_optim_portfolio_df_simple['daily_return'])).cumprod()
+    # print(f"simple: {pre_optim_equity_curve_simple.values}")
+    print(f"diff: \n{pre_optim_equity_curve.values[-1] - pre_optim_equity_curve_simple.values[-1]}")
+    # print(f"diff: \n{pre_optim_equity_curve.values - pre_optim_equity_curve_simple.values}")
 
     if cli_args.plot_equity:
         if pre_optim_portfolio_df is not None and not pre_optim_portfolio_df.empty:
@@ -990,26 +2505,31 @@ if __name__ == "__main__":
     # 4. Bayesian Optimization for Thresholds
     optim_period_len = min(1300, cli_args.days_to_check)
     print(f"\n--- Optimizing Trading Thresholds for 1-day Signal (using first {optim_period_len} days of backtest) ---")
-    
+    METADATA_ARGS = args_from_metadata
     OPTIMIZATION_PREDS_1DAY = model_1day_predictions_denorm[:optim_period_len].cpu()
     OPTIMIZATION_ACTUAL_1D_RETURNS = actual_1d_returns_for_backtest_period[:optim_period_len].cpu()
     OPTIMIZATION_INITIAL_CAPITAL = cli_args.initial_capital
     OPTIMIZATION_TRANSACTION_COST = cli_args.transaction_cost
     OPTIMIZATION_SIGNAL_HORIZON_NAME = "1-day (Optimized)"
+    # OPTIMIZATION_CLOSE_THRESHOLD_PCT = 0.001
+    # OPTIMIZATION_CAPITAL_BASE = "portfolio_value"
 
     pbounds_asymmetric = {
-        'long_threshold_raw': (0.000, 0.05), # Search range for long threshold
-        'short_threshold_raw': (0.000, 0.05) # Search range for absolute short threshold
+        'long_threshold_raw': (0.000, 0.01), # Search range for long thresh
+        'short_threshold_raw': (0.000, 0.01) # Search range for absolute short thresh
     }
-    min_step_thresh = 0.0005 # Discretization step for thresholds
+    min_step_thresh = 0.00001 # Discretization step for thresholds
+
+    for i in range(len(METADATA_ARGS.tickers)):
+        pbounds_asymmetric[f'include_ticker_{i}_raw'] = (0.0, 1.0)
 
     optimizer = BayesianOptimization(
-        f=lambda long_threshold_raw, short_threshold_raw: objective_function_mtp(long_threshold_raw, short_threshold_raw, min_step=min_step_thresh),
+        f=objective_function_mtp,
         pbounds=pbounds_asymmetric,
         random_state=1,
         verbose=2 # 0 (silent), 1 (steps), 2 (all)
     )
-    optimizer.maximize(init_points=30, n_iter=10) # Adjust init_points and n_iter as needed
+    optimizer.maximize(init_points=300, n_iter=100) # Adjust init_points and n_iter as needed
 
     best_params = optimizer.max['params']
     best_sharpe = optimizer.max['target']
@@ -1017,22 +2537,30 @@ if __name__ == "__main__":
     optimal_long_thresh = round(best_params['long_threshold_raw'] / min_step_thresh) * min_step_thresh
     optimal_short_thresh_abs = round(best_params['short_threshold_raw'] / min_step_thresh) * min_step_thresh
 
+    optimal_included_ticker_indices = []
+    included_tickers = []
+    for i in range(len(METADATA_ARGS.tickers)):
+        if best_params[f'include_ticker_{i}_raw'] > 0.5:
+            included_tickers.append(METADATA_ARGS.tickers[i])
+            optimal_included_ticker_indices.append(i)
+
     print("\n--- Optimal Asymmetric Thresholds Found ---")
     print(f"Optimal Long Threshold: {optimal_long_thresh:.4f}")
     print(f"Optimal Short Threshold (absolute): {optimal_short_thresh_abs:.4f}")
     print(f"Achieved Sharpe Ratio on optimization period: {best_sharpe:.4f}")
+    print(f"Included Tickers: {included_tickers}")
 
     # 5. Run Final Backtest with Optimized Thresholds on the Full Period
     print("\n--- Running Final Backtest with Optimized Thresholds (Full Period) ---")
-    final_portfolio_df, final_stats = run_trading_strategy_1day_signal(
-        model_1day_predictions_denorm.cpu(),
-        actual_1d_returns_for_backtest_period.cpu(),
+    final_portfolio_df, final_stats = run_strategy_simple_with_turnover_costs(
+        model_1day_predictions_denorm[:, optimal_included_ticker_indices].cpu(),
+        actual_1d_returns_for_backtest_period[:, optimal_included_ticker_indices].cpu(),
         trade_threshold_up=optimal_long_thresh,
         trade_threshold_down=optimal_short_thresh_abs,
         initial_capital=cli_args.initial_capital,
         transaction_cost_pct=cli_args.transaction_cost,
         signal_horizon_name="1-day (Final Optimized)",
-        verbose=cli_args.verbose_strategy 
+        verbose=cli_args.verbose_strategy,
     )
 
     # 6. Plotting (Optional)
