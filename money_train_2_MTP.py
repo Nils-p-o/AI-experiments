@@ -249,7 +249,8 @@ if __name__ == "__main__":
         "--config",
         type=str,
         # default="./experiment_configs/Money_test_2.json",
-        default="./experiment_configs/MTP_experiment.json",
+        # default="./experiment_configs/MTP_experiment.json",
+        default="./experiment_configs/MTP_triplicate.json",
         help="Path to config file.",
     )
     if parser.parse_known_args()[0].config != "":

@@ -233,16 +233,7 @@ def download_and_process_inference_data(args, start_date, end_date, seq_len_need
     print("Downloading and processing inference data...")
     tickers = args.tickers
     target_dates = args.indices_to_predict
-    # TODO add retry mechanism to downloads
 
-    # raw_data = yf.download(
-    #     tickers,
-    #     start=start_date,
-    #     end=end_date,
-    #     progress=True,
-    #     auto_adjust=False,
-    #     back_adjust=False,
-    # )
     raw_data = download_with_retry(
         tickers,
         start=start_date,
@@ -364,9 +355,6 @@ def download_and_process_inference_data(args, start_date, end_date, seq_len_need
     full_data = torch.cat((full_data, clv_data), dim=0)
     columns.extend(["clv"])
 
-    # vix_data = yf.download(
-    #     "^VIX", start=start_date, end=end_date, progress=True, auto_adjust=False
-    # )
     vix_data = download_with_retry(
         "^VIX", start=start_date, end=end_date, progress=True, auto_adjust=False
     )
@@ -389,14 +377,6 @@ def download_and_process_inference_data(args, start_date, end_date, seq_len_need
     full_data = torch.cat((full_data, vix_data), dim=0)
     columns.extend(["vix_close", "vix_high", "vix_low", "vix_open"])
 
-    # copper = yf.download(
-    #     "HG=F",
-    #     start=start_date,
-    #     end=end_date,
-    #     progress=True,
-    #     auto_adjust=False,
-    #     back_adjust=False,
-    # )
     copper = download_with_retry(
         "HG=F",
         start=start_date,
@@ -449,7 +429,7 @@ def download_and_process_inference_data(args, start_date, end_date, seq_len_need
     # MTP_targets = MTP_targets[:, :, 20:, :]
 
     # znorm step (need all column means and stds)
-    data[:-15] = (data[:-15] - args.normalization_means.view(data.shape[0]-15, 1, 1, -1)) / (args.normalization_stds.view(data.shape[0]-15, 1, 1, -1) + 1e-8)
+    data[:-15] = (data[:-15] - args.normalization_means.view(data.shape[0]-15, 1, 1, -1).to(data.device)) / (args.normalization_stds.view(data.shape[0]-15, 1, 1, -1).to(data.device) + 1e-8)
 
     return data, MTP_full, columns
 
@@ -2196,7 +2176,7 @@ def objective_function_mtp(long_threshold_raw, short_threshold_raw, min_step=0.0
         # allocation_method="signal_strength" # <--- New allocation method
     )
     sharpe = strategy_stats.get("Sharpe Ratio", 0.0)
-    if not np.isfinite(sharpe) or sharpe < -5: # Penalize very bad Sharpe ratios
+    if sharpe < -5: # Penalize very bad Sharpe ratios
         return -10.0 
     return sharpe
 
@@ -2320,8 +2300,10 @@ def plot_predicted_vs_actual_returns(
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description="Make predictions with a trained MTP stock model.")
-    parser.add_argument("--model_path", type=str, default="good_models/MTP/6tickers/8_seq_len/name=0-epoch=30-val_loss=0.00-v5.ckpt", help="Path to the trained .pth model file.")
-    parser.add_argument("--metadata_path", type=str, default="good_models/MTP/6tickers/8_seq_len/hparams.yaml", help="Path to the metadata.json file for the model.")
+    # parser.add_argument("--model_path", type=str, default="good_models/MTP/6tickers/8_seq_len/name=0-epoch=30-val_loss=0.00-v5.ckpt", help="Path to the trained .pth model file.")
+    # parser.add_argument("--metadata_path", type=str, default="good_models/MTP/6tickers/8_seq_len/hparams.yaml", help="Path to the metadata.json file for the model.")
+    parser.add_argument("--model_path", type=str, default="good_models/MTP/6tickers/diff/name=0-epoch=30-val_loss=0.00-v3.ckpt", help="Path to the trained .pth model file.")
+    parser.add_argument("--metadata_path", type=str, default="good_models/MTP/6tickers/diff/hparams.yaml", help="Path to the metadata.json file for the model.")
     parser.add_argument("--days_to_check", type=int, default=1300, help="Number of recent days to generate predictions for and backtest.")
     parser.add_argument("--start_date_data", type=str, default="2020-01-01", help="Start date for downloading historical data.")
     parser.add_argument("--end_date_data", type=str, default="2025-05-25", help="End date for downloading historical data (serves as backtest end).")
@@ -2329,7 +2311,7 @@ if __name__ == "__main__":
     parser.add_argument("--transaction_cost", type=float, default=0.0005, help="Transaction cost percentage.")
     parser.add_argument("--plot_equity", type=bool, default=True, help="Plot the equity curve of the optimized strategy.")
     parser.add_argument("--verbose_strategy", type=int, default=0, help="Verbosity level for strategy run printouts (0: silent, 1: summary).")
-    parser.add_argument("--plot_individual_returns", type=bool, default=False, help="Plot predicted vs. actual returns for each ticker.")
+    parser.add_argument("--plot_individual_returns", type=bool, default=True, help="Plot predicted vs. actual returns for each ticker.")
 
     cli_args = parser.parse_args()
 
@@ -2435,23 +2417,23 @@ if __name__ == "__main__":
     
     tickers_to_include = [3,5]
     print("\n--- Running PRE-OPTIMIZATION Backtest (Trade if |PredReturn| > TxCost) ---")
-    pre_optim_portfolio_df, pre_optim_stats = run_strategy_simple_with_turnover_costs(
-        predictions_1day_ahead=pre_optim_predictions,
-        actual_1d_returns=pre_optim_actuals,
+    pre_optim_portfolio_df, pre_optim_stats = run_strategy_with_flexible_allocation(
+        predictions_1day_ahead=pre_optim_predictions[:,tickers_to_include],
+        actual_1d_returns=pre_optim_actuals[:,tickers_to_include],
         trade_threshold_up=simple_trade_threshold,
         trade_threshold_down=simple_trade_threshold,
         initial_capital=cli_args.initial_capital,
         transaction_cost_pct=cli_args.transaction_cost,
         signal_horizon_name="1-day (Pre-Opt signal strength)",
         verbose=cli_args.verbose_strategy,
-        # allocation_strategy="signal_strength",
+        allocation_strategy="equal" # "signal_strength"
         # ticker_names=args_from_metadata.tickers, # Pass ticker names
         # capital_base_for_allocation="portfolio_value"
     )
 
     pre_optim_portfolio_df_simple, pre_optim_stats_simple = run_trading_strategy_1day_signal_simple(
-        predictions_1day_ahead=pre_optim_predictions,
-        actual_1d_returns=pre_optim_actuals,
+        predictions_1day_ahead=pre_optim_predictions[:, tickers_to_include],
+        actual_1d_returns=pre_optim_actuals[:, tickers_to_include],
         trade_threshold_up=simple_trade_threshold,
         trade_threshold_down=simple_trade_threshold,
         initial_capital=cli_args.initial_capital,

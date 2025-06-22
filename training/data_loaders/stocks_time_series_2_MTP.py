@@ -14,7 +14,6 @@ import time
 
 # TODO noise
 
-# TODO save means and stds for inference
 # TODO comparison metrics for later
 
 
@@ -40,19 +39,16 @@ class FinancialNumericalDataset(Dataset):
 
     def __len__(self) -> int:
         if self.preload:
-            return self.sequences_data.size(2) - self.seq_len
+            return self.sequences_data.size(2)
         else:  # TODO?
             raise NotImplementedError
 
     def __getitem__(self, idx):
         if self.preload:
             input_sequence = self.sequences_data[
-                :, :, idx : idx + self.seq_len, :
+                :, :, idx, :, :
             ]
-            # target_sequence = self.sequences_data[
-            #     : self.num_targets, idx : idx + self.seq_len, :
-            # ]
-            target_sequence = self.targets_data[:,:, idx : idx + self.seq_len, :]
+            target_sequence = self.targets_data[:, :, idx, :, :]
             return input_sequence, target_sequence
         else:  # TODO?
             raise NotImplementedError
@@ -475,9 +471,7 @@ def download_numerical_financial_data(
     full_data = torch.cat((full_data, clv_data), dim=0)
     columns.extend(["clv"])
 
-    # vix_data = yf.download(
-    #     "^VIX", start=start_date, end=end_date, progress=False, auto_adjust=False
-    # )
+
     vix_data = download_with_retry(
         "^VIX", start=start_date, end=end_date, progress=True, auto_adjust=False
     )
@@ -601,14 +595,18 @@ def download_numerical_financial_data(
     #         max_date=end_date,
     #     )
     # gold_data = aligned_gold_data
-    # gold_data = gold_data.to_numpy()[:, 1:]
+    # gold_data = gold_data.to_numpy()[:, 1:2]
     # gold_data = torch.tensor(gold_data, dtype=torch.float32)
     # gold_data = gold_data.transpose(0, 1)
+
+    # gold_change = (gold_data[:, :1] - gold_data[:, :-1])/gold_data[:, :-1]
+    # gold_change = torch.cat((gold_change[:, 0:1], gold_change), dim=1)
+    # gold_data = torch.cat((gold_data, gold_change), dim=0)
     
     # gold_data = gold_data.unsqueeze(-1)
     # gold_data = gold_data.expand(gold_data.shape[0], gold_data.shape[1], len(tickers))
     # full_data = torch.cat((full_data, gold_data), dim=0)
-    # columns.extend(["gold_close", "gold_high", "gold_low", "gold_open", "gold_volume"])
+    # columns.extend(["gold_close", "gold_close_ch"])
 
     # crude_oil = yf.download(
     #     "CL=F",
@@ -822,9 +820,9 @@ def download_numerical_financial_data(
     # full_data = torch.cat((full_data, d_percent), dim=0)
     # columns.extend(["k_percent_14","d_percent_14_3"])
 
-    # standard_ad = calculate_accumulation_distribution_index_standard(raw_data[4:5, :, :], clv)
-    # full_data = torch.cat((full_data, standard_ad), dim=0)
-    # columns.extend(["standard_ad"])
+    standard_ad = calculate_accumulation_distribution_index_standard(raw_data[4:5, :, :], clv_data.squeeze(0))
+    full_data = torch.cat((full_data, standard_ad), dim=0)
+    columns.extend(["standard_ad"])
 
     # full_chaikin = []
     # for i in range(len(tickers)):
@@ -867,29 +865,43 @@ def download_numerical_financial_data(
     data_length = data.shape[2]
 
     train_data_length = int(data_length * (1 - val_split_ratio - test_split_ratio))
-    val_data_length = int(data_length * val_split_ratio)
-    test_data_length = data_length - train_data_length - val_data_length
-    train_data, val_data, test_data = torch.split(
-        data, [train_data_length, val_data_length, test_data_length], dim=2
-    )
+    if train_data_length == 0:
+        val_data_length = data_length - train_data_length
+        test_data_length = 0
+    else:
+        val_data_length = int(data_length * val_split_ratio)
+        test_data_length = data_length - train_data_length - val_data_length
+    # train_data, val_data, test_data = torch.split(
+    #     data, [train_data_length, val_data_length, test_data_length], dim=2
+    # )
     train_indexes, val_indexes, test_indexes = (
-        indexes[:train_data_length],
-        indexes[train_data_length : train_data_length + val_data_length],
+        indexes[:train_data_length + seq_len - 1],
+        indexes[train_data_length : train_data_length + val_data_length + seq_len - 1],
         indexes[train_data_length + val_data_length :],
     )
 
     # global z-normalization
-    means = train_data[: -15].mean(dim=2, keepdim=True)
-    stds = train_data[: -15].std(dim=2, keepdim=True)
-    train_data[: -15] = (train_data[: -15] - means) / (stds + 1e-8)
-    val_data[: -15] = (val_data[: -15] - means) / (stds + 1e-8)
-    test_data[: -15] = (test_data[: -15] - means) / (stds + 1e-8)
+    means = data[: -15, :, :train_data_length, :].mean(dim=2, keepdim=True)
+    stds = data[: -15, :, :train_data_length, :].std(dim=2, keepdim=True)
+    data[: -15] = (data[: -15] - means) / (stds + 1e-8)
 
     MTP_targets = (MTP_targets - means[:5]) / stds[:5]
 
-    train_MTP_targets, val_MTP_targets, test_MTP_targets = torch.split(
-        MTP_targets, [train_data_length, val_data_length, test_data_length], dim=2
+    # new reshape (into seq_len chunks) 
+    # TODO local norms and such
+    data = data.unfold(2, seq_len, 1) # (features, target_inputs, time series, tickers, seq_len)
+    MTP_targets = MTP_targets.unfold(2, seq_len, 1) # (chlov, target_inputs, time series, tickers, seq_len)
+
+    data = data.permute(0, 1, 2, 4, 3)
+    MTP_targets = MTP_targets.permute(0, 1, 2, 4, 3)
+
+    train_data, val_data, test_data = torch.split(
+        data, [train_data_length, val_data_length - seq_len + 1, test_data_length], dim=2
     )
+    train_MTP_targets, val_MTP_targets, test_MTP_targets = torch.split(
+        MTP_targets, [train_data_length, val_data_length - seq_len + 1, test_data_length], dim=2
+    )
+
 
     save_indexes_to_csv(train_indexes, os.path.join(output_dir, "train.csv"))
     save_indexes_to_csv(val_indexes, os.path.join(output_dir, "val.csv"))
@@ -922,7 +934,7 @@ def download_numerical_financial_data(
     with open(os.path.join(output_dir, "metadata.json"), "w") as f:
         json.dump(metadata, f, indent=4)
     
-    return means[:, 0,0,:].tolist(), stds[:, 0,0,:].tolist()
+    return means[:,0,0,:].tolist(), stds[:,0,0,:].tolist()
 
 
 if __name__ == "__main__":

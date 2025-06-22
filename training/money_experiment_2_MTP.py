@@ -287,8 +287,6 @@ class MoneyExperiment(pl.LightningModule):
         targets = labels  # (batch_size, features, targets, seq_len, num_sequences)
         targets = targets.permute(0, 3, 1, 2, 4)  # (batch_size, seq_len, features, targets, num_sequences)
 
-        # full_inputs = torch.cat([full_inputs, target_input_means, target_input_stds], dim=2)
-
         seperator = torch.zeros(
             (batch_size, len(self.pred_indices), 1), dtype=torch.int, device=inputs.device
         )  # (batch_size, targets, 1)
@@ -644,7 +642,7 @@ class MoneyExperiment(pl.LightningModule):
                 cummulative_times["metrics"] += (
                     time.time_ns() - time_metrics_start
                 ) / 1e6
-            if stage == "train":
+
                 self.log(
                     f"{stage}_lr",
                     self.lr_schedulers().get_last_lr()[0],

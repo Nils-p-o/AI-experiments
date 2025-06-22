@@ -106,9 +106,9 @@ class Money_former_MLA_DINT_cog_attn_MTP(nn.Module): # TODO MTP blocks
     def encode_inputs(self, x):
         batch_size, targets, seq_len, num_sequences, _ = x.size()
         shared_temp_x = self.shared_value_input(x)
-        unique_temp_x = torch.zeros(
+        unique_temp_x = torch.empty(
             batch_size, targets, seq_len, num_sequences, self.unique_value_input_dim
-        )
+        ).to(x.device)
         for i in range(num_sequences):
             unique_temp_x[:, :, :, i, :] = self.unique_value_input[i](x[:, :, :, i, :])
         x = torch.cat([shared_temp_x, unique_temp_x], dim=-1)
@@ -290,6 +290,7 @@ class custom_MHA(nn.Module): # a mix of MLA and DINT
         # assert a[:, :, 0, :, :].shape == a3.shape
         # assert torch.isclose((lambda_full * a[:, :, 1, :, :]).sum(dim=-1),(a3 * lambda_full).sum(dim=-1),rtol=1e-3,atol=1e-5).all() == True
         a = a[:, :, 0, :, :] - lambda_full * a[:, :, 1, :, :] + a3 * lambda_full
+        # a = a * (1/ (1 - lambda_full)) 
         # assert (a[0,0].sum(dim=-1) == 1.0).all() == True
         a = a.masked_fill(mask[:, : self.nhead, :, :] == 1, 0)
         a = self.dropout(a)
