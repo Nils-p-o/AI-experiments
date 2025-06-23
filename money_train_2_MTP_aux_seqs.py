@@ -70,7 +70,7 @@ from transformer_arch.money.money_former_DINT_cog_attn_2 import Money_former_DIN
 from transformer_arch.money.money_former_MLA_2 import Money_former_MLA
 from transformer_arch.money.money_former_nGPT_2 import Money_former_nGPT, normalize_weights_and_enforce_positive_eigenvalues
 from transformer_arch.money.money_former_MLA_DINT_cog_attn_2 import Money_former_MLA_DINT_cog_attn
-from transformer_arch.money.money_former_MLA_DINT_cog_attn_2_MTP import Money_former_MLA_DINT_cog_attn_MTP
+from transformer_arch.money.money_former_MLA_DINT_cog_attn_2_MTP_aux_seqs import Money_former_MLA_DINT_cog_attn_MTP
 
 
 def proceed(args: argparse.Namespace):
