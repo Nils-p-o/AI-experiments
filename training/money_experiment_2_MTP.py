@@ -269,8 +269,6 @@ class MoneyExperiment(pl.LightningModule):
         self.num_sequences = len(args.tickers)
         self.tickers = args.tickers
 
-        self.compare = True
-
     def forward(self, *args, **kwargs):
         return self.model(*args, **kwargs)
 
