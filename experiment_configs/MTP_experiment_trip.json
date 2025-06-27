@@ -28,6 +28,6 @@
     "dataset":"Money",
     "type": "",
     "extra_descriptor":"",
-    "experiment_notes": "3bee6, local and global EPS, revenue ps, global and local ror of chlov, local returns of chlov + emas, local vpt of chlo, local znorm chlov, emas of chlov, vol of chlov",
+    "experiment_notes": "3bee6, local znorm chlov, emas of chlov",
     "folder_name": "post_causality_fix/triplicates_2/3bee6_local_price_emas/"
 }
