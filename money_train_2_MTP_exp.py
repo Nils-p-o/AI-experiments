@@ -50,7 +50,11 @@ from training.money_experiment_2_MTP import MoneyExperiment
 from training.utils import (
     count_parameters,
 )
-from training.data_loaders.stocks_time_series_2_MTP import (
+# from training.data_loaders.stocks_time_series_2_MTP import (
+#     FinancialNumericalDataModule,
+#     download_numerical_financial_data,
+# )
+from training.data_loaders.test_feats_stocks_time_series_2_MTP import (
     FinancialNumericalDataModule,
     download_numerical_financial_data,
 )
@@ -66,7 +70,9 @@ from transformer_arch.money.money_former_DINT_cog_attn_2 import Money_former_DIN
 from transformer_arch.money.money_former_MLA_2 import Money_former_MLA
 from transformer_arch.money.money_former_nGPT_2 import Money_former_nGPT, normalize_weights_and_enforce_positive_eigenvalues
 from transformer_arch.money.money_former_MLA_DINT_cog_attn_2 import Money_former_MLA_DINT_cog_attn
-from transformer_arch.money.money_former_MLA_DINT_cog_attn_2_MTP_diff_attn_dims import Money_former_MLA_DINT_cog_attn_MTP
+# from transformer_arch.money.money_former_MLA_DINT_cog_attn_2_MTP_diff_attn_dims import Money_former_MLA_DINT_cog_attn_MTP
+# from transformer_arch.money.money_former_MLA_DINT_cog_attn_2_MTP_embed_proj import Money_former_MLA_DINT_cog_attn_MTP
+from transformer_arch.money.money_former_MLA_DINT_cog_attn_2_MTP import Money_former_MLA_DINT_cog_attn_MTP
 
 
 def proceed(args: argparse.Namespace):
@@ -248,10 +254,10 @@ if __name__ == "__main__":
     parser.add_argument(
         "--config",
         type=str,
-        # default="./experiment_configs/Money_test_2.json",
-        # default="./experiment_configs/MTP_experiment.json",
         # default="./experiment_configs/MTP_triplicate.json",
-        default="./experiment_configs/diff_head_dims_MTP.json",
+        # default="./experiment_configs/diff_head_dims_MTP.json",
+        # default="./experiment_configs/profile.json",
+        default="./experiment_configs/MTP_experiment.json",
         help="Path to config file.",
     )
     if parser.parse_known_args()[0].config != "":
