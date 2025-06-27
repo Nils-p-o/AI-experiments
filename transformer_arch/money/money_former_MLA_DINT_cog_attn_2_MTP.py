@@ -60,19 +60,22 @@ class Money_former_MLA_DINT_cog_attn_MTP(nn.Module): # TODO MTP blocks
         self.register_buffer("freqs_cis", precompute_freqs_cis(args), persistent=False)
 
         # seperator/attention sink token
-        self.seperator = nn.Embedding(1, self.d_model)
+        # self.seperator = nn.Embedding(1, self.d_model)
+        self.seperator = nn.Parameter(torch.zeros(self.d_model, dtype=torch.float32).normal_(mean=0.0, std=1.0))
 
         self.MTP_blocks = nn.ModuleList(
             [MTP_money_former_block(args, depth + self.num_layers) for depth in range(max(args.indices_to_predict)-1)]
         )
 
     def forward(
-        self, x, seperator=None, tickers=None
+        self, x, tickers=None
     ):  # seperator (batch_size, targets, 1); tickers (batch_size, targets, num_sequences)
         batch_size, targets, seq_len, num_sequences, _ = x.size()
 
-        seperator = self.seperator(seperator).unsqueeze(2)
-        seperator = seperator.repeat(1, 1, 1, num_sequences, 1)
+        # seperator = self.seperator(seperator).unsqueeze(2)
+        # seperator = seperator.repeat(1, 1, 1, num_sequences, 1)
+        seperator = self.seperator.view(1, 1, 1, 1, self.d_model)
+        seperator = seperator.expand(batch_size, targets, 1, num_sequences, -1)
 
         tickers = self.ticker_embedding(tickers).unsqueeze(2)
         tickers = tickers.repeat(1, 1, seq_len + 1, 1, 1)
@@ -131,8 +134,8 @@ class Money_former_block(nn.Module):
         seq_len = seq_len // self.num_sequences
         mask = get_causal_mask(seq_len).to(x.device)
         mask = mask.repeat(
-            batch_size, 2 * self.nhead, self.num_sequences, self.num_sequences
-        )
+            1, 1, self.num_sequences, self.num_sequences
+        ).expand(batch_size, 2 * self.nhead, -1, -1)
         x = x + self.mha(
             self.norm1(x), mask, freqs_cis
         )  # (batch_size, seq_len, d_model)
@@ -248,8 +251,7 @@ class custom_MHA(nn.Module): # a mix of MLA and DINT
 
         # --- RoPE (decoupled) ---
         for i in range(self.num_sequences):
-            q_temp = q_rope[:, :, :, :, i]
-            k_temp = k_rope[:, :, :, :, i]
+            q_temp, k_temp = q_rope[:, :, :, :, i], k_rope[:, :, :, :, i]
             q_sep, q_temp = q_temp.split([1, seq_per_stock - 1], dim=1)
             k_sep, k_temp = k_temp.split([1, seq_per_stock - 1], dim=1)
             q_temp = apply_rotary_emb(q_temp, freqs_cis=freqs_cis)
@@ -257,17 +259,12 @@ class custom_MHA(nn.Module): # a mix of MLA and DINT
             q_rope[:, :, :, :, i] = torch.cat([q_sep, q_temp], dim=1)
             k_rope[:, :, :, :, i] = torch.cat([k_sep, k_temp], dim=1)
         
-        q_rope = q_rope.permute(0, 1, 4, 2, 3)
-        k_rope = k_rope.permute(0, 1, 4, 2, 3)
+        q_rope = q_rope.permute(0, 1, 4, 2, 3).view(batch_size, seq_len, self.nhead*2, self.rope_dim//2)
+        k_rope = k_rope.permute(0, 1, 4, 2, 3).view(batch_size, seq_len, self.nhead*2, self.rope_dim//2)
 
-        q_rope = q_rope.view(batch_size, seq_len, self.nhead*2, self.rope_dim//2)
-        k_rope = k_rope.view(batch_size, seq_len, self.nhead*2, self.rope_dim//2)
+        q = torch.cat([q, q_rope], dim=-1).transpose(1, 2)  # (batch_size, 2*nhead, seq_len, (head_dim+rope_dim)//2)
+        k = torch.cat([k, k_rope], dim=-1).transpose(1, 2)  # (batch_size, 2*nhead, seq_len, (head_dim+rope_dim)//2)
 
-        q = torch.cat([q, q_rope], dim=-1)
-        k = torch.cat([k, k_rope], dim=-1)
-
-        q = q.transpose(1, 2)  # (batch_size, 2*nhead, seq_len, (head_dim+rope_dim)//2)
-        k = k.transpose(1, 2)  # (batch_size, 2*nhead, seq_len, (head_dim+rope_dim)//2)
         v = v.transpose(1, 2)  # (batch_size, nhead, seq_len, head_dim)
 
         # --- Attention Calculation ---
@@ -283,27 +280,25 @@ class custom_MHA(nn.Module): # a mix of MLA and DINT
         lambda_1 = torch.exp(torch.sum(self.lambda_k1 * self.lambda_q1, dim=-1))
         lambda_2 = torch.exp(torch.sum(self.lambda_k2 * self.lambda_q2, dim=-1))
         lambda_full = lambda_1 - lambda_2 + self.lambda_init
+
         a = a.view(batch_size, self.nhead, 2, seq_len, seq_len)
-        G_vec = torch.mean(a[:, :, 0, :, :], dim=-2, keepdim=True)
-        G_vec = G_vec.repeat(1, 1, seq_len, 1)
-        a3 = G_vec
+        G_vec = torch.mean(a[:, :, 0, :, :], dim=-2, keepdim=True).repeat(1, 1, seq_len, 1)
         # assert a[:, :, 0, :, :].shape == a3.shape
         # assert torch.isclose((lambda_full * a[:, :, 1, :, :]).sum(dim=-1),(a3 * lambda_full).sum(dim=-1),rtol=1e-3,atol=1e-5).all() == True
-        a = a[:, :, 0, :, :] - lambda_full * a[:, :, 1, :, :] + a3 * lambda_full
+        a = a[:, :, 0, :, :] - lambda_full * a[:, :, 1, :, :] + G_vec * lambda_full
         # a = a * (1/ (1 - lambda_full)) 
         # assert (a[0,0].sum(dim=-1) == 1.0).all() == True
         a = a.masked_fill(mask[:, : self.nhead, :, :] == 1, 0)
         a = self.dropout(a)
 
         attn_output = torch.matmul(a, v)  # (batch_size, nhead, seq_len, head_dim)
-        attn_output = attn_output.transpose(1, 2)  # (batch_size, seq_len, nhead, head_dim)
         # normed_heads = []
         # for i in range(self.nhead):
         #     head = attn_output[:, :, i, :]
         #     head = self.head_norms[i](head)
         #     normed_heads.append(head)
         # attn_output = torch.stack(normed_heads, dim=2)  # (batch_size, seq_len, nhead, head_dim)
-        attn_output = self.norm(attn_output)  # (batch_size, seq_len, nhead, head_dim)
+        attn_output = self.norm(attn_output.transpose(1,2))  # (batch_size, seq_len, nhead, head_dim)
         attn_output = attn_output.transpose(1, 2)  # (batch_size, nhead, seq_len, head_dim)
         attn_output = attn_output.reshape( # TODO keep in mind sus amogus
             batch_size, seq_len, self.nhead, self.head_dim

@@ -285,9 +285,9 @@ class MoneyExperiment(pl.LightningModule):
         targets = labels  # (batch_size, features, targets, seq_len, num_sequences)
         targets = targets.permute(0, 3, 1, 2, 4)  # (batch_size, seq_len, features, targets, num_sequences)
 
-        seperator = torch.zeros(
-            (batch_size, len(self.pred_indices), 1), dtype=torch.int, device=inputs.device
-        )  # (batch_size, targets, 1)
+        # seperator = torch.zeros(
+        #     (batch_size, len(self.pred_indices), 1), dtype=torch.int, device=inputs.device
+        # )  # (batch_size, targets, 1)
         tickers = torch.arange(self.num_sequences, device=inputs.device)
         tickers = tickers.unsqueeze(0).unsqueeze(0).repeat(
             batch_size, len(self.pred_indices), 1
@@ -298,7 +298,7 @@ class MoneyExperiment(pl.LightningModule):
                 time.time_ns() - time_preprocessing_start
             ) / 1e6
         time_model_start = time.time_ns()
-        outputs = self(inputs, seperator, tickers).view(
+        outputs = self(inputs, tickers).view(
             batch_size, max(self.pred_indices), (seq_len+1), self.num_sequences, 5
         ).permute(0, 2, 4, 1, 3)  # (batch_size, seq_len, features (chlov), targets, num_sequences)
         if stage == "train":
