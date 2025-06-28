@@ -10,8 +10,7 @@ from typing import List, Dict, Tuple, Optional, Any
 import pandas as pd
 import time
 
-import yahoo_fin.stock_info as si
-from pandas.errors import ParserError
+import requests
 
 import warnings
 warnings.simplefilter(action='ignore', category=FutureWarning)
@@ -282,50 +281,50 @@ def download_numerical_financial_data(
         return
 
 
-    daily_index = raw_data.index
-    daily_close_prices = raw_data['Close']
+    # daily_index = raw_data.index
+    # daily_close_prices = raw_data['Close']
 
-    aligned_fundamentals_df, fundamental_col_names = fetch_and_align_fundamental_data(tickers, daily_index)
+    # aligned_fundamentals_df, fundamental_col_names = fetch_and_align_fundamental_data(tickers, daily_index)
     
-    # --- Calculate Dynamic P/E Ratio ---
-    if 'eps' in aligned_fundamentals_df.columns.levels[0]:
-        eps_df = aligned_fundamentals_df['eps']
+    # # --- Calculate Dynamic P/E Ratio ---
+    # if 'eps' in aligned_fundamentals_df.columns.levels[0]:
+    #     eps_df = aligned_fundamentals_df['eps']
 
-        # 1. Calculate Earnings Yield (E/P)
-        # Avoid division by zero on the off-chance a stock price is 0
-        earnings_yield_df = eps_df / daily_close_prices.where(daily_close_prices > 0, 1e-6)
+    #     # 1. Calculate Earnings Yield (E/P)
+    #     # Avoid division by zero on the off-chance a stock price is 0
+    #     earnings_yield_df = eps_df / daily_close_prices.where(daily_close_prices > 0, 1e-6)
         
-        # 2. Create Profitability Flag
-        is_profitable_df = (eps_df > 0).astype(float) # Converts True/False to 1.0/0.0
+    #     # 2. Create Profitability Flag
+    #     is_profitable_df = (eps_df > 0).astype(float) # Converts True/False to 1.0/0.0
         
-        # --- Clean and add the new features to the main fundamentals dataframe ---
-        earnings_yield_df = earnings_yield_df.replace([np.inf, -np.inf], np.nan).ffill().bfill()
+    #     # --- Clean and add the new features to the main fundamentals dataframe ---
+    #     earnings_yield_df = earnings_yield_df.replace([np.inf, -np.inf], np.nan).ffill().bfill()
         
-        earnings_yield_df.columns = pd.MultiIndex.from_product([['earnings_yield'], earnings_yield_df.columns])
-        is_profitable_df.columns = pd.MultiIndex.from_product([['is_profitable'], is_profitable_df.columns])
+    #     earnings_yield_df.columns = pd.MultiIndex.from_product([['earnings_yield'], earnings_yield_df.columns])
+    #     is_profitable_df.columns = pd.MultiIndex.from_product([['is_profitable'], is_profitable_df.columns])
         
-        aligned_fundamentals_df = pd.concat([aligned_fundamentals_df, earnings_yield_df, is_profitable_df], axis=1)
-    else:
-        print("WARNING: 'eps' data not available, cannot calculate earnings-based features.")
-        # Ensure the column names are not present if they couldn't be calculated
-        if 'earnings_yield' in fundamental_col_names:
-            fundamental_col_names.remove('earnings_yield')
-        if 'is_profitable' in fundamental_col_names:
-            fundamental_col_names.remove('is_profitable')
+    #     aligned_fundamentals_df = pd.concat([aligned_fundamentals_df, earnings_yield_df, is_profitable_df], axis=1)
+    # else:
+    #     print("WARNING: 'eps' data not available, cannot calculate earnings-based features.")
+    #     # Ensure the column names are not present if they couldn't be calculated
+    #     if 'earnings_yield' in fundamental_col_names:
+    #         fundamental_col_names.remove('earnings_yield')
+    #     if 'is_profitable' in fundamental_col_names:
+    #         fundamental_col_names.remove('is_profitable')
 
-    # Convert the multi-level column dataframe to a tensor
-    # Shape: (time, features, tickers) -> transpose to (features, time, tickers)
-    if not aligned_fundamentals_df.empty:
-        # Filter to only include columns we successfully generated
-        aligned_fundamentals_df = aligned_fundamentals_df.reindex(columns=fundamental_col_names, level=0)
+    # # Convert the multi-level column dataframe to a tensor
+    # # Shape: (time, features, tickers) -> transpose to (features, time, tickers)
+    # if not aligned_fundamentals_df.empty:
+    #     # Filter to only include columns we successfully generated
+    #     aligned_fundamentals_df = aligned_fundamentals_df.reindex(columns=fundamental_col_names, level=0)
         
-        fundamental_data_tensor = torch.tensor(aligned_fundamentals_df.values, dtype=torch.float32)
-        num_fundamental_features = fundamental_data_tensor.shape[1] // len(tickers)
-        fundamental_data_tensor = fundamental_data_tensor.reshape(len(daily_index), num_fundamental_features, len(tickers))
-        fundamental_data_tensor = fundamental_data_tensor.permute(1, 0, 2) # (features, time, tickers)
-    else:
-        fundamental_data_tensor = torch.empty(0)
-        fundamental_col_names = []
+    #     fundamental_data_tensor = torch.tensor(aligned_fundamentals_df.values, dtype=torch.float32)
+    #     num_fundamental_features = fundamental_data_tensor.shape[1] // len(tickers)
+    #     fundamental_data_tensor = fundamental_data_tensor.reshape(len(daily_index), num_fundamental_features, len(tickers))
+    #     fundamental_data_tensor = fundamental_data_tensor.permute(1, 0, 2) # (features, time, tickers)
+    # else:
+    #     fundamental_data_tensor = torch.empty(0)
+    #     fundamental_col_names = []
 
 
 
@@ -392,11 +391,11 @@ def download_numerical_financial_data(
     full_data = torch.cat((full_data, clv_data), dim=0)
     columns.extend(["clv"])
 
-    returns_of_returns = (full_data[:5, 1:, :] - full_data[:5, :-1, :]) / (full_data[:5, :-1, :] + 1e-8)
-    returns_of_returns = torch.cat((torch.zeros_like(returns_of_returns[:,0:1,:]), returns_of_returns), dim=1)
-    full_data = torch.cat((full_data, returns_of_returns), dim=0)
-    ror_columns = ["ror_close", "ror_high", "ror_low", "ror_open", "ror_volume"]
-    columns.extend(ror_columns)
+    # returns_of_returns = (full_data[:5, 1:, :] - full_data[:5, :-1, :]) / (full_data[:5, :-1, :] + 1e-8)
+    # returns_of_returns = torch.cat((torch.zeros_like(returns_of_returns[:,0:1,:]), returns_of_returns), dim=1)
+    # full_data = torch.cat((full_data, returns_of_returns), dim=0)
+    # ror_columns = ["ror_close", "ror_high", "ror_low", "ror_open", "ror_volume"]
+    # columns.extend(ror_columns)
 
     # full_ror_ema = []
     # full_ror_ema_columns = []
@@ -410,13 +409,13 @@ def download_numerical_financial_data(
     # full_data = torch.cat((full_data, torch.cat(full_ror_ema, dim=0)), dim=0)
     # columns.extend(full_ror_ema_columns)
 
-    # P/E and such
-    # EPS and P/E ratio
-    if fundamental_data_tensor.numel() > 0:
-        # Match time dimension
-        fundamental_data_tensor = fundamental_data_tensor[:, :full_data.shape[1], :]
-        full_data = torch.cat((full_data, fundamental_data_tensor), dim=0)
-        columns.extend(fundamental_col_names)
+    # # P/E and such
+    # # EPS and P/E ratio
+    # if fundamental_data_tensor.numel() > 0:
+    #     # Match time dimension
+    #     fundamental_data_tensor = fundamental_data_tensor[:, :full_data.shape[1], :]
+    #     full_data = torch.cat((full_data, fundamental_data_tensor), dim=0)
+    #     columns.extend(fundamental_col_names)
 
     prices = raw_data
     # prices = full_data[:5]
@@ -448,8 +447,8 @@ def download_numerical_financial_data(
     full_data = torch.cat((full_data, torch.cat(full_vpt, dim=0)), dim=0)
     local_columns.extend(["vpt_close", "vpt_high", "vpt_low", "vpt_open"])
 
-    # full_data = torch.cat((full_data, clv_data), dim=0) # TODO maybe
-    # local_columns.extend(["clv"])
+    full_data = torch.cat((full_data, clv_data), dim=0)
+    local_columns.extend(["clv"])
 
     # full_ppo = []
     # full_ppo_columns = []
@@ -460,8 +459,8 @@ def download_numerical_financial_data(
     #         temp_ppo.append(ppo_data.unsqueeze(-1))
     #     full_ppo.append(torch.cat(temp_ppo, dim=-1))
     #     full_ppo_columns.extend(ppo_columns)
-    # full_data = torch.cat((full_data, torch.cat(full_ppo, dim=0)), dim=0)
-    # local_columns.extend(full_ppo_columns)
+    full_data = torch.cat((full_data, torch.cat(full_ppo, dim=0)), dim=0)
+    local_columns.extend(full_ppo_columns)
 
 
 
@@ -481,18 +480,18 @@ def download_numerical_financial_data(
     full_data = torch.cat((full_data, torch.cat(full_ema, dim=0)), dim=0)
     local_columns.extend(full_ema_columns)
 
-    full_data = torch.cat((full_data, returns_of_returns), dim=0)
-    local_columns.extend(["ror_close", "ror_high", "ror_low", "ror_open", "ror_volume"])
+    # full_data = torch.cat((full_data, returns_of_returns), dim=0)
+    # local_columns.extend(["ror_close", "ror_high", "ror_low", "ror_open", "ror_volume"])
 
     # full_data = torch.cat((full_data, torch.cat(full_ror_ema, dim=0)), dim=0)
     # local_columns.extend(full_ror_ema_columns)
 
     # EPS and P/E ratio
-    if fundamental_data_tensor.numel() > 0:
-        # Match time dimension
-        fundamental_data_tensor = fundamental_data_tensor[:, :full_data.shape[1], :]
-        full_data = torch.cat((full_data, fundamental_data_tensor), dim=0) # TODO is this the right way to do this?
-        local_columns.extend(fundamental_col_names)
+    # if fundamental_data_tensor.numel() > 0:
+    #     # Match time dimension
+    #     fundamental_data_tensor = fundamental_data_tensor[:, :full_data.shape[1], :]
+    #     full_data = torch.cat((full_data, fundamental_data_tensor), dim=0)
+    #     local_columns.extend(fundamental_col_names)
 
 
     columns.extend(local_columns)
@@ -1554,221 +1553,163 @@ def align_financial_dataframes(
     return aligned_df
 
 
-# def fetch_and_align_fundamental_data(
-#     tickers: List[str], daily_index: pd.DatetimeIndex
-# ) -> Tuple[pd.DataFrame, List[str]]:
-#     """
-#     Fetches, processes, and aligns fundamental data for a list of tickers.
-
-#     Args:
-#         tickers (List[str]): List of stock tickers.
-#         daily_index (pd.DatetimeIndex): The common daily datetime index from OHLCV data.
-
-#     Returns:
-#         Tuple[pd.DataFrame, List[str]]:
-#         - A DataFrame containing the daily-aligned fundamental features for all tickers.
-#         - A list of the names of the new fundamental features.
-#     """
-#     print("Fetching and aligning fundamental data...")
-#     fundamental_features = {}
-#     feature_names = ['eps', 'revenue_ps', 'pe_ratio'] # Per Share
-
-#     # Define the fundamental metrics we want to extract
-#     # Using 'get' with a default of None to handle missing data gracefully
-#     metrics_to_fetch = {
-#         'eps': 'Diluted EPS',
-#         'revenue': 'Total Revenue',
-#         # Add other metrics here, e.g., 'ebit': 'EBIT'
-#     }
-
-#     for ticker_str in tickers:
-#         print(f"  - Processing fundamentals for {ticker_str}")
-#         ticker = yf.Ticker(ticker_str)
-        
-#         try:
-#             # Use quarterly data for higher resolution
-#             q_financials = ticker.quarterly_financials
-#             # Also get info for market cap
-#             info = ticker.info
-#             market_cap = info.get('marketCap')
-#             shares_outstanding = info.get('sharesOutstanding')
-
-#             if q_financials.empty:
-#                 print(f"    - WARNING: No quarterly financial data found for {ticker_str}. Skipping.")
-#                 continue
-            
-#             # --- Process Each Metric ---
-#             for key, fin_name in metrics_to_fetch.items():
-#                 if fin_name in q_financials.index:
-#                     # Create a series with the quarterly dates
-#                     metric_series = q_financials.loc[fin_name].copy()
-#                     metric_series.index = pd.to_datetime(metric_series.index).tz_localize(None)
-
-#                     # Align to daily index
-#                     aligned_series = metric_series.reindex(daily_index).ffill().bfill()
-                    
-#                     if key not in fundamental_features:
-#                         fundamental_features[key] = pd.DataFrame(index=daily_index)
-                    
-#                     fundamental_features[key][ticker_str] = aligned_series
-#                 else:
-#                     print(f"    - WARNING: Metric '{fin_name}' not found for {ticker_str}.")
-
-#             # --- Calculate Per-Share Metrics if possible ---
-#             if shares_outstanding and 'revenue' in fundamental_features and ticker_str in fundamental_features['revenue']:
-#                 if 'revenue_ps' not in fundamental_features:
-#                     fundamental_features['revenue_ps'] = pd.DataFrame(index=daily_index)
-#                 fundamental_features['revenue_ps'][ticker_str] = fundamental_features['revenue'][ticker_str] / shares_outstanding
-            
-#         except Exception as e:
-#             print(f"    - ERROR fetching data for {ticker_str}: {e}")
-
-#     # --- Combine into a single DataFrame and fill missing tickers ---
-#     all_features_df = pd.DataFrame()
-#     if not fundamental_features:
-#         print("WARNING: No fundamental data could be fetched for any ticker.")
-#         return pd.DataFrame(), []
-
-#     # Drop raw revenue, keep per-share version
-#     if 'revenue' in fundamental_features:
-#         del fundamental_features['revenue']
-        
-#     # Reorder columns to match original ticker list for consistency
-#     for key, df in fundamental_features.items():
-#         # Ensure all tickers are present as columns, filling with 0 if not found
-#         df = df.reindex(columns=tickers, fill_value=0)
-#         # Flatten and add to the main df
-#         df.columns = pd.MultiIndex.from_product([[key], df.columns])
-#         all_features_df = pd.concat([all_features_df, df], axis=1)
-
-#     return all_features_df, feature_names
-
+def _find_sec_data(company_facts: dict, tag_list: List[str], unit: str) -> list:
+    """
+    Helper to find the first available data for a list of possible XBRL tags.
+    It now searches across different accounting standards (gaap, ifrs, etc.).
+    """
+    # The 'facts' dictionary can contain different standards like 'us-gaap', 'ifrs-full', etc.
+    # We will search through all of them.
+    for standard in company_facts.get('facts', {}):
+        for tag in tag_list:
+            try:
+                # Navigate through the JSON to find the data for the specific unit
+                data = company_facts['facts'][standard].get(tag, {}).get('units', {}).get(unit)
+                if data:
+                    return data
+            except (AttributeError, KeyError):
+                continue
+    # If we loop through everything and find nothing
+    return []
 
 def fetch_and_align_fundamental_data(
     tickers: List[str], daily_index: pd.DatetimeIndex
 ) -> Tuple[pd.DataFrame, List[str]]:
     """
-    Fetches, processes, and aligns the FULL history of fundamental data for a 
-    list of tickers using the yahoo_fin library.
-
-    Args:
-        tickers (List[str]): List of stock tickers.
-        daily_index (pd.DatetimeIndex): The common daily datetime index from OHLCV data.
-
-    Returns:
-        Tuple[pd.DataFrame, List[str]]:
-        - A DataFrame containing the daily-aligned fundamental features for all tickers.
-        - A list of the names of the new fundamental features.
+    Fetches the FULL history of fundamental data for a list of tickers
+    directly from the SEC EDGAR database with the most robust parsing.
     """
-    print("Fetching and aligning full historical fundamental data using yahoo_fin...")
+    print("Fetching full historical fundamental data from SEC EDGAR API...")
+    headers = {'User-Agent': 'YourName YourEmail@example.com'}
     
-    # These are the features we will generate
-    feature_names = ['eps', 'revenue_ps', 'earnings_yield', 'is_profitable']
+    try:
+        company_tickers_response = requests.get("https://www.sec.gov/files/company_tickers.json", headers=headers)
+        company_tickers_response.raise_for_status()
+        ticker_to_cik = {
+            item['ticker']: str(item['cik_str']).zfill(10) 
+            for item in company_tickers_response.json().values()
+        }
+    except requests.exceptions.RequestException as e:
+        print(f"FATAL: Could not download ticker-to-CIK mapping from SEC. Error: {e}")
+        return pd.DataFrame(), []
+
+    eps_tags = ['EarningsPerShareDiluted', 'EarningsPerShareBasicAndDiluted', 'EarningsPerShareBasic']
+    revenue_tags = ['Revenues', 'RevenueFromContractWithCustomerExcludingAssessedTax', 'SalesRevenueNet']
+    shares_tags = ['WeightedAverageNumberOfDilutedSharesOutstanding', 'WeightedAverageNumberOfSharesOutstandingBasic']
     
-    # This will hold the final, aligned data for each feature type
-    fundamental_features_dict = {name: pd.DataFrame(index=daily_index) for name in feature_names}
+    historical_data = {'eps': {}, 'revenue_ps': {}}
 
     for ticker_str in tickers:
-        print(f"  - Processing fundamentals for {ticker_str}")
+        # ... (skipping logic for '^' and missing CIK is the same) ...
+        if ticker_str.startswith('^'): continue
+        cik = ticker_to_cik.get(ticker_str.upper())
+        if not cik:
+            print(f"  - Could not find CIK for {ticker_str}. Skipping.")
+            continue
+            
+        print(f"  - Processing fundamentals for {ticker_str} (CIK: {cik})")
         try:
-            # Fetch the FULL history of quarterly income statements
-            # The result is a DataFrame where index are metric names and columns are dates
-            financials = si.get_financials(ticker_str, yearly=False, quarterly=True)
-            income_statement = financials['quarterly_income_statement']
-
-            # --- Data Cleaning ---
-            # 1. Transpose the DataFrame so dates are the index
-            income_statement = income_statement.transpose()
+            facts_url = f"https://data.sec.gov/api/xbrl/companyfacts/CIK{cik}.json"
+            facts_response = requests.get(facts_url, headers=headers)
+            if facts_response.status_code != 200: 
+                print(f"    - Received status {facts_response.status_code} for {ticker_str}. Skipping.")
+                continue
+            facts_data = facts_response.json()
             
-            # 2. Clean the index (dates) and make it timezone-naive
-            income_statement.index = pd.to_datetime(income_statement.index).tz_localize(None)
 
-            # 3. Clean the data values (they are strings with commas)
-            # We apply a function to each cell to convert it to a number
-            for col in income_statement.columns:
-                income_statement[col] = pd.to_numeric(
-                    income_statement[col].astype(str).str.replace(',', ''),
-                    errors='coerce' # If conversion fails, it becomes NaN
-                )
-            income_statement.fillna(0, inplace=True) # Replace any failed conversions with 0
+            eps_data = _find_sec_data(facts_data, eps_tags, 'USD/shares')
+            revenue_data = _find_sec_data(facts_data, revenue_tags, 'USD')
+            shares_data = _find_sec_data(facts_data, shares_tags, 'shares')
             
-            # --- Feature Extraction ---
-            
-            # 1. Get Diluted EPS. The column name in yahoo_fin is 'dilutedeps'
-            if 'dilutedeps' in income_statement.columns:
-                eps_series = income_statement['dilutedeps']
-                
-                # Align to our daily index by reindexing and forward-filling
-                aligned_eps = eps_series.reindex(daily_index).ffill().bfill()
-                fundamental_features_dict['eps'][ticker_str] = aligned_eps
-            else:
-                print(f"    - WARNING: 'dilutedeps' not found for {ticker_str}.")
-                fundamental_features_dict['eps'][ticker_str] = 0 # Fill with 0 if not found
+            # --- Parsing logic from here is the same ---
+            if eps_data:
+                eps_df = pd.DataFrame(eps_data)
+                eps_df = eps_df[eps_df['frame'].notna()]
+                if not eps_df.empty:
+                    eps_df['end'] = pd.to_datetime(eps_df['end'])
+                    historical_data['eps'][ticker_str] = eps_df.drop_duplicates(subset='end', keep='last').set_index('end')['val']
 
-            # 2. Get Revenue Per Share
-            if 'totalrevenue' in income_statement.columns and 'sharesoutstanding' in income_statement.columns:
-                rps_series = income_statement['totalrevenue'] / income_statement['sharesoutstanding']
-                aligned_rps = rps_series.reindex(daily_index).ffill().bfill()
-                fundamental_features_dict['revenue_ps'][ticker_str] = aligned_rps
-            else:
-                print(f"    - WARNING: 'totalrevenue' or 'sharesoutstanding' not found for {ticker_str}.")
-                fundamental_features_dict['revenue_ps'][ticker_str] = 0
+            if revenue_data and shares_data:
+                rev_df = pd.DataFrame(revenue_data)
+                sh_df = pd.DataFrame(shares_data)
+                rev_df = rev_df[rev_df['frame'].notna()]
+                sh_df = sh_df[sh_df['frame'].notna()]
+                if not rev_df.empty and not sh_df.empty:
+                    rev_df['end'] = pd.to_datetime(rev_df['end'])
+                    rev_series = rev_df.drop_duplicates(subset='end', keep='last').set_index('end')['val']
+                    sh_df['end'] = pd.to_datetime(sh_df['end'])
+                    sh_series = sh_df.drop_duplicates(subset='end', keep='last').set_index('end')['val']
+                    rev_aligned, sh_aligned = rev_series.align(sh_series, method='ffill')
+                    historical_data['revenue_ps'][ticker_str] = (rev_aligned / sh_aligned).dropna()
 
-        except (KeyError, ParserError, ValueError, IndexError) as e:
-            # Catch exceptions for tickers that have no financial data (like ^GSPC)
-            print(f"    - WARNING: Could not fetch fundamental data for {ticker_str}. It might be an index. Error: {e}")
-            for key in fundamental_features_dict:
-                fundamental_features_dict[key][ticker_str] = 0
-
-    # --- Combine into a single DataFrame ---
-    # At this point, fundamental_features_dict contains separate DataFrames for 'eps', 'revenue_ps', etc.
-    # The 'earnings_yield' and 'is_profitable' will be calculated in the main function
+            time.sleep(0.15)
+        except Exception as e:
+            print(f"    - An unexpected error occurred for {ticker_str}: {e}")
     
-    # We create one large DataFrame with multi-level columns
+    # --- Assembly logic at the end remains the same ---
+    feature_names = ['eps', 'revenue_ps', 'earnings_yield', 'is_profitable']
     all_features_df = pd.DataFrame()
-    for key, df in fundamental_features_dict.items():
-        if key in ['earnings_yield', 'is_profitable']: continue # Skip empty ones
+    
+    # Process each feature type (e.g., 'eps', 'revenue_ps') separately
+    for feature_name, ticker_series_dict in historical_data.items():
         
-        # Ensure all original tickers are present, filling any missing ones with 0
-        df = df.reindex(columns=tickers, fill_value=0)
+        aligned_series_list = []
         
-        # Add the feature name as the top level of the column index
-        df.columns = pd.MultiIndex.from_product([[key], df.columns])
-        all_features_df = pd.concat([all_features_df, df], axis=1)
+        for ticker_str, raw_series in ticker_series_dict.items():
+            
+            # Combine the two indexes and sort them
+            combined_index = daily_index.union(raw_series.index).sort_values()
+            
+            # Reindex the raw series to this new combined index
+            # This places the quarterly data correctly onto the timeline
+            temp_aligned = raw_series.reindex(combined_index)
+            
+            # Now, forward-fill the quarterly values
+            temp_filled = temp_aligned.ffill()
+            
+            # Finally, select only the original daily trading days
+            # This effectively aligns the non-trading day data to the next trading day
+            final_s = temp_filled.reindex(daily_index)
 
+            # There might be NaNs at the very beginning if the first reporting date
+            # is after the start of the daily_index. We backfill to handle this.
+            final_s = final_s.bfill()
+            
+            final_s.name = ticker_str
+            aligned_series_list.append(final_s)
+            
+        # Concatenate all the now-perfectly-aligned series for this feature
+        if aligned_series_list:
+            feature_df = pd.concat(aligned_series_list, axis=1)
+        else:
+            feature_df = pd.DataFrame() # Handle case where no data was found for any ticker
+
+        # Ensure all original tickers are present, filling any missing ones with 0
+        final_df = feature_df.reindex(columns=tickers).fillna(0)
+        
+        # Add the multi-level column index
+        final_df.columns = pd.MultiIndex.from_product([[feature_name], final_df.columns])
+        
+        all_features_df = pd.concat([all_features_df, final_df], axis=1)
+
+    # Sort columns for consistency
+    if not all_features_df.empty:
+        all_features_df = all_features_df.reindex(columns=tickers, level=1)
+        
     return all_features_df, feature_names
 
 # E. Fundamental Data (More Involved - yf.Ticker().info, .financials, etc.):
 # Examples: P/E Ratio, EPS, P/S Ratio, Dividend Yield, Market Cap, Beta.
 # Challenge: This data is usually reported quarterly or annually.
-# Strategy:
-# Fetch for each ticker (e.g., stock_info = yf.Ticker(ticker_symbol).info).
-# Extract relevant metrics.
-# Create a time series by forward-filling these values. For example, if Q1 EPS is reported, use that EPS value for all trading days in Q1 until Q2 EPS is reported.
-# Dynamic Ratios: For ratios like P/E, you'd use the daily closing price and the forward-filled EPS: P_daily / EPS_forward_filled.
-# Merge these daily-aligned fundamental features with your existing temp_data.
-# Normalization: Fundamental ratios can have very different scales, so normalization will be key.
-# This is a significant addition and requires careful data handling and alignment.
+
 
 # F. Feature Interactions & Relative Strength:
 # Stock Return vs. Market Return (Alpha Component):
-# You're already downloading ^GSPC (S&P 500) as one of your tickers. If ^GSPC is at index j in your tickers list:
-# # Assuming 'returns' is at index 0 of your features in temp_data
-# # market_returns = data[0, :, :, j] # S&P 500 returns
-# # for stock_idx in range(len(tickers)):
-# #     if stock_idx == j: continue # Skip for the market index itself
-# #     stock_specific_returns = data[0, :, :, stock_idx]
-# #     alpha_component = stock_specific_returns - market_returns
-# #     # This alpha_component needs to be added as a new feature for stock_idx
-# #     # This requires careful restructuring of how features are assembled or added post-assembly.
-# #     # One way: calculate all base features first, then iterate to add relative ones.
-# This is a powerful concept but requires careful thought about how to structure it in your (features, time, targets, tickers) tensor. You might compute all base features, then in a second pass, compute relative features and append them.
 # Volatility Relative to Market:
 # stock_volatility_feature - vix_feature (after both are on comparable scales/forms, e.g., both as % or normalized).
 
 
 # Deeper Contextual Understanding (More Market & Economic Data): The market doesn't operate in a vacuum.
-# Capturing Cross-Asset Relationships (If Applicable): How stocks influence each other.
 # Fundamental Data (A Bigger Step): Company-specific financial health.
 # 1. Interest Rates (Crucial):
 # Why: Rates affect discount rates, company borrowing costs, economic growth expectations, and sector rotations.
@@ -1776,9 +1717,3 @@ def fetch_and_align_fundamental_data(
 # 2. Volatility Spreads / Ratios:
 # Stock HV vs. VIX: Normalized_Stock_HV_t - Normalized_VIX_t (or ratio). Is the stock more or less volatile than its typical relationship with market volatility?
 # Short-term HV vs. Long-term HV for the same stock: HV_10_day / HV_50_day. Can indicate changing volatility regimes for the stock.
-
-# III. Model Architecture & Training Considerations (Briefly):
-# Capacity: With more features, ensure your d_model is sufficiently large to create rich embeddings. If you have ~100 features, a d_model of 128-256 might be reasonable.
-# Normalization within Model: nn.RMSNorm is good. Ensure it's applied appropriately.
-# Attention Mechanism: Money_former_DINT suggests you're using a custom attention. Ensure it can effectively route and weigh information from these diverse feature types.
-# Learning Rate & Schedule: Adding many new features might sometimes require a bit more warmup or a slightly different learning rate initially as the model learns to incorporate new information streams.
