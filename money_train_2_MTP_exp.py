@@ -10,8 +10,6 @@
 
 # TODO noMachine on hypkos computer
 
-# TODO more metrics (try to find out if/which are redundant)
-
 # TODO make timing be per epoch
 # TODO maybe try optimising some parts of the code by using c?
 
@@ -33,12 +31,10 @@
 # TODO test nGPT
 
 # TODO check stat for noise
-# TODO do runs w fixed features
 
 # different scaling in attn
 # TODO redo some tests (global vs local, etc. groupnorm)
 
-# for some optim use expand instead of repeat, where original dim is 1
 
 import json
 import os
@@ -211,7 +207,7 @@ def proceed(args: argparse.Namespace):
         # limit_train_batches=1000,
         limit_val_batches=50,
         logger=logger,
-        log_every_n_steps=100,  # 100
+        log_every_n_steps=100,
         val_check_interval=300,
         precision=trainer_precision,
         check_val_every_n_epoch=None,
@@ -257,7 +253,7 @@ if __name__ == "__main__":
         # default="./experiment_configs/MTP_triplicate.json",
         # default="./experiment_configs/diff_head_dims_MTP.json",
         # default="./experiment_configs/profile.json",
-        default="./experiment_configs/MTP_experiment.json",
+        default="./experiment_configs/MTP_experiment_trip.json",
         help="Path to config file.",
     )
     if parser.parse_known_args()[0].config != "":

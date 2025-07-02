@@ -17,7 +17,7 @@ from ..components import get_causal_mask
 import matplotlib.pyplot as plt
 
 
-class Money_former_MLA_DINT_cog_attn_MTP(nn.Module): # TODO MTP blocks
+class Money_former_MLA_DINT_cog_attn_MTP(nn.Module):
     def __init__(self, args):  # , dtype=torch.float32):
         super().__init__()
         # args.dtype = dtype
@@ -29,7 +29,6 @@ class Money_former_MLA_DINT_cog_attn_MTP(nn.Module): # TODO MTP blocks
         self.layers = nn.ModuleList(
             [Money_former_block(args, depth) for depth in range(self.num_layers)]
         )
-        # self.input_features = (args.input_features - 15) * 3 + 15 # because time (15) and means, stds (3)
         self.input_features = args.input_features
 
         self.ticker_embedding = nn.Embedding(len(args.tickers), self.d_model)
@@ -50,7 +49,7 @@ class Money_former_MLA_DINT_cog_attn_MTP(nn.Module): # TODO MTP blocks
         self.predict_distribution = args.predict_gaussian
         if self.predict_distribution:
             self.out = nn.Linear(
-                self.d_model, len(args.indices_to_predict) * 2, bias=args.bias
+                self.d_model, 5 * 2, bias=args.bias
             )  # decodes to mean and std
         else:
             self.out = nn.Linear(

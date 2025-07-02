@@ -9,7 +9,7 @@
     "d_ff": 64,
     "kv_compression_dim": 24,
     "q_compression_dim": 48,
-    "lr": 1e-3,
+    "lr": 2e-3,
     "warmup_steps": 1000,
     "t_0": 4000,
     "t_mult": 1.5,
@@ -18,16 +18,16 @@
     "batch_size": 32,
     "t_total": 5000,
     "indices_to_predict": [1, 2, 3],
-    "predict_gaussian": false,
     "unique_inputs_ratio": [0, 1],
     "input_features": 0,
     "tickers": ["AAPL","^GSPC", "MSFT", "INTC", "NVDA", "AMZN"],
+    "predict_gaussian": true,
     "orthograd":false,
     "bias": true,
     "dtype":"fp32",
     "dataset":"Money",
     "type": "",
     "extra_descriptor":"",
-    "experiment_notes": "3bee6, local znorm chlov, emas of chlov",
-    "folder_name": "post_causality_fix/triplicates_2/3bee6_local_price_emas/"
+    "experiment_notes": "trying nll, 3bee6, local znorm chlov + emas, vol chlov, ppo chlov, clv, vpt chlo, returns + emas, ret vol chlov, bb c hist combined",
+    "folder_name": "triplicates_2/3bee6_local_nll/"
 }
