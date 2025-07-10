@@ -1,7 +1,5 @@
 # money_predictions_MTP.py
 
-# TODO i dont trust this code, but maybe?
-
 
 import json
 import os
@@ -233,221 +231,7 @@ def load_mtp_model(model_path, args_from_metadata):
     return model
 
 
-# def download_and_process_inference_data(args, start_date, end_date, seq_len_needed):
-#     """
-#     Downloads and processes data for inference, replicating training feature engineering.
-#     Returns:
-#         full_input_features_mtp (Tensor): Shape (features, max_pred_horizon, time_steps, num_tickers)
-#                                            This is the MTP-style input.
-#         true_prices_for_backtest (Tensor): Shape (time_steps_for_backtest+1, num_tickers)
-#                                            Raw close prices for calculating actual returns.
-#         all_columns (list): List of all feature names.
-#     """
-#     print("Downloading and processing inference data...")
-#     tickers = args.tickers
-#     target_dates = args.indices_to_predict
-
-#     raw_data = download_with_retry(
-#         tickers,
-#         start=start_date,
-#         end=end_date,
-#         progress=True,
-#         auto_adjust=False,
-#         back_adjust=False,
-#     )
-#     aligned_raw_data = pd.DataFrame(columns=raw_data.columns)
-#     for i in range(len(tickers)):
-#         for j in range(len(raw_data.columns.levels[0])):
-#             aligned_raw_data[raw_data.columns.levels[0][j], tickers[i]] = (
-#                 align_financial_dataframes(
-#                     {tickers[i]: raw_data[raw_data.columns.levels[0][j]]},
-#                     target_column=tickers[i],
-#                     fill_method="ffill",
-#                     min_date=start_date,
-#                     max_date=end_date,
-#                 )
-#             )
-#     raw_data = aligned_raw_data
-#     if raw_data.empty:
-#         print("No data downloaded.")
-
-#     indexes = raw_data.index
-#     columns = list(raw_data.columns.levels[0])
-#     raw_data = torch.tensor(raw_data.values, dtype=torch.float32).reshape(
-#         -1, len(columns), len(tickers)
-#     )  # (Time, Features, tickers)
-#     raw_data = raw_data.transpose(0, 1)  # (Features, Time series, tickers)
-
-#     raw_data = raw_data[1:, :, :]
-#     full_data = (raw_data[:,1:,:] - raw_data[:,:-1,:]) / raw_data[:,:-1,:]  # (features, time series, tickers)
-#     full_data = torch.cat((torch.zeros_like(full_data[:,0:1,:]), full_data), dim=1)
-#     # maybe add ffil for any infs or nans? 885
-#     full_data[4,885, 1] = full_data[4,884, 1]
-
-#     vol_data, vol_columns = feature_volatility_ret(returns=full_data[0:1], prefix="close_returns_")
-#     full_data = torch.cat((full_data, vol_data), dim=0)
-#     columns.extend(vol_columns)
-
-#     full_ema = []
-#     for i in range(len(tickers)):
-#         ema_data, ema_columns = feature_ema(full_data[0, :, i], prefix="close_returns_")
-#         full_ema.append(ema_data.unsqueeze(-1))
-#     full_data = torch.cat((full_data, torch.cat(full_ema, dim=-1)), dim=0)
-#     columns.extend(ema_columns)
-
-#     full_ema = []
-#     for i in range(len(tickers)):
-#         ema_data, ema_columns = feature_ema(full_data[1, :, i], prefix="high_returns_")
-#         full_ema.append(ema_data.unsqueeze(-1))
-#     full_data = torch.cat((full_data, torch.cat(full_ema, dim=-1)), dim=0)
-#     columns.extend(ema_columns)
-
-#     full_ema = []
-#     for i in range(len(tickers)):
-#         ema_data, ema_columns = feature_ema(full_data[2, :, i], prefix="low_returns_")
-#         full_ema.append(ema_data.unsqueeze(-1))
-#     full_data = torch.cat((full_data, torch.cat(full_ema, dim=-1)), dim=0)
-#     columns.extend(ema_columns)
-
-#     full_ema = []
-#     for i in range(len(tickers)):
-#         ema_data, ema_columns = feature_ema(full_data[3, :, i], prefix="open_returns_")
-#         full_ema.append(ema_data.unsqueeze(-1))
-#     full_data = torch.cat((full_data, torch.cat(full_ema, dim=-1)), dim=0)
-#     columns.extend(ema_columns)
-
-#     full_ema = []
-#     for i in range(len(tickers)):
-#         ema_data, ema_columns = feature_ema(full_data[4, :, i], prefix="volume_returns_")
-#         full_ema.append(ema_data.unsqueeze(-1))
-#     full_data = torch.cat((full_data, torch.cat(full_ema, dim=-1)), dim=0)
-#     columns.extend(ema_columns)
-
-#     full_vpt = []
-#     vpt_data = calculate_volume_price_trend_standard(raw_data[:4], raw_data[4:])
-#     full_vpt.append(vpt_data)
-#     full_data = torch.cat((full_data, torch.cat(full_vpt, dim=0)), dim=0)
-#     columns.extend(["vpt_close", "vpt_high", "vpt_low", "vpt_open"])
-
-#     full_ppo = []
-#     for i in range(len(tickers)):
-#         ppo_data, ppo_columns = feature_ppo(raw_data[0, :, i], prefix="close_")
-#         full_ppo.append(ppo_data)
-#     full_data = torch.cat((full_data, torch.stack(full_ppo, dim=-1)), dim=0)
-#     columns.extend(ppo_columns)
-
-#     full_ppo = []
-#     for i in range(len(tickers)):
-#         ppo_data, ppo_columns = feature_ppo(raw_data[1, :, i], prefix="high_")
-#         full_ppo.append(ppo_data)
-#     full_data = torch.cat((full_data, torch.stack(full_ppo, dim=-1)), dim=0)
-#     columns.extend(ppo_columns)
-
-#     full_ppo = []
-#     for i in range(len(tickers)):
-#         ppo_data, ppo_columns = feature_ppo(raw_data[2, :, i], prefix="low_")
-#         full_ppo.append(ppo_data)
-#     full_data = torch.cat((full_data, torch.stack(full_ppo, dim=-1)), dim=0)
-#     columns.extend(ppo_columns)
-
-#     full_ppo = []
-#     for i in range(len(tickers)):
-#         ppo_data, ppo_columns = feature_ppo(raw_data[3, :, i], prefix="open_")
-#         full_ppo.append(ppo_data)
-#     full_data = torch.cat((full_data, torch.stack(full_ppo, dim=-1)), dim=0)
-#     columns.extend(ppo_columns)
-
-#     full_ppo = []
-#     for i in range(len(tickers)):
-#         ppo_data, ppo_columns = feature_ppo(raw_data[4, :, i], prefix="volume_")
-#         full_ppo.append(ppo_data)
-#     full_data = torch.cat((full_data, torch.stack(full_ppo, dim=-1)), dim=0)
-#     columns.extend(ppo_columns)
-
-#     clv_data = calculate_close_line_values(raw_data[0], raw_data[1], raw_data[2]).unsqueeze(0)
-#     full_data = torch.cat((full_data, clv_data), dim=0)
-#     columns.extend(["clv"])
-
-#     vix_data = download_with_retry(
-#         "^VIX", start=start_date, end=end_date, progress=True, auto_adjust=False
-#     )
-#     aligned_vix_data = pd.DataFrame(columns=vix_data.columns)
-#     for column in vix_data.columns.levels[0]:
-#         aligned_vix_data[column, "^VIX"] = align_financial_dataframes(
-#             {column: vix_data},
-#             target_column=column,
-#             fill_method="ffill",
-#             min_date=start_date,
-#             max_date=end_date,
-#         )
-#     vix_data = aligned_vix_data
-#     vix_data = vix_data.to_numpy()[:, 1:-1]
-#     vix_data = torch.tensor(vix_data, dtype=torch.float32)
-#     vix_data = vix_data.transpose(0, 1)
-
-#     vix_data = vix_data.unsqueeze(-1)
-#     vix_data = vix_data.expand(vix_data.shape[0], vix_data.shape[1], len(tickers))
-#     full_data = torch.cat((full_data, vix_data), dim=0)
-#     columns.extend(["vix_close", "vix_high", "vix_low", "vix_open"])
-
-#     copper = download_with_retry(
-#         "HG=F",
-#         start=start_date,
-#         end=end_date,
-#         progress=True,
-#         auto_adjust=False,
-#         back_adjust=False,
-#     )
-#     aligned_copper = pd.DataFrame(columns=copper.columns)
-#     for column in copper.columns.levels[0]:
-#         aligned_copper[column, "HG=F"] = align_financial_dataframes(
-#             {column: copper},
-#             target_column=column,
-#             fill_method="ffill",
-#             min_date=start_date,
-#             max_date=end_date,
-#     )
-#     copper = aligned_copper
-#     copper = copper.to_numpy()[:, 1:]
-#     copper = torch.tensor(copper, dtype=torch.float32)
-#     copper = copper.transpose(0, 1)
-#     copper = copper.unsqueeze(-1)
-#     copper = copper.expand(copper.shape[0], copper.shape[1], len(tickers))
-#     full_data = torch.cat((full_data, copper), dim=0)
-#     columns.extend(["copper_close", "copper_open", "copper_high", "copper_low", "copper_volume"])
-
-#     data = torch.empty(full_data.shape[0], max(target_dates), full_data.shape[1]-max(target_dates), full_data.shape[2], dtype=torch.float32)
-#     for i in range(max(target_dates)):
-#         data[:,i,:,:] = full_data[:,i:-(max(target_dates)-i),:]
-#     data = data[:, :, 20:, :]  # (features, target_inputs, time series, tickers)
-
-#     # time data
-#     time_data, time_columns = feature_time_data(indexes, target_dates, tickers)
-#     data = torch.cat((data, time_data), dim=0)
-#     columns.extend(time_columns)
-
-#     # MTP_targets = torch.empty(
-#     #     (5, max(target_dates), data.shape[2]+20, len(tickers)), dtype=torch.float32
-#     # ) # (chlov, target_dates, time series, tickers)
-#     MTP_full = (raw_data[:, 1:, :] - raw_data[:, :-1, :]) / raw_data[:, :-1, :]
-#     MTP_full[4, 884, 1] = MTP_full[4, 883, 1]
-#     MTP_full = MTP_full[:, 20:, :]
-#     if max(target_dates) > 1:
-#         MTP_full = MTP_full[:, :-(max(target_dates)-1), :]
-#     # for i in range(max(target_dates)):
-#     #     if i == max(target_dates) - 1:
-#     #         MTP_targets[:, i, :, :] = MTP_full[:, i:, :]
-#     #     else:
-#     #         MTP_targets[:, i, :, :] = MTP_full[:, i:-(max(target_dates) - i - 1), :]
-#     # MTP_targets = MTP_targets[:, :, 20:, :]
-
-#     # znorm step (need all column means and stds)
-#     data[:-15] = (data[:-15] - args.normalization_means.view(data.shape[0]-15, 1, 1, -1).to(data.device)) / (args.normalization_stds.view(data.shape[0]-15, 1, 1, -1).to(data.device) + 1e-8)
-
-#     return data, MTP_full, columns
-
-
-def download_and_process_inference_data(args, start_date, end_date, seq_len_needed):
+def download_and_process_inference_data(args, start_date, end_date, seq_len_needed, cli_args):
     """
     Downloads and processes data for inference, replicating training feature engineering.
     Returns:
@@ -645,14 +429,15 @@ def download_and_process_inference_data(args, start_date, end_date, seq_len_need
     # Align returns with feature data
     MTP_full_returns = MTP_full_returns[:, min_lookback_to_drop:, :]
     if max(target_dates) > 1:
-        MTP_full_returns = MTP_full_returns[:, :-(max(target_dates) - 1), :]
+        if max(target_dates) > cli_args.pred_day:
+            MTP_full_returns = MTP_full_returns[:, :-(max(target_dates) - cli_args.pred_day), :]
 
     # --- Global Normalization (using loaded stats) ---
     num_of_non_global_norm_feats = len(local_columns) + len(time_columns)
     local_features_start_idx = data.shape[0] - num_of_non_global_norm_feats
     
-    means = args.normalization_means.view(data.shape[0] - num_of_non_global_norm_feats, 1, 1, -1)
-    stds = args.normalization_stds.view(data.shape[0] - num_of_non_global_norm_feats, 1, 1, -1)
+    means = args.normalization_means.view(data.shape[0] - num_of_non_global_norm_feats, 1, 1, -1).to(data.device)
+    stds = args.normalization_stds.view(data.shape[0] - num_of_non_global_norm_feats, 1, 1, -1).to(data.device)
     data[:local_features_start_idx] = (data[:local_features_start_idx] - means) / (stds + 1e-8)
     
     data = torch.nan_to_num(data, nan=0.0, posinf=0.0, neginf=0.0)
@@ -769,14 +554,12 @@ def run_trading_strategy_1day_signal_simple(
     
     
     # --- Performance Statistics Calculation ---
-    # portfolio_values is EOD capital, so its length is num_days + 1.
-    # daily_portfolio_returns has length num_days.
     portfolio_df = pd.DataFrame({
-        "portfolio_value": portfolio_values_ts[1:].numpy(), # Use EOD values for alignment with returns
+        "portfolio_value": portfolio_values_ts[1:].numpy(),
         "daily_return": daily_portfolio_returns_ts.numpy()
     })
-    # If using portfolio_values[0] in the df, then daily_return needs a 0 at the start.
-    # For stats, usually just use the daily_returns series.
+
+    final_capital = portfolio_values_ts[-1]
 
     if daily_portfolio_returns_ts.numel() == 0: # Handles case where num_days = 0
         total_return = 0.0
@@ -797,10 +580,14 @@ def run_trading_strategy_1day_signal_simple(
             annualized_return = ((1 + total_return) ** (252.0 / num_days)) - 1.0
             annualized_volatility = np.std(daily_returns_np) * np.sqrt(252.0)
             sharpe_ratio = (annualized_return / annualized_volatility) if annualized_volatility > 1e-9 else 0.0
+            downside_returns = daily_returns_np[daily_returns_np < 0]
+            downside_volatility = np.std(downside_returns) * np.sqrt(252.0)
+            sortino_ratio = (annualized_return / downside_volatility) if downside_volatility > 1e-9 else 0.0
         else:
             annualized_return = 0.0
             annualized_volatility = 0.0
             sharpe_ratio = 0.0
+            sortino_ratio = 0.0
 
         cumulative_returns_pd = (1 + pd.Series(daily_returns_np)).cumprod()
         # Ensure cumulative_returns_pd is not empty before calling .expanding or .min
@@ -808,8 +595,10 @@ def run_trading_strategy_1day_signal_simple(
             peak = cumulative_returns_pd.expanding(min_periods=1).max()
             drawdown = (cumulative_returns_pd / peak) - 1.0
             max_drawdown = drawdown.min()
+            calmar_ratio = (annualized_return / -max_drawdown) if max_drawdown < -0.04 else (annualized_return / 0.04)
         else:
             max_drawdown = 0.0
+            calmar_ratio = 0.0
         
         num_winning_days = (daily_returns_np > 0).sum()
         num_losing_days = (daily_returns_np < 0).sum()
@@ -818,29 +607,26 @@ def run_trading_strategy_1day_signal_simple(
 
     stats_dict = {
         "Signal Horizon Used": signal_horizon_name,
-        "Trade Threshold Up": trade_threshold_up,
-        "Trade Threshold Down (abs)": trade_threshold_down,
+        "Sharpe Threshold Up": trade_threshold_up,
+        "Sharpe Threshold Down": trade_threshold_down,
         "Total Return": total_return,
         "Annualized Return": annualized_return,
         "Annualized Volatility": annualized_volatility,
         "Sharpe Ratio": sharpe_ratio,
+        "Sortino Ratio": sortino_ratio,
+        "Calmar Ratio": calmar_ratio,
         "Max Drawdown": max_drawdown,
         "Number of Trading Days": num_days,
         "Number of Winning Days": int(num_winning_days),
         "Number of Losing Days": int(num_losing_days),
         "Win/Loss Day Ratio": win_loss_ratio,
-        "Final Capital": current_capital,
+        "Final Capital": final_capital,
     }
 
     if verbose > 0:
-        print(f"\n--- Strategy Summary (Signal: {signal_horizon_name}) ---")
-        for key, value in stats_dict.items():
-            if isinstance(value, (float, np.floating)) and key not in ["Sharpe Ratio", "Win/Loss Day Ratio", "Signal Horizon Used", "Trade Threshold Up", "Trade Threshold Down (abs)"]:
-                print(f"{key}: {value*100:.2f}%" if "Return" in key or "Drawdown" in key or "Volatility" in key else f"{key}: {value:.2f}")
-            elif isinstance(value, (float, np.floating)) and key in ["Sharpe Ratio", "Win/Loss Day Ratio", "Trade Threshold Up", "Trade Threshold Down (abs)"]:
-                print(f"{key}: {value:.4f}") # More precision for thresholds and ratios
-            else:
-                print(f"{key}: {value}")
+        print(f"\n--- Strategy Summary ({signal_horizon_name}) ---")
+        # (Full stats printing from previous answers)
+        for k, v in stats_dict.items(): print(f"{k}: {v}")
     
     return portfolio_df, stats_dict
 
@@ -938,7 +724,6 @@ def run_strategy_simple_with_turnover_costs(
                    f"EOD Cap: ${eod_portfolio_value:11,.2f}")
 
     # --- Performance Statistics Calculation ---
-    # ... (The stats calculation part is the same and can be copied)
     portfolio_df = pd.DataFrame({
         "portfolio_value": portfolio_values_ts[1:].numpy(),
         "daily_return": daily_portfolio_returns_ts.numpy()
@@ -965,10 +750,14 @@ def run_strategy_simple_with_turnover_costs(
             annualized_return = ((1 + total_return) ** (252.0 / num_days)) - 1.0
             annualized_volatility = np.std(daily_returns_np) * np.sqrt(252.0)
             sharpe_ratio = (annualized_return / annualized_volatility) if annualized_volatility > 1e-9 else 0.0
+            downside_returns = daily_returns_np[daily_returns_np < 0]
+            downside_volatility = np.std(downside_returns) * np.sqrt(252.0)
+            sortino_ratio = (annualized_return / downside_volatility) if downside_volatility > 1e-9 else 0.0
         else:
             annualized_return = 0.0
             annualized_volatility = 0.0
             sharpe_ratio = 0.0
+            sortino_ratio = 0.0
 
         cumulative_returns_pd = (1 + pd.Series(daily_returns_np)).cumprod()
         # Ensure cumulative_returns_pd is not empty before calling .expanding or .min
@@ -976,8 +765,10 @@ def run_strategy_simple_with_turnover_costs(
             peak = cumulative_returns_pd.expanding(min_periods=1).max()
             drawdown = (cumulative_returns_pd / peak) - 1.0
             max_drawdown = drawdown.min()
+            calmar_ratio = (annualized_return / -max_drawdown) if max_drawdown < -0.04 else (annualized_return / 0.04)
         else:
             max_drawdown = 0.0
+            calmar_ratio = 0.0
         
         num_winning_days = (daily_returns_np > 0).sum()
         num_losing_days = (daily_returns_np < 0).sum()
@@ -986,12 +777,14 @@ def run_strategy_simple_with_turnover_costs(
 
     stats_dict = {
         "Signal Horizon Used": signal_horizon_name,
-        "Trade Threshold Up": trade_threshold_up,
-        "Trade Threshold Down (abs)": trade_threshold_down,
+        "Sharpe Threshold Up": trade_threshold_up,
+        "Sharpe Threshold Down": trade_threshold_down,
         "Total Return": total_return,
         "Annualized Return": annualized_return,
         "Annualized Volatility": annualized_volatility,
         "Sharpe Ratio": sharpe_ratio,
+        "Sortino Ratio": sortino_ratio,
+        "Calmar Ratio": calmar_ratio,
         "Max Drawdown": max_drawdown,
         "Number of Trading Days": num_days,
         "Number of Winning Days": int(num_winning_days),
@@ -1128,10 +921,14 @@ def run_strategy_with_flexible_allocation(
             annualized_return = ((1 + total_return) ** (252.0 / num_days)) - 1.0
             annualized_volatility = np.std(daily_returns_np) * np.sqrt(252.0)
             sharpe_ratio = (annualized_return / annualized_volatility) if annualized_volatility > 1e-9 else 0.0
+            downside_returns = daily_returns_np[daily_returns_np < 0]
+            downside_volatility = np.std(downside_returns) * np.sqrt(252.0)
+            sortino_ratio = (annualized_return / downside_volatility) if downside_volatility > 1e-9 else 0.0
         else:
             annualized_return = 0.0
             annualized_volatility = 0.0
             sharpe_ratio = 0.0
+            sortino_ratio = 0.0
 
         cumulative_returns_pd = (1 + pd.Series(daily_returns_np)).cumprod()
         # Ensure cumulative_returns_pd is not empty before calling .expanding or .min
@@ -1139,8 +936,10 @@ def run_strategy_with_flexible_allocation(
             peak = cumulative_returns_pd.expanding(min_periods=1).max()
             drawdown = (cumulative_returns_pd / peak) - 1.0
             max_drawdown = drawdown.min()
+            calmar_ratio = (annualized_return / -max_drawdown) if max_drawdown < -0.04 else (annualized_return / 0.04)
         else:
             max_drawdown = 0.0
+            calmar_ratio = 0.0
         
         num_winning_days = (daily_returns_np > 0).sum()
         num_losing_days = (daily_returns_np < 0).sum()
@@ -1149,12 +948,14 @@ def run_strategy_with_flexible_allocation(
 
     stats_dict = {
         "Signal Horizon Used": signal_horizon_name,
-        "Trade Threshold Up": trade_threshold_up,
-        "Trade Threshold Down (abs)": trade_threshold_down,
+        "Sharpe Threshold Up": trade_threshold_up,
+        "Sharpe Threshold Down": trade_threshold_down,
         "Total Return": total_return,
         "Annualized Return": annualized_return,
         "Annualized Volatility": annualized_volatility,
         "Sharpe Ratio": sharpe_ratio,
+        "Sortino Ratio": sortino_ratio,
+        "Calmar Ratio": calmar_ratio,
         "Max Drawdown": max_drawdown,
         "Number of Trading Days": num_days,
         "Number of Winning Days": int(num_winning_days),
@@ -1189,92 +990,25 @@ def objective_function_mtp(long_threshold_raw, short_threshold_raw, min_step=0.0
     preds_for_selected_tickers = OPTIMIZATION_PREDS_1DAY[:, selected_ticker_indices]
     actual_returns_for_selected_tickers = OPTIMIZATION_ACTUAL_1D_RETURNS[:, selected_ticker_indices]
 
-
-    _, strategy_stats = run_strategy_simple_with_turnover_costs(
+    _, strategy_stats = run_strategy_with_flexible_allocation(
         predictions_1day_ahead=preds_for_selected_tickers,
         actual_1d_returns=actual_returns_for_selected_tickers,
         trade_threshold_up=long_threshold,
         trade_threshold_down=short_threshold, 
         initial_capital=OPTIMIZATION_INITIAL_CAPITAL,
         transaction_cost_pct=OPTIMIZATION_TRANSACTION_COST,
+        allocation_strategy="equal",
         signal_horizon_name=OPTIMIZATION_SIGNAL_HORIZON_NAME,
-        verbose=0, # Keep optimization quiet unless debugging
-        # ticker_names=METADATA_ARGS.tickers,
-        # allocation_method="signal_strength" # <--- New allocation method
+        verbose=0
     )
-    sharpe = strategy_stats.get("Sharpe Ratio", 0.0)
-    if sharpe < -5: # Penalize very bad Sharpe ratios
-        return -10.0 
+    # sharpe = strategy_stats.get("Sharpe Ratio", 0.0)
+    # sharpe = strategy_stats.get("Annualized Return", 0.0)
+    # sharpe = strategy_stats.get("Sortino Ratio", 0.0)
+    sharpe = strategy_stats.get("Calmar Ratio", 0.0)
     return sharpe
 
 
-# def get_mtp_predictions_for_backtest(model, all_mtp_input_features, args, nr_of_days_to_check, device):
-#     """
-#     Generates predictions for the backtest period using the MTP model.
-#     Outputs 1-day ahead predictions for the 'Close' feature return.
-#     """
-#     # all_mtp_input_features shape: (features, max_pred_horizon, time_steps, num_tickers)
-#     # We need to slice this to create batches of (1, max_pred_horizon, seq_len, num_tickers, features)
-    
-#     seq_len = args.seq_len
-#     num_pred_horizons_input = all_mtp_input_features.shape[1] # Should be max(args.indices_to_predict)
-#     # num_input_features_model = args.input_features # From metadata, what the model was trained on
-    
-#     # Permute all_mtp_input_features to (max_pred_horizon, time_steps, num_tickers, features)
-#     # for easier slicing of (seq_len, num_tickers, features) blocks
-#     all_mtp_input_features_permuted = all_mtp_input_features.permute(1, 2, 3, 0).to(device)
-#     # New shape: (max_pred_horizon, time_steps, num_tickers, features)
-
-#     model_predictions_1day_list = []
-
-#     print(f"Generating predictions for {nr_of_days_to_check} days...")
-#     for day_i in range(nr_of_days_to_check):
-#         # The input to the model needs to be for a specific window ending before the day we predict FOR.
-#         # `day_i` = 0 means we predict for the first day of the backtest.
-#         # The input features should end at `day_i + seq_len - 1`.
-#         # The `all_mtp_input_features_permuted` has its time dimension aligned such that
-#         # index `k` corresponds to the k-th day in the available processed feature history.
-#         # We need a window of `seq_len` ending at `day_i + seq_len -1` from this history.
-        
-#         # Slice for the current window:
-#         # `current_window_mtp_input` shape: (max_pred_horizon, seq_len, num_tickers, features)
-#         current_window_mtp_input = all_mtp_input_features_permuted[:, day_i : day_i + seq_len, :, :]
-        
-#         # Reshape for model: (batch_size=1, max_pred_horizon, seq_len, num_tickers, features)
-#         model_input_tensor = current_window_mtp_input.unsqueeze(0)
-        
-#         # Prepare separator and tickers for the model (now with the horizon dimension)
-#         seperator_input = torch.zeros((1, num_pred_horizons_input, 1), dtype=torch.int, device=device)
-#         tickers_input = torch.arange(len(args.tickers), device=device).unsqueeze(0).unsqueeze(0).repeat(1, num_pred_horizons_input, 1)
-
-#         with torch.no_grad():
-#             outputs = model(model_input_tensor, seperator_input, tickers_input)
-#         outputs = outputs.view(1, num_pred_horizons_input, (seq_len+1), len(args.tickers), 5)
-#         # outputs shape: (1, num_pred_horizons_output, seq_len+1, num_tickers, 5_chlov)
-        
-#         # Extract 1-day ahead prediction from the "main model" path (horizon 0)
-#         # from the last relevant output position (index -1 for seq_len+1, as separator is [0])
-#         # for the 'Close' feature (assuming index 0 of the 5 CHLOV features)
-#         pred_1day_close_return_norm = outputs[0, 0, -1, :, 0] # Shape: (num_tickers)
-#         model_predictions_1day_list.append(pred_1day_close_return_norm)
-
-#     model_predictions_1day_tensor = torch.stack(model_predictions_1day_list, dim=0) # (nr_of_days_to_check, num_tickers)
-    
-#     # De-normalize predictions
-#     # Normalization stats are (num_base_features, 1, num_tickers)
-#     # We need the stats for the 'Close' feature (assuming it's the first of the 5 CHLOV inputs)
-#     close_feature_original_index = 0 # If 'Close' return was the first of the 5 base features used for target norm
-    
-#     # Ensure normalization_means/stds are on the correct device
-#     norm_means_for_close = args.normalization_means[close_feature_original_index, :] # Shape (num_tickers)
-#     norm_stds_for_close = args.normalization_stds[close_feature_original_index, :]   # Shape (num_tickers)
-
-#     denormalized_predictions = model_predictions_1day_tensor * norm_stds_for_close.unsqueeze(0) + \
-#                                norm_means_for_close.unsqueeze(0)
-    
-#     return denormalized_predictions
-
-def get_mtp_predictions_for_backtest(model, all_mtp_input_features, args, nr_of_days_to_check, device):
+def get_mtp_predictions_for_backtest(model, all_mtp_input_features, args, nr_of_days_to_check, device, cli_args):
     """
     Generates predictions for the backtest period using the MTP model.
     This function now performs local z-normalization on each sequence before prediction.
@@ -1352,7 +1086,7 @@ def get_mtp_predictions_for_backtest(model, all_mtp_input_features, args, nr_of_
         # - Dimension 2 (5_chlov): index 0 ('Close' return)
         # - Dimension 3 (horizons): index 0 (1-day prediction horizon)
         # - Dimension 4 (tickers): index : (all tickers)
-        pred_1day_close_return_norm = outputs_permuted[0, -1, 0, 0, :] # Shape: (num_tickers)
+        pred_1day_close_return_norm = outputs_permuted[0, -1, 0, cli_args.pred_day-1, :] # Shape: (num_tickers)
         model_predictions_1day_list.append(pred_1day_close_return_norm)
 
     model_predictions_1day_tensor = torch.stack(model_predictions_1day_list, dim=0).to(device)
@@ -1421,16 +1155,19 @@ def plot_predicted_vs_actual_returns(
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description="Make predictions with a trained MTP stock model.")
-    parser.add_argument("--model_path", type=str, default="good_models/MTP/3bee6_local_optim/name=0-epoch=30-val_loss=0.00-v56.ckpt", help="Path to the trained .pth model file.")
-    parser.add_argument("--metadata_path", type=str, default="good_models/MTP/3bee6_local_optim/hparams.yaml", help="Path to the metadata.json file for the model.")
-    parser.add_argument("--days_to_check", type=int, default=100, help="Number of recent days to generate predictions for and backtest.")
+    # parser.add_argument("--model_path", type=str, default="good_models/MTP/3bee6_local_big/name=0-epoch=57-val_loss=0.00.ckpt", help="Path to the trained .pth model file.")
+    # parser.add_argument("--metadata_path", type=str, default="good_models/MTP/3bee6_local_big/hparams.yaml", help="Path to the metadata.json file for the model.")
+    parser.add_argument("--model_path", type=str, default="good_models/MTP/3bee6_local_big_new/name=0-epoch=61-val_loss=0.00-v9.ckpt", help="Path to the trained .pth model file.")
+    parser.add_argument("--metadata_path", type=str, default="good_models/MTP/3bee6_local_big_new/hparams.yaml", help="Path to the metadata.json file for the model.")
+    parser.add_argument("--days_to_check", type=int, default=1300, help="Number of recent days to generate predictions for and backtest.")
     parser.add_argument("--start_date_data", type=str, default="2020-01-01", help="Start date for downloading historical data.")
     parser.add_argument("--end_date_data", type=str, default="2025-05-25", help="End date for downloading historical data (serves as backtest end).")
     parser.add_argument("--initial_capital", type=float, default=100000.0, help="Initial capital for backtesting.")
     parser.add_argument("--transaction_cost", type=float, default=0.0005, help="Transaction cost percentage.")
     parser.add_argument("--plot_equity", type=bool, default=True, help="Plot the equity curve of the optimized strategy.")
     parser.add_argument("--verbose_strategy", type=int, default=0, help="Verbosity level for strategy run printouts (0: silent, 1: summary).")
-    parser.add_argument("--plot_individual_returns", type=bool, default=True, help="Plot predicted vs. actual returns for each ticker.")
+    parser.add_argument("--plot_individual_returns", type=bool, default=False, help="Plot predicted vs. actual returns for each ticker.")
+    parser.add_argument("--pred_day", type=int, default=1, help="MTP block prediction to use.")
 
     cli_args = parser.parse_args()
 
@@ -1458,7 +1195,8 @@ if __name__ == "__main__":
         args_from_metadata,
         cli_args.start_date_data,
         cli_args.end_date_data,
-        seq_len_needed=seq_len_for_model_input # This 'seq_len' is for the model's direct input window
+        seq_len_needed=seq_len_for_model_input,
+        cli_args=cli_args
     )
 
     args_from_metadata.columns = columns
@@ -1474,20 +1212,20 @@ if __name__ == "__main__":
 
     # Generate model predictions for the same period
     model_1day_predictions_denorm = get_mtp_predictions_for_backtest(
-        model, all_mtp_input_features, args_from_metadata, cli_args.days_to_check, device
+        model, all_mtp_input_features, args_from_metadata, cli_args.days_to_check, device, cli_args
     )
     # Ensure predictions and actuals have the same length for the backtest
     if model_1day_predictions_denorm.shape[0] != actual_1d_returns_for_backtest_period.shape[0]:
         raise ValueError(f"Mismatch in length between predictions ({model_1day_predictions_denorm.shape[0]}) and actuals ({actual_1d_returns_for_backtest_period.shape[0]}) for backtest.")
 
-    print("\n--- Plotting Predicted vs. Actual Returns ---")
-    plot_predicted_vs_actual_returns(
-        predicted_returns=model_1day_predictions_denorm,
-        actual_returns=actual_1d_returns_for_backtest_period,
-        ticker_names=args_from_metadata.tickers,
-        num_days_to_plot=min(200, cli_args.days_to_check), # Plot last 100 days or all if fewer
-        plot_filename_prefix="MTP_returns_comparison"
-    )
+    # print("\n--- Plotting Predicted vs. Actual Returns ---")
+    # plot_predicted_vs_actual_returns(
+    #     predicted_returns=model_1day_predictions_denorm,
+    #     actual_returns=actual_1d_returns_for_backtest_period,
+    #     ticker_names=args_from_metadata.tickers,
+    #     num_days_to_plot=min(200, cli_args.days_to_check), # Plot last 100 days or all if fewer
+    #     plot_filename_prefix="MTP_returns_comparison"
+    # )
     
     pre_optim_predictions = model_1day_predictions_denorm.cpu()
     pre_optim_actuals = actual_1d_returns_for_backtest_period.cpu()
@@ -1497,7 +1235,7 @@ if __name__ == "__main__":
     if cli_args.plot_individual_returns:
         for i in range(pre_optim_predictions.shape[1]):
             print(f"\n--- Running PRE-OPTIMIZATION Backtest for {args_from_metadata.tickers[i]} ---")
-            individual_portfolio_df, individual_stats = run_strategy_simple_with_turnover_costs(
+            individual_portfolio_df, individual_stats = run_strategy_with_flexible_allocation(
                 predictions_1day_ahead=pre_optim_predictions[:, i].unsqueeze(1),
                 actual_1d_returns=pre_optim_actuals[:, i].unsqueeze(1),
                 trade_threshold_up=simple_trade_threshold,
@@ -1505,7 +1243,8 @@ if __name__ == "__main__":
                 initial_capital=cli_args.initial_capital,
                 transaction_cost_pct=cli_args.transaction_cost,
                 signal_horizon_name="1-day (Pre-Opt signal strength)",
-                verbose=cli_args.verbose_strategy
+                verbose=cli_args.verbose_strategy,
+                allocation_strategy="equal" 
             )
             
             plt.figure(figsize=(14, 7)) # Create a new figure for this plot
@@ -1544,8 +1283,6 @@ if __name__ == "__main__":
         signal_horizon_name="1-day (Pre-Opt signal strength)",
         verbose=cli_args.verbose_strategy,
         allocation_strategy="equal" # "signal_strength"
-        # ticker_names=args_from_metadata.tickers, # Pass ticker names
-        # capital_base_for_allocation="portfolio_value"
     )
 
     pre_optim_portfolio_df_simple, pre_optim_stats_simple = run_trading_strategy_1day_signal_simple(
@@ -1610,14 +1347,12 @@ if __name__ == "__main__":
     OPTIMIZATION_INITIAL_CAPITAL = cli_args.initial_capital
     OPTIMIZATION_TRANSACTION_COST = cli_args.transaction_cost
     OPTIMIZATION_SIGNAL_HORIZON_NAME = "1-day (Optimized)"
-    # OPTIMIZATION_CLOSE_THRESHOLD_PCT = 0.001
-    # OPTIMIZATION_CAPITAL_BASE = "portfolio_value"
 
     pbounds_asymmetric = {
-        'long_threshold_raw': (0.000, 0.01), # Search range for long thresh
-        'short_threshold_raw': (0.000, 0.01) # Search range for absolute short thresh
+        'long_threshold_raw': (0.000, 0.1), # Search range for long thresh
+        'short_threshold_raw': (0.000, 0.1) # Search range for absolute short thresh
     }
-    min_step_thresh = 0.00001 # Discretization step for thresholds
+    min_step_thresh = 0.0001 # Discretization step for thresholds
 
     for i in range(len(METADATA_ARGS.tickers)):
         pbounds_asymmetric[f'include_ticker_{i}_raw'] = (0.0, 1.0)
@@ -1626,7 +1361,7 @@ if __name__ == "__main__":
         f=objective_function_mtp,
         pbounds=pbounds_asymmetric,
         random_state=1,
-        verbose=2 # 0 (silent), 1 (steps), 2 (all)
+        verbose=1 # 0 (silent), 1 (steps), 2 (all)
     )
     optimizer.maximize(init_points=300, n_iter=100) # Adjust init_points and n_iter as needed
 
@@ -1651,7 +1386,7 @@ if __name__ == "__main__":
 
     # 5. Run Final Backtest with Optimized Thresholds on the Full Period
     print("\n--- Running Final Backtest with Optimized Thresholds (Full Period) ---")
-    final_portfolio_df, final_stats = run_strategy_simple_with_turnover_costs(
+    final_portfolio_df, final_stats = run_strategy_with_flexible_allocation(
         model_1day_predictions_denorm[:, optimal_included_ticker_indices].cpu(),
         actual_1d_returns_for_backtest_period[:, optimal_included_ticker_indices].cpu(),
         trade_threshold_up=optimal_long_thresh,
@@ -1660,6 +1395,7 @@ if __name__ == "__main__":
         transaction_cost_pct=cli_args.transaction_cost,
         signal_horizon_name="1-day (Final Optimized)",
         verbose=cli_args.verbose_strategy,
+        allocation_strategy="equal"
     )
 
     # 6. Plotting (Optional)
@@ -1676,7 +1412,7 @@ if __name__ == "__main__":
                     buy_and_hold_equity_curve_single = (1 + buy_and_hold_returns_single_ticker).cumprod(dim=0)
                     plt.plot(equity_curve.index, buy_and_hold_equity_curve_single.numpy(), label=f"Buy & Hold {args_from_metadata.tickers[0]}", linestyle=":")
                 else: # Multiple tickers, plot average B&H
-                    buy_and_hold_returns_avg_tickers = actual_1d_returns_for_backtest_period.cpu().mean(dim=1)
+                    buy_and_hold_returns_avg_tickers = actual_1d_returns_for_backtest_period[:, optimal_included_ticker_indices].cpu().mean(dim=1)
                     buy_and_hold_equity_curve_avg = (1 + buy_and_hold_returns_avg_tickers).cumprod(dim=0)
                     plt.plot(equity_curve.index, buy_and_hold_equity_curve_avg.numpy(), label=f"Buy & Hold Avg of {len(args_from_metadata.tickers)} Tickers", linestyle=":")
             

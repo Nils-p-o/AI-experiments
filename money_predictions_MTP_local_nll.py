@@ -234,7 +234,7 @@ def load_mtp_model(model_path, args_from_metadata):
 
 
 
-def download_and_process_inference_data(args, start_date, end_date, seq_len_needed):
+def download_and_process_inference_data(args, start_date, end_date, seq_len_needed, cli_args):
     """
     Downloads and processes data for inference, replicating training feature engineering.
     Returns:
@@ -432,14 +432,15 @@ def download_and_process_inference_data(args, start_date, end_date, seq_len_need
     # Align returns with feature data
     MTP_full_returns = MTP_full_returns[:, min_lookback_to_drop:, :]
     if max(target_dates) > 1:
-        MTP_full_returns = MTP_full_returns[:, :-(max(target_dates) - 1), :]
+        if max(target_dates) > cli_args.pred_day:
+            MTP_full_returns = MTP_full_returns[:, :-(max(target_dates) - cli_args.pred_day), :]
 
     # --- Global Normalization (using loaded stats) ---
     num_of_non_global_norm_feats = len(local_columns) + len(time_columns)
     local_features_start_idx = data.shape[0] - num_of_non_global_norm_feats
     
-    means = args.normalization_means.view(data.shape[0] - num_of_non_global_norm_feats, 1, 1, -1)
-    stds = args.normalization_stds.view(data.shape[0] - num_of_non_global_norm_feats, 1, 1, -1)
+    means = args.normalization_means.view(data.shape[0] - num_of_non_global_norm_feats, 1, 1, -1).to(data.device)
+    stds = args.normalization_stds.view(data.shape[0] - num_of_non_global_norm_feats, 1, 1, -1).to(data.device)
     data[:local_features_start_idx] = (data[:local_features_start_idx] - means) / (stds + 1e-8)
     
     data = torch.nan_to_num(data, nan=0.0, posinf=0.0, neginf=0.0)
@@ -1064,7 +1065,7 @@ def run_strategy_with_risk_adjustment(
 
     final_capital = portfolio_values_ts[-1]
 
-    if daily_portfolio_returns_ts.numel() == 0:
+    if daily_portfolio_returns_ts.numel() == 0: # Handles case where num_days = 0
         total_return = 0.0
         annualized_return = 0.0
         annualized_volatility = 0.0
@@ -1083,10 +1084,14 @@ def run_strategy_with_risk_adjustment(
             annualized_return = ((1 + total_return) ** (252.0 / num_days)) - 1.0
             annualized_volatility = np.std(daily_returns_np) * np.sqrt(252.0)
             sharpe_ratio = (annualized_return / annualized_volatility) if annualized_volatility > 1e-9 else 0.0
+            downside_returns = daily_returns_np[daily_returns_np < 0]
+            downside_volatility = np.std(downside_returns) * np.sqrt(252.0)
+            sortino_ratio = (annualized_return / downside_volatility) if downside_volatility > 1e-9 else 0.0
         else:
             annualized_return = 0.0
             annualized_volatility = 0.0
             sharpe_ratio = 0.0
+            sortino_ratio = 0.0
 
         cumulative_returns_pd = (1 + pd.Series(daily_returns_np)).cumprod()
         # Ensure cumulative_returns_pd is not empty before calling .expanding or .min
@@ -1094,8 +1099,10 @@ def run_strategy_with_risk_adjustment(
             peak = cumulative_returns_pd.expanding(min_periods=1).max()
             drawdown = (cumulative_returns_pd / peak) - 1.0
             max_drawdown = drawdown.min()
+            calmar_ratio = (annualized_return / -max_drawdown) if max_drawdown < -0.04 else (annualized_return / 0.04)
         else:
             max_drawdown = 0.0
+            calmar_ratio = 0.0
         
         num_winning_days = (daily_returns_np > 0).sum()
         num_losing_days = (daily_returns_np < 0).sum()
@@ -1104,12 +1111,14 @@ def run_strategy_with_risk_adjustment(
 
     stats_dict = {
         "Signal Horizon Used": signal_horizon_name,
-        "Trade Threshold Up": trade_threshold_up,
-        "Trade Threshold Down (abs)": trade_threshold_down,
+        "Sharpe Threshold Up": trade_threshold_up,
+        "Sharpe Threshold Down": trade_threshold_down,
         "Total Return": total_return,
         "Annualized Return": annualized_return,
         "Annualized Volatility": annualized_volatility,
         "Sharpe Ratio": sharpe_ratio,
+        "Sortino Ratio": sortino_ratio,
+        "Calmar Ratio": calmar_ratio,
         "Max Drawdown": max_drawdown,
         "Number of Trading Days": num_days,
         "Number of Winning Days": int(num_winning_days),
@@ -1158,11 +1167,12 @@ def run_strategy_with_probability_sizing(
     predictions_1day_ahead: torch.Tensor,
     predicted_std_devs: torch.Tensor,
     actual_1d_returns: torch.Tensor,
-    confidence_threshold: float = 0.55, # Trade if P > 55%
+    confidence_threshold: float = 0.6,
     initial_capital: float = 100000.0,
     transaction_cost_pct: float = 0.0005,
     signal_horizon_name: str = "1-day signal with probability sizing",
-    verbose: int = 0
+    verbose: int = 0,
+    allocation_method: str = "equal", # "equal" or "probability weight"
 ):
     """
     Simulates a trading strategy with position sizing based on the predicted probability of a profitable move.
@@ -1198,24 +1208,27 @@ def run_strategy_with_probability_sizing(
         target_positions_today = torch.zeros_like(positions_at_prev_eod)
 
         if torch.any(active_signals_mask):
-            # --- POSITION SIZING ---
-            # Size is proportional to our "edge" or "conviction" (how far the probability is from 50%)
-            # For long positions, conviction is (prob_up - 0.5)
-            # For short positions, conviction is (prob_down - 0.5)
-            long_conviction = (prob_up[long_signals_mask] - 0.5)
-            short_conviction = (prob_down[short_signals_mask] - 0.5)
-            
-            # Combine all active convictions to get a total weight
-            all_convictions = torch.cat([long_conviction, short_conviction])
-            total_conviction_weight = torch.sum(all_convictions)
-            
-            if total_conviction_weight > 1e-9:
-                # Allocate capital proportionally to conviction
-                long_proportions = long_conviction / total_conviction_weight
-                short_proportions = short_conviction / total_conviction_weight
+            if allocation_method == "probability weight":
+                long_conviction = (prob_up[long_signals_mask] - 0.5)
+                short_conviction = (prob_down[short_signals_mask] - 0.5)
+                
+                # Combine all active convictions to get a total weight
+                all_convictions = torch.cat([long_conviction, short_conviction])
+                total_conviction_weight = torch.sum(all_convictions)
+                
+                if total_conviction_weight > 1e-9:
+                    # Allocate capital proportionally to conviction
+                    long_proportions = long_conviction / total_conviction_weight
+                    short_proportions = short_conviction / total_conviction_weight
 
-                target_positions_today[long_signals_mask] = long_proportions * capital_at_start_of_day
-                target_positions_today[short_signals_mask] = -short_proportions * capital_at_start_of_day
+                    target_positions_today[long_signals_mask] = long_proportions * capital_at_start_of_day
+                    target_positions_today[short_signals_mask] = -short_proportions * capital_at_start_of_day
+            elif allocation_method == "equal":
+                num_active_signals = active_signals_mask.sum()
+                capital_per_trade = capital_at_start_of_day / num_active_signals
+                target_positions_today[long_signals_mask] = capital_per_trade
+                target_positions_today[short_signals_mask] = -capital_per_trade
+
 
         # --- P&L and Turnover Calculation (same as before) ---
         pnl_today = torch.sum(target_positions_today * actual_1d_returns[day_idx])
@@ -1259,10 +1272,14 @@ def run_strategy_with_probability_sizing(
             annualized_return = ((1 + total_return) ** (252.0 / num_days)) - 1.0
             annualized_volatility = np.std(daily_returns_np) * np.sqrt(252.0)
             sharpe_ratio = (annualized_return / annualized_volatility) if annualized_volatility > 1e-9 else 0.0
+            downside_returns = daily_returns_np[daily_returns_np < 0]
+            downside_volatility = np.std(downside_returns) * np.sqrt(252.0)
+            sortino_ratio = (annualized_return / downside_volatility) if downside_volatility > 1e-9 else 0.0
         else:
             annualized_return = 0.0
             annualized_volatility = 0.0
             sharpe_ratio = 0.0
+            sortino_ratio = 0.0
 
         cumulative_returns_pd = (1 + pd.Series(daily_returns_np)).cumprod()
         # Ensure cumulative_returns_pd is not empty before calling .expanding or .min
@@ -1270,8 +1287,10 @@ def run_strategy_with_probability_sizing(
             peak = cumulative_returns_pd.expanding(min_periods=1).max()
             drawdown = (cumulative_returns_pd / peak) - 1.0
             max_drawdown = drawdown.min()
+            calmar_ratio = (annualized_return / -max_drawdown) if max_drawdown < -0.04 else (annualized_return / 0.04)
         else:
             max_drawdown = 0.0
+            calmar_ratio = 0.0
         
         num_winning_days = (daily_returns_np > 0).sum()
         num_losing_days = (daily_returns_np < 0).sum()
@@ -1285,6 +1304,8 @@ def run_strategy_with_probability_sizing(
         "Annualized Return": annualized_return,
         "Annualized Volatility": annualized_volatility,
         "Sharpe Ratio": sharpe_ratio,
+        "Sortino Ratio": sortino_ratio,
+        "Calmar Ratio": calmar_ratio,
         "Max Drawdown": max_drawdown,
         "Number of Trading Days": num_days,
         "Number of Winning Days": int(num_winning_days),
@@ -1303,12 +1324,13 @@ def run_strategy_with_sharpe_sizing(
     predictions_1day_ahead: torch.Tensor,
     predicted_std_devs: torch.Tensor,
     actual_1d_returns: torch.Tensor,
-    sharpe_threshold_long: float = 0.2,   # Positive threshold to go long
-    sharpe_threshold_short: float = -0.2, # Negative threshold to go short
+    trade_threshold_up: float = 0.2,
+    trade_threshold_down: float = 0.2,
     initial_capital: float = 100000.0,
     transaction_cost_pct: float = 0.0005,
     signal_horizon_name: str = "1-day signal with Sharpe sizing",
-    verbose: int = 0
+    verbose: int = 0,
+    allocation_method = "sharpe_strength" # or "equal"
 ):
     """
     Simulates a trading strategy with position sizing based on the predicted Sharpe ratio (μ/σ).
@@ -1324,11 +1346,6 @@ def run_strategy_with_sharpe_sizing(
     positions_at_prev_eod = torch.zeros(num_tickers, dtype=torch.float64)
     tc_pct_tensor = torch.tensor(transaction_cost_pct, dtype=torch.float64)
 
-    # Validate thresholds to prevent logical errors
-    if sharpe_threshold_long <= 0:
-        raise ValueError("sharpe_threshold_long must be positive.")
-    if sharpe_threshold_short >= 0:
-        raise ValueError("sharpe_threshold_short must be negative.")
 
     for day_idx in range(num_days):
         capital_at_start_of_day = portfolio_values_ts[day_idx]
@@ -1339,32 +1356,30 @@ def run_strategy_with_sharpe_sizing(
 
         # --- SIGNAL GENERATION ---
         # We trade if the predicted Sharpe ratio crosses our thresholds
-        long_signals_mask = predicted_sharpe_today > sharpe_threshold_long
-        short_signals_mask = predicted_sharpe_today < sharpe_threshold_short
+        long_signals_mask = predicted_sharpe_today > trade_threshold_up
+        short_signals_mask = predicted_sharpe_today < -trade_threshold_down
         active_signals_mask = long_signals_mask | short_signals_mask
 
         target_positions_today = torch.zeros_like(positions_at_prev_eod)
 
         if torch.any(active_signals_mask):
-            # --- POSITION SIZING ---
-            # We will size positions based on the magnitude of the predicted Sharpe ratio.
-            # This naturally allocates more capital to higher-conviction (higher Sharpe) trades.
-            
-            # Get the predicted Sharpe ratios for only the active signals
-            active_sharpe_signals = predicted_sharpe_today[active_signals_mask]
-            
-            # The allocation weight is the absolute value of the Sharpe ratio
-            abs_sharpe_weights = torch.abs(active_sharpe_signals)
-            total_abs_weight = torch.sum(abs_sharpe_weights)
-            
-            if total_abs_weight > 1e-9:
-                # Allocate capital proportionally to the absolute Sharpe ratio
-                proportions = abs_sharpe_weights / total_abs_weight
-                dollar_allocations = proportions * capital_at_start_of_day
+            if allocation_method == "sharpe_strength":
+                active_sharpe_signals = predicted_sharpe_today[active_signals_mask]
                 
-                # Apply the correct sign (long/short). The sign of the Sharpe ratio is the sign of the trade.
-                signs = torch.sign(active_sharpe_signals)
-                target_positions_today[active_signals_mask] = dollar_allocations * signs
+                abs_sharpe_weights = torch.abs(active_sharpe_signals)
+                total_abs_weight = torch.sum(abs_sharpe_weights)
+                
+                if total_abs_weight > 1e-9:
+                    proportions = abs_sharpe_weights / total_abs_weight
+                    dollar_allocations = proportions * capital_at_start_of_day
+                    
+                    signs = torch.sign(active_sharpe_signals)
+                    target_positions_today[active_signals_mask] = dollar_allocations * signs
+            elif allocation_method == "equal":
+                num_active_signals = active_signals_mask.sum()
+                capital_per_trade = capital_at_start_of_day / num_active_signals
+                target_positions_today[long_signals_mask] = capital_per_trade
+                target_positions_today[short_signals_mask] = -capital_per_trade
 
         # --- P&L and Turnover Calculation (same as before) ---
         pnl_today = torch.sum(target_positions_today * actual_1d_returns[day_idx])
@@ -1408,10 +1423,14 @@ def run_strategy_with_sharpe_sizing(
             annualized_return = ((1 + total_return) ** (252.0 / num_days)) - 1.0
             annualized_volatility = np.std(daily_returns_np) * np.sqrt(252.0)
             sharpe_ratio = (annualized_return / annualized_volatility) if annualized_volatility > 1e-9 else 0.0
+            downside_returns = daily_returns_np[daily_returns_np < 0]
+            downside_volatility = np.std(downside_returns) * np.sqrt(252.0)
+            sortino_ratio = (annualized_return / downside_volatility) if downside_volatility > 1e-9 else 0.0
         else:
             annualized_return = 0.0
             annualized_volatility = 0.0
             sharpe_ratio = 0.0
+            sortino_ratio = 0.0
 
         cumulative_returns_pd = (1 + pd.Series(daily_returns_np)).cumprod()
         # Ensure cumulative_returns_pd is not empty before calling .expanding or .min
@@ -1419,8 +1438,10 @@ def run_strategy_with_sharpe_sizing(
             peak = cumulative_returns_pd.expanding(min_periods=1).max()
             drawdown = (cumulative_returns_pd / peak) - 1.0
             max_drawdown = drawdown.min()
+            calmar_ratio = (annualized_return / -max_drawdown) if max_drawdown < -0.04 else (annualized_return / 0.04)
         else:
             max_drawdown = 0.0
+            calmar_ratio = 0.0
         
         num_winning_days = (daily_returns_np > 0).sum()
         num_losing_days = (daily_returns_np < 0).sum()
@@ -1429,12 +1450,14 @@ def run_strategy_with_sharpe_sizing(
 
     stats_dict = {
         "Signal Horizon Used": signal_horizon_name,
-        "Sharpe Threshold Up": sharpe_threshold_long,
-        "Sharpe Threshold Down": sharpe_threshold_short,
+        "Sharpe Threshold Up": trade_threshold_up,
+        "Sharpe Threshold Down": trade_threshold_down,
         "Total Return": total_return,
         "Annualized Return": annualized_return,
         "Annualized Volatility": annualized_volatility,
         "Sharpe Ratio": sharpe_ratio,
+        "Sortino Ratio": sortino_ratio,
+        "Calmar Ratio": calmar_ratio,
         "Max Drawdown": max_drawdown,
         "Number of Trading Days": num_days,
         "Number of Winning Days": int(num_winning_days),
@@ -1450,7 +1473,7 @@ def run_strategy_with_sharpe_sizing(
     return portfolio_df, stats_dict
 
 
-def objective_function_mtp(long_threshold_raw, short_threshold_raw, min_step=0.001, **ticker_include_params_raw):
+def objective_function_mtp(long_threshold_raw, short_threshold_raw=0.0, risk_aversion=1.0, min_step=0.001, **ticker_include_params_raw):
     """Objective function for Bayesian Optimization for MTP (1-day signal)."""
     long_threshold = round(long_threshold_raw / min_step) * min_step
     short_threshold = round(short_threshold_raw / min_step) * min_step
@@ -1468,9 +1491,10 @@ def objective_function_mtp(long_threshold_raw, short_threshold_raw, min_step=0.0
     
     preds_for_selected_tickers = OPTIMIZATION_PREDS_1DAY[:, selected_ticker_indices]
     actual_returns_for_selected_tickers = OPTIMIZATION_ACTUAL_1D_RETURNS[:, selected_ticker_indices]
+    pred_std_devs_for_selected_tickers = OPTIMIZATION_PRED_STD_DEVS_1DAY[:, selected_ticker_indices]
 
 
-    _, strategy_stats = run_strategy_with_flexible_allocation(
+    _, strategy_stats = run_strategy_with_risk_adjustment(
         predictions_1day_ahead=preds_for_selected_tickers,
         actual_1d_returns=actual_returns_for_selected_tickers,
         trade_threshold_up=long_threshold,
@@ -1478,111 +1502,45 @@ def objective_function_mtp(long_threshold_raw, short_threshold_raw, min_step=0.0
         initial_capital=OPTIMIZATION_INITIAL_CAPITAL,
         transaction_cost_pct=OPTIMIZATION_TRANSACTION_COST,
         signal_horizon_name=OPTIMIZATION_SIGNAL_HORIZON_NAME,
-        verbose=0, # Keep optimization quiet unless debugging
-        # ticker_names=METADATA_ARGS.tickers,
-        allocation_strategy="signal_strength"
+        allocation_strategy="equal",
+        risk_aversion=risk_aversion,
+        predicted_std_devs=pred_std_devs_for_selected_tickers
     )
-    sharpe = strategy_stats.get("Sharpe Ratio", 0.0)
-    if sharpe < -5: # Penalize very bad Sharpe ratios
-        return -10.0 
+
+    # _, strategy_stats = run_strategy_with_sharpe_sizing(
+    #     predictions_1day_ahead=preds_for_selected_tickers,
+    #     predicted_std_devs=pred_std_devs_for_selected_tickers,
+    #     actual_1d_returns=actual_returns_for_selected_tickers,
+    #     trade_threshold_up=long_threshold,
+    #     trade_threshold_down=short_threshold, 
+    #     initial_capital=OPTIMIZATION_INITIAL_CAPITAL,
+    #     transaction_cost_pct=OPTIMIZATION_TRANSACTION_COST,
+    #     signal_horizon_name=OPTIMIZATION_SIGNAL_HORIZON_NAME,
+    #     allocation_method="equal"
+    # )
+
+    # _, strategy_stats = run_strategy_with_probability_sizing(
+    #     predictions_1day_ahead=preds_for_selected_tickers,
+    #     predicted_std_devs=pred_std_devs_for_selected_tickers,
+    #     actual_1d_returns=actual_returns_for_selected_tickers,
+    #     confidence_threshold=long_threshold,
+    #     initial_capital=OPTIMIZATION_INITIAL_CAPITAL,
+    #     transaction_cost_pct=OPTIMIZATION_TRANSACTION_COST,
+    #     signal_horizon_name=OPTIMIZATION_SIGNAL_HORIZON_NAME,
+    #     allocation_method="equal"
+    # )
+
+    # sharpe = strategy_stats.get("Sharpe Ratio", 0.0)
+    sharpe = strategy_stats.get("Annualized Return", 0.0)
+    # sharpe = strategy_stats.get("Calmar Ratio", 0.0)
+    # sharpe = strategy_stats.get("Sortino Ratio", 0.0)
+
+    # sharpe = strategy_stats.get("Annualized Return", 0.0) + strategy_stats.get("Max Drawdown", 0.0) # because drawown is negative
+
     return sharpe
 
 
-
-# def get_mtp_predictions_for_backtest(model, all_mtp_input_features, args, nr_of_days_to_check, device):
-#     """
-#     Generates predictions for the backtest period using the MTP model.
-#     This function now performs local z-normalization on each sequence before prediction.
-#     Outputs 1-day ahead predictions for the 'Close' feature return.
-#     """
-#     seq_len = args.seq_len
-#     num_pred_horizons_input = all_mtp_input_features.shape[1]
-
-#     # --- Determine indices for local features dynamically from metadata ---
-#     all_cols = args.columns
-#     local_cols_start_index = -1
-#     time_cols_start_index = -1
-#     for i, col in enumerate(all_cols):
-#         if 'local_' in col and local_cols_start_index == -1:
-#             local_cols_start_index = i
-#         if 'sin_day_of_week' in col and time_cols_start_index == -1: # First time feature
-#             time_cols_start_index = i
-    
-#     if local_cols_start_index == -1 or time_cols_start_index == -1:
-#         raise ValueError("Could not dynamically find start/end of local features in metadata columns.")
-
-#     # Permute all_mtp_input_features for easier slicing
-#     # Input shape: (features, horizon, time, tickers)
-#     # Permuted shape: (horizon, time, tickers, features)
-#     all_mtp_input_features_permuted = all_mtp_input_features.permute(1, 2, 3, 0).to(device)
-
-#     model_predictions_1day_list = []
-
-#     print(f"Generating predictions for {nr_of_days_to_check} days...")
-#     for day_i in range(nr_of_days_to_check):
-#         # Slice for the current window
-#         # Shape: (horizon, seq_len, tickers, features)
-#         current_window_globally_normed = all_mtp_input_features_permuted[:, day_i : day_i + seq_len, :, :]
-        
-#         # --- Perform Local Z-Normalization on the sliced window ---
-#         # We normalize over the seq_len dimension (dim=1)
-#         local_features_to_norm = current_window_globally_normed[:, :, :, local_cols_start_index:time_cols_start_index]
-        
-#         local_means = local_features_to_norm.mean(dim=1, keepdim=True)
-#         local_stds = local_features_to_norm.std(dim=1, keepdim=True)
-        
-#         # Apply normalization
-#         normalized_local_features = (local_features_to_norm - local_means) / (local_stds + 1e-8)
-        
-#         # Create the final model input tensor by replacing the local features part
-#         final_model_input_window = current_window_globally_normed.clone()
-#         final_model_input_window[:, :, :, local_cols_start_index:time_cols_start_index] = torch.nan_to_num(
-#             normalized_local_features, nan=0.0
-#         )
-        
-#         # Reshape for model: (batch_size=1, horizon, seq_len, tickers, features)
-#         model_input_tensor = final_model_input_window.unsqueeze(0)
-        
-#         # Prepare separator and tickers for the model
-#         # seperator_input = torch.zeros((1, num_pred_horizons_input, 1), dtype=torch.int, device=device)
-#         tickers_input = torch.arange(len(args.tickers), device=device).unsqueeze(0).unsqueeze(0).repeat(1, num_pred_horizons_input, 1)
-
-#         with torch.no_grad():
-#             # --- MODEL FORWARD PASS & OUTPUT HANDLING (EXACTLY AS IN TRAINING) ---
-#             # 1. Model returns a raw flattened tensor
-#             raw_outputs = model(model_input_tensor, tickers_input)
-            
-#             # 2. Reshape the output exactly as in _shared_step
-#             # Shape becomes: (batch, horizons, seq_len+1, tickers, 5_chlov)
-#             outputs_viewed = raw_outputs.view(1, max(args.indices_to_predict), (seq_len+1), len(args.tickers), 5)
-            
-#             # 3. Permute the output exactly as in _shared_step
-#             # Shape becomes: (batch, seq_len+1, 5_chlov, horizons, tickers)
-#             outputs_permuted = outputs_viewed.permute(0, 2, 4, 1, 3)
-
-#         # --- EXTRACT THE DESIRED PREDICTION FROM THE PERMUTED TENSOR ---
-#         # We want the 1-day ahead prediction for the 'Close' return after the full sequence.
-#         # - Dimension 0 (batch): index 0 (it's the only one)
-#         # - Dimension 1 (seq_len+1): index -1 (the prediction for the step AFTER the last input)
-#         # - Dimension 2 (5_chlov): index 0 ('Close' return)
-#         # - Dimension 3 (horizons): index 0 (1-day prediction horizon)
-#         # - Dimension 4 (tickers): index : (all tickers)
-#         pred_1day_close_return_norm = outputs_permuted[0, -1, 0, 0, :] # Shape: (num_tickers)
-#         model_predictions_1day_list.append(pred_1day_close_return_norm)
-
-#     model_predictions_1day_tensor = torch.stack(model_predictions_1day_list, dim=0).to(device)
-
-#     # --- De-normalize predictions using loaded stats ---
-#     close_feature_original_index = 0 # 'close_returns' is the first feature
-#     norm_means_for_close = args.normalization_means[close_feature_original_index, :].to(device)
-#     norm_stds_for_close = args.normalization_stds[close_feature_original_index, :].to(device)
-
-#     denormalized_predictions = model_predictions_1day_tensor * norm_stds_for_close.unsqueeze(0) + \
-#                                norm_means_for_close.unsqueeze(0)
-    
-#     return denormalized_predictions
-
-def get_mtp_predictions_for_backtest(model, all_mtp_input_features, args, nr_of_days_to_check, device):
+def get_mtp_predictions_for_backtest(model, all_mtp_input_features, args, nr_of_days_to_check, device, cli_args):
     """
     Generates predictions for the backtest period using the MTP model.
     This function now performs local z-normalization on each sequence before prediction.
@@ -1651,11 +1609,11 @@ def get_mtp_predictions_for_backtest(model, all_mtp_input_features, args, nr_of_
 
         # --- EXTRACT THE DESIRED PREDICTION FROM THE PERMUTED TENSOR ---
         # We want the 1-day ahead prediction for the 'Close' return after the full sequence.
-        pred_1day_close_return_norm = mean_preds_norm[0, -1, 0, 0, :] # Shape: (num_tickers)
+        pred_1day_close_return_norm = mean_preds_norm[0, -1, 0, cli_args.pred_day-1, :] # Shape: (num_tickers)
         model_predictions_1day_list.append(pred_1day_close_return_norm)
 
         ### NEW ###: Extract and store the corresponding standard deviation
-        log_std_1day_close_return_norm = log_std_preds_norm[0, -1, 0, 0, :] # Shape: (num_tickers)
+        log_std_1day_close_return_norm = log_std_preds_norm[0, -1, 0, cli_args.pred_day-1, :] # Shape: (num_tickers)
         std_dev_1day_close_return_norm = torch.exp(log_std_1day_close_return_norm)
         model_std_devs_1day_list.append(std_dev_1day_close_return_norm)
 
@@ -1734,8 +1692,10 @@ def plot_predicted_vs_actual_returns(
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description="Make predictions with a trained MTP stock model.")
-    parser.add_argument("--model_path", type=str, default="good_models/MTP/3bee6_local_simple/name=0-epoch=30-val_loss=0.00-v57.ckpt", help="Path to the trained .pth model file.")
-    parser.add_argument("--metadata_path", type=str, default="good_models/MTP/3bee6_local_simple/hparams.yaml", help="Path to the metadata.json file for the model.")
+    # parser.add_argument("--model_path", type=str, default="good_models/MTP/nll/local_big/name=0-epoch=63-val_loss=0.00-v3.ckpt", help="Path to the trained .pth model file.")
+    # parser.add_argument("--metadata_path", type=str, default="good_models/MTP/nll/local_big/hparams.yaml", help="Path to the metadata.json file for the model.")
+    parser.add_argument("--model_path", type=str, default="good_models/MTP/nll/local_long/name=0-epoch=584-val_loss=0.00.ckpt", help="Path to the trained .pth model file.")
+    parser.add_argument("--metadata_path", type=str, default="good_models/MTP/nll/local_long/hparams.yaml", help="Path to the metadata.json file for the model.")
     parser.add_argument("--days_to_check", type=int, default=1300, help="Number of recent days to generate predictions for and backtest.")
     parser.add_argument("--start_date_data", type=str, default="2020-01-01", help="Start date for downloading historical data.")
     parser.add_argument("--end_date_data", type=str, default="2025-05-25", help="End date for downloading historical data (serves as backtest end).")
@@ -1743,7 +1703,8 @@ if __name__ == "__main__":
     parser.add_argument("--transaction_cost", type=float, default=0.0005, help="Transaction cost percentage.")
     parser.add_argument("--plot_equity", type=bool, default=True, help="Plot the equity curve of the optimized strategy.")
     parser.add_argument("--verbose_strategy", type=int, default=0, help="Verbosity level for strategy run printouts (0: silent, 1: summary).")
-    parser.add_argument("--plot_individual_returns", type=bool, default=False, help="Plot predicted vs. actual returns for each ticker.")
+    parser.add_argument("--plot_individual_returns", type=bool, default=True, help="Plot predicted vs. actual returns for each ticker.")
+    parser.add_argument("--pred_day", type=int, default=1, help="MTP block prediction to use.")
 
     cli_args = parser.parse_args()
 
@@ -1771,7 +1732,8 @@ if __name__ == "__main__":
         args_from_metadata,
         cli_args.start_date_data,
         cli_args.end_date_data,
-        seq_len_needed=seq_len_for_model_input # This 'seq_len' is for the model's direct input window
+        seq_len_needed=seq_len_for_model_input,
+        cli_args=cli_args
     )
 
     args_from_metadata.columns = columns
@@ -1790,7 +1752,7 @@ if __name__ == "__main__":
     #     model, all_mtp_input_features, args_from_metadata, cli_args.days_to_check, device
     # )
     model_1day_predictions_denorm, model_1day_std_devs_denorm = get_mtp_predictions_for_backtest(
-        model, all_mtp_input_features, args_from_metadata, cli_args.days_to_check, device
+        model, all_mtp_input_features, args_from_metadata, cli_args.days_to_check, device, cli_args
     )
     # Ensure predictions and actuals have the same length for the backtest
     if model_1day_predictions_denorm.shape[0] != actual_1d_returns_for_backtest_period.shape[0]:
@@ -1806,6 +1768,7 @@ if __name__ == "__main__":
     # )
     
     pre_optim_predictions = model_1day_predictions_denorm.cpu()
+    pre_optim_std_devs = model_1day_std_devs_denorm.cpu()
     pre_optim_actuals = actual_1d_returns_for_backtest_period.cpu()
     
     simple_trade_threshold = 0*cli_args.transaction_cost # Trade if signal is stronger than one-way cost
@@ -1813,16 +1776,51 @@ if __name__ == "__main__":
     if cli_args.plot_individual_returns:
         for i in range(pre_optim_predictions.shape[1]):
             print(f"\n--- Running PRE-OPTIMIZATION Backtest for {args_from_metadata.tickers[i]} ---")
-            individual_portfolio_df, individual_stats = run_strategy_simple_with_turnover_costs(
+            # individual_portfolio_df, individual_stats = run_strategy_simple_with_turnover_costs(
+            #     predictions_1day_ahead=pre_optim_predictions[:, i].unsqueeze(1),
+            #     actual_1d_returns=pre_optim_actuals[:, i].unsqueeze(1),
+            #     trade_threshold_up=simple_trade_threshold,
+            #     trade_threshold_down=simple_trade_threshold,
+            #     initial_capital=cli_args.initial_capital,
+            #     transaction_cost_pct=cli_args.transaction_cost,
+            #     signal_horizon_name="1-day (Pre-Opt signal strength)",
+            #     verbose=cli_args.verbose_strategy
+            # )
+            individual_portfolio_df, individual_stats = run_strategy_with_risk_adjustment(
                 predictions_1day_ahead=pre_optim_predictions[:, i].unsqueeze(1),
+                predicted_std_devs=pre_optim_std_devs[:, i].unsqueeze(1),
                 actual_1d_returns=pre_optim_actuals[:, i].unsqueeze(1),
                 trade_threshold_up=simple_trade_threshold,
                 trade_threshold_down=simple_trade_threshold,
                 initial_capital=cli_args.initial_capital,
                 transaction_cost_pct=cli_args.transaction_cost,
                 signal_horizon_name="1-day (Pre-Opt signal strength)",
-                verbose=cli_args.verbose_strategy
+                verbose=cli_args.verbose_strategy,
+                risk_aversion=1.0,
+                allocation_strategy="equal"
             )
+            # individual_portfolio_df, individual_stats = run_strategy_with_sharpe_sizing(
+            #     predictions_1day_ahead=pre_optim_predictions[:, i].unsqueeze(1),
+            #     predicted_std_devs=pre_optim_std_devs[:, i].unsqueeze(1),
+            #     actual_1d_returns=pre_optim_actuals[:, i].unsqueeze(1),
+            #     trade_threshold_up=2.0, # simple_trade_threshold,
+            #     trade_threshold_down=simple_trade_threshold,
+            #     initial_capital=cli_args.initial_capital,
+            #     transaction_cost_pct=cli_args.transaction_cost,
+            #     signal_horizon_name="1-day (Pre-Opt sharpe)",
+            #     verbose=cli_args.verbose_strategy
+            # )
+            # individual_portfolio_df, individual_stats = run_strategy_with_probability_sizing(
+            #     predictions_1day_ahead=pre_optim_predictions[:, i].unsqueeze(1),
+            #     predicted_std_devs=pre_optim_std_devs[:, i].unsqueeze(1),
+            #     actual_1d_returns=pre_optim_actuals[:, i].unsqueeze(1),
+            #     confidence_threshold=0.6,
+            #     initial_capital=cli_args.initial_capital,
+            #     transaction_cost_pct=cli_args.transaction_cost,
+            #     signal_horizon_name="1-day (Pre-Opt sharpe)",
+            #     verbose=cli_args.verbose_strategy,
+            #     allocation_method="equal"
+            # )
             
             plt.figure(figsize=(14, 7)) # Create a new figure for this plot
             
@@ -1850,8 +1848,9 @@ if __name__ == "__main__":
     
     tickers_to_include = [0,1,2,3,4,5]
     print("\n--- Running PRE-OPTIMIZATION Backtest (Trade if |PredReturn| > TxCost) ---")
-    pre_optim_portfolio_df, pre_optim_stats = run_strategy_with_flexible_allocation(
+    pre_optim_portfolio_df, pre_optim_stats = run_strategy_with_risk_adjustment(
         predictions_1day_ahead=pre_optim_predictions[:,tickers_to_include],
+        predicted_std_devs=pre_optim_std_devs[:,tickers_to_include],
         actual_1d_returns=pre_optim_actuals[:,tickers_to_include],
         trade_threshold_up=simple_trade_threshold,
         trade_threshold_down=simple_trade_threshold,
@@ -1859,10 +1858,34 @@ if __name__ == "__main__":
         transaction_cost_pct=cli_args.transaction_cost,
         signal_horizon_name="1-day (Pre-Opt signal strength)",
         verbose=cli_args.verbose_strategy,
-        allocation_strategy="equal" # "signal_strength"
+        allocation_strategy="equal",# "risk_adjusted" or "equal" # "signal_strength"
+        risk_aversion=1.0
         # ticker_names=args_from_metadata.tickers, # Pass ticker names
         # capital_base_for_allocation="portfolio_value"
     )
+    # pre_optim_portfolio_df, pre_optim_stats = run_strategy_with_sharpe_sizing(
+    #     predictions_1day_ahead=pre_optim_predictions[:, tickers_to_include],
+    #     predicted_std_devs=pre_optim_std_devs[:, tickers_to_include],
+    #     actual_1d_returns=pre_optim_actuals[:, tickers_to_include],
+    #     trade_threshold_up=simple_trade_threshold,
+    #     trade_threshold_down=simple_trade_threshold,
+    #     initial_capital=cli_args.initial_capital,
+    #     transaction_cost_pct=cli_args.transaction_cost,
+    #     signal_horizon_name="1-day (Pre-Opt signal strength)",
+    #     verbose=cli_args.verbose_strategy,
+    #     allocation_method="equal"
+    # )
+    # pre_optim_portfolio_df, pre_optim_stats = run_strategy_with_probability_sizing(
+    #     predictions_1day_ahead=pre_optim_predictions[:, tickers_to_include],
+    #     predicted_std_devs=pre_optim_std_devs[:, tickers_to_include],
+    #     actual_1d_returns=pre_optim_actuals[:, tickers_to_include],
+    #     confidence_threshold=0.6,
+    #     initial_capital=cli_args.initial_capital,
+    #     transaction_cost_pct=cli_args.transaction_cost,
+    #     signal_horizon_name="1-day (Pre-Opt sharpe)",
+    #     verbose=cli_args.verbose_strategy,
+    #     allocation_method="equal"
+    # )
 
     pre_optim_portfolio_df_simple, pre_optim_stats_simple = run_trading_strategy_1day_signal_simple(
         predictions_1day_ahead=pre_optim_predictions[:, tickers_to_include],
@@ -1922,16 +1945,16 @@ if __name__ == "__main__":
     print(f"\n--- Optimizing Trading Thresholds for 1-day Signal (using first {optim_period_len} days of backtest) ---")
     METADATA_ARGS = args_from_metadata
     OPTIMIZATION_PREDS_1DAY = model_1day_predictions_denorm[:optim_period_len].cpu()
+    OPTIMIZATION_PRED_STD_DEVS_1DAY = model_1day_std_devs_denorm[:optim_period_len].cpu()
     OPTIMIZATION_ACTUAL_1D_RETURNS = actual_1d_returns_for_backtest_period[:optim_period_len].cpu()
     OPTIMIZATION_INITIAL_CAPITAL = cli_args.initial_capital
     OPTIMIZATION_TRANSACTION_COST = cli_args.transaction_cost
     OPTIMIZATION_SIGNAL_HORIZON_NAME = "1-day (Optimized)"
-    # OPTIMIZATION_CLOSE_THRESHOLD_PCT = 0.001
-    # OPTIMIZATION_CAPITAL_BASE = "portfolio_value"
 
     pbounds_asymmetric = {
-        'long_threshold_raw': (0.000, 0.1), # Search range for long thresh
-        'short_threshold_raw': (0.000, 0.1) # Search range for absolute short thresh
+        'long_threshold_raw': (0.0, 0.1),
+        'short_threshold_raw': (0.0, 0.1),
+        # 'risk_aversion': (0.5, 1.5)
     }
     min_step_thresh = 0.00001 # Discretization step for thresholds
 
@@ -1942,15 +1965,16 @@ if __name__ == "__main__":
         f=objective_function_mtp,
         pbounds=pbounds_asymmetric,
         random_state=1,
-        verbose=2 # 0 (silent), 1 (steps), 2 (all)
+        verbose=1 # 0 (silent), 1 (steps), 2 (all)
     )
-    optimizer.maximize(init_points=300, n_iter=100) # Adjust init_points and n_iter as needed
+    optimizer.maximize(init_points=400, n_iter=100) # Adjust init_points and n_iter as needed
 
     best_params = optimizer.max['params']
     best_sharpe = optimizer.max['target']
     
     optimal_long_thresh = round(best_params['long_threshold_raw'] / min_step_thresh) * min_step_thresh
     optimal_short_thresh_abs = round(best_params['short_threshold_raw'] / min_step_thresh) * min_step_thresh
+    # optimal_risk_aversion = best_params['risk_aversion']
 
     optimal_included_ticker_indices = []
     included_tickers = []
@@ -1958,26 +1982,81 @@ if __name__ == "__main__":
         if best_params[f'include_ticker_{i}_raw'] > 0.5:
             included_tickers.append(METADATA_ARGS.tickers[i])
             optimal_included_ticker_indices.append(i)
+    
+
+    # _, val_stats = run_strategy_with_risk_adjustment(
+    #     predictions_1day_ahead=model_1day_predictions_denorm[:optim_period_len, optimal_included_ticker_indices].cpu(),
+    #     predicted_std_devs=model_1day_std_devs_denorm[:optim_period_len, optimal_included_ticker_indices].cpu(),
+    #     actual_1d_returns=actual_1d_returns_for_backtest_period[:optim_period_len, optimal_included_ticker_indices].cpu(),
+    #     trade_threshold_up=optimal_long_thresh,
+    #     trade_threshold_down=optimal_short_thresh_abs,
+    #     initial_capital=cli_args.initial_capital,
+    #     transaction_cost_pct=cli_args.transaction_cost,
+    #     signal_horizon_name="1-day (Optimized)",
+    #     risk_aversion=optimal_risk_aversion,
+    #     allocation_strategy="risk_adjusted"
+    # )
+    # _, val_stats = run_strategy_with_sharpe_sizing(
+    #     predictions_1day_ahead=model_1day_predictions_denorm[:optim_period_len, optimal_included_ticker_indices].cpu(),
+    #     predicted_std_devs=model_1day_std_devs_denorm[:optim_period_len, optimal_included_ticker_indices].cpu(),
+    #     actual_1d_returns=actual_1d_returns_for_backtest_period[:optim_period_len, optimal_included_ticker_indices].cpu(),
+    #     trade_threshold_up=optimal_long_thresh,
+    #     trade_threshold_down=optimal_short_thresh_abs,
+    #     initial_capital=cli_args.initial_capital,
+    #     transaction_cost_pct=cli_args.transaction_cost,
+    #     signal_horizon_name="1-day (Optimized)"
+    # )
+    inverted = False#bool(val_stats['Sortino Ratio'] * -1)
+
+    # if inverted:
+    #     optimal_short_thresh_abs, optimal_long_thresh = optimal_long_thresh, optimal_short_thresh_abs
 
     print("\n--- Optimal Asymmetric Thresholds Found ---")
     print(f"Optimal Long Threshold: {optimal_long_thresh:.4f}")
     print(f"Optimal Short Threshold (absolute): {optimal_short_thresh_abs:.4f}")
     print(f"Achieved Sharpe Ratio on optimization period: {best_sharpe:.4f}")
     print(f"Included Tickers: {included_tickers}")
+    # print(f"Optimal Risk Aversion: {optimal_risk_aversion:.4f}")
+    print(f"Inverted: {inverted}")
 
     # 5. Run Final Backtest with Optimized Thresholds on the Full Period
     print("\n--- Running Final Backtest with Optimized Thresholds (Full Period) ---")
-    final_portfolio_df, final_stats = run_strategy_with_flexible_allocation(
-        model_1day_predictions_denorm[:, optimal_included_ticker_indices].cpu(),
-        actual_1d_returns_for_backtest_period[:, optimal_included_ticker_indices].cpu(),
+    final_portfolio_df, final_stats = run_strategy_with_risk_adjustment(
+        predictions_1day_ahead=model_1day_predictions_denorm[:, optimal_included_ticker_indices].cpu() * (-1 if inverted else 1),
+        actual_1d_returns=actual_1d_returns_for_backtest_period[:, optimal_included_ticker_indices].cpu(),
         trade_threshold_up=optimal_long_thresh,
         trade_threshold_down=optimal_short_thresh_abs,
         initial_capital=cli_args.initial_capital,
         transaction_cost_pct=cli_args.transaction_cost,
         signal_horizon_name="1-day (Final Optimized)",
         verbose=cli_args.verbose_strategy,
-        allocation_strategy="signal_strength"
+        allocation_strategy="equal",
+        # risk_aversion=optimal_risk_aversion,
+        predicted_std_devs=model_1day_std_devs_denorm[:, optimal_included_ticker_indices].cpu()
     )
+    # final_portfolio_df, final_stats = run_strategy_with_sharpe_sizing(
+    #     predictions_1day_ahead=model_1day_predictions_denorm[:, optimal_included_ticker_indices].cpu() * (-1 if inverted else 1),
+    #     predicted_std_devs=model_1day_std_devs_denorm[:, optimal_included_ticker_indices].cpu(),
+    #     actual_1d_returns=actual_1d_returns_for_backtest_period[:, optimal_included_ticker_indices].cpu(),
+    #     trade_threshold_up=optimal_long_thresh,
+    #     trade_threshold_down=optimal_short_thresh_abs,
+    #     initial_capital=cli_args.initial_capital,
+    #     transaction_cost_pct=cli_args.transaction_cost,
+    #     signal_horizon_name="1-day (Final Optimized)",
+    #     verbose=cli_args.verbose_strategy,
+    #     allocation_method="equal"
+    # )
+    # final_portfolio_df, final_stats = run_strategy_with_probability_sizing(
+    #     predictions_1day_ahead=model_1day_predictions_denorm[:, optimal_included_ticker_indices].cpu() * (-1 if inverted else 1),
+    #     predicted_std_devs=model_1day_std_devs_denorm[:, optimal_included_ticker_indices].cpu(),
+    #     actual_1d_returns=actual_1d_returns_for_backtest_period[:, optimal_included_ticker_indices].cpu(),
+    #     confidence_threshold=optimal_long_thresh,
+    #     initial_capital=cli_args.initial_capital,
+    #     transaction_cost_pct=cli_args.transaction_cost,
+    #     signal_horizon_name="1-day (Final Optimized)",
+    #     verbose=cli_args.verbose_strategy,
+    #     allocation_method="equal"
+    # )
 
     # 6. Plotting (Optional)
     if cli_args.plot_equity:
