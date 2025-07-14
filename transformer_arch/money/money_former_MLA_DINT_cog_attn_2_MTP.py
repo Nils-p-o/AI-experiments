@@ -37,24 +37,26 @@ class Money_former_MLA_DINT_cog_attn_MTP(nn.Module):
             self.input_features, self.shared_value_input_dim, bias=args.bias
         )
 
-        self.unique_value_input_dim = (self.d_model // sum(args.unique_inputs_ratio) * args.unique_inputs_ratio[0])
-        self.unique_value_input = nn.ModuleList(
-            [
-                nn.Linear(self.input_features, self.unique_value_input_dim, bias=args.bias)
-                for _ in range(len(args.tickers))
-            ]
-        )
+        self.unique_inputs = args.unique_inputs_ratio[0] > 0
+        if self.unique_inputs:
+            self.unique_value_input_dim = (self.d_model // sum(args.unique_inputs_ratio) * args.unique_inputs_ratio[0])
+            self.unique_value_input = nn.ModuleList(
+                [
+                    nn.Linear(self.input_features, self.unique_value_input_dim, bias=args.bias)
+                    for _ in range(len(args.tickers))
+                ]
+            )
         self.norm = nn.RMSNorm(self.d_model) # TODO maybe one per MTP block?
 
-        self.predict_distribution = args.predict_gaussian
-        if self.predict_distribution:
-            self.out = nn.Linear(
-                self.d_model, 5 * 2, bias=args.bias
-            )  # decodes to mean and std
-        else:
-            self.out = nn.Linear(
-                self.d_model, 5, bias=args.bias
-            )  # decodes to target(s) features
+        match args.prediction_type:
+            case "gaussian":
+                self.out = nn.Linear(
+                    self.d_model, 5 * 2, bias=args.bias
+                )  # decodes to mean and std
+            case "regression":
+                self.out = nn.Linear(
+                    self.d_model, 5, bias=args.bias
+                )  # decodes to target(s) features
 
         self.register_buffer("freqs_cis", precompute_freqs_cis(args), persistent=False)
 
@@ -101,19 +103,21 @@ class Money_former_MLA_DINT_cog_attn_MTP(nn.Module):
         for i in range(1, targets):
             x_end[:, i, :, :] = self.norm(self.MTP_blocks[i-1](x[:, i, :, :], x_end[:, i-1, :, :], freqs_cis))
 
-        # TODO MTP part
         x_end = self.out(x_end)
         return x_end  # (batch_size, targets, seq_len, features) logits
     
     def encode_inputs(self, x):
         batch_size, targets, seq_len, num_sequences, _ = x.size()
         shared_temp_x = self.shared_value_input(x)
-        unique_temp_x = torch.empty(
-            batch_size, targets, seq_len, num_sequences, self.unique_value_input_dim
-        ).to(x.device)
-        for i in range(num_sequences):
-            unique_temp_x[:, :, :, i, :] = self.unique_value_input[i](x[:, :, :, i, :])
-        x = torch.cat([shared_temp_x, unique_temp_x], dim=-1)
+        if self.unique_inputs:
+            unique_temp_x = torch.empty(
+                batch_size, targets, seq_len, num_sequences, self.unique_value_input_dim
+            ).to(x.device)
+            for i in range(num_sequences):
+                unique_temp_x[:, :, :, i, :] = self.unique_value_input[i](x[:, :, :, i, :])
+            x = torch.cat([shared_temp_x, unique_temp_x], dim=-1)
+        else:
+            x = shared_temp_x
         return x
 
 
@@ -215,7 +219,7 @@ class custom_MHA(nn.Module): # a mix of MLA and DINT
 
         self.num_sequences = len(args.tickers)
 
-    def forward(self, x, mask=None, freqs_cis=None): # TODO rewrite to be simpler/more efficient
+    def forward(self, x, mask=None, freqs_cis=None):
         batch_size, seq_len, _ = x.shape
         seq_per_stock = seq_len // self.num_sequences
 
@@ -298,10 +302,10 @@ class custom_MHA(nn.Module): # a mix of MLA and DINT
         #     normed_heads.append(head)
         # attn_output = torch.stack(normed_heads, dim=2)  # (batch_size, seq_len, nhead, head_dim)
         attn_output = self.norm(attn_output.transpose(1,2))  # (batch_size, seq_len, nhead, head_dim)
-        attn_output = attn_output.transpose(1, 2)  # (batch_size, nhead, seq_len, head_dim)
-        attn_output = attn_output.reshape( # TODO keep in mind sus amogus
-            batch_size, seq_len, self.nhead, self.head_dim
-        )
+        # attn_output = attn_output.transpose(1, 2)  # (batch_size, nhead, seq_len, head_dim)
+        # attn_output = attn_output.reshape( # TODO keep in mind sus amogus
+        #     batch_size, seq_len, self.nhead, self.head_dim
+        # )
         # --- Concatenate and Output Projection ---
         attn_output = (
             attn_output.contiguous()

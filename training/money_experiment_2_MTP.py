@@ -238,10 +238,11 @@ class MoneyExperiment(pl.LightningModule):
         self.t_mult = t_mult
         self.lr_mult = lr_mult
         self.batch_size = batch_size
-        if args.predict_gaussian:
-            self.loss_fn = nn.GaussianNLLLoss()
-        else:
-            self.loss_fn = nn.L1Loss()
+        match args.prediction_type:
+            case "gaussian":
+                self.loss_fn = nn.GaussianNLLLoss(reduction="mean")
+            case "regression":
+                self.loss_fn = nn.L1Loss()
         self.MSE = nn.MSELoss()
         self.MAE = nn.L1Loss()
         self.threshold = 0.003
@@ -280,14 +281,15 @@ class MoneyExperiment(pl.LightningModule):
                 time.time_ns() - time_preprocessing_start
             ) / 1e6
         time_model_start = time.time_ns()
-        if self.args.predict_gaussian:
-            outputs = self(inputs, tickers).view(
-                batch_size, max(self.pred_indices), (seq_len+1), self.num_sequences, 10
-            ).permute(0, 2, 4, 1, 3)  # (batch_size, seq_len, features (chlov), targets, num_sequences)
-        else:
-            outputs = self(inputs, tickers).view(
-                batch_size, max(self.pred_indices), (seq_len+1), self.num_sequences, 5
-            ).permute(0, 2, 4, 1, 3)  # (batch_size, seq_len, features (chlov), targets, num_sequences)
+        match self.args.prediction_type:
+            case "gaussian":
+                outputs = self(inputs, tickers).view(
+                    batch_size, max(self.pred_indices), (seq_len+1), self.num_sequences, 10
+                ).permute(0, 2, 4, 1, 3)  # (batch_size, seq_len, features (chlov), targets, num_sequences)
+            case "regression":
+                outputs = self(inputs, tickers).view(
+                    batch_size, max(self.pred_indices), (seq_len+1), self.num_sequences, 5
+                ).permute(0, 2, 4, 1, 3)  # (batch_size, seq_len, features (chlov), targets, num_sequences)
         if stage == "train":
             cummulative_times["model"] += (time.time_ns() - time_model_start) / 1e6
         outputs = outputs[:, 1:, :, :, :]
@@ -305,78 +307,79 @@ class MoneyExperiment(pl.LightningModule):
         time_loss_calc_start = time.time_ns()
         unseen_losses = []
         seen_losses = []
-        if self.args.predict_gaussian:
-            raw_logits, raw_pred_std = raw_logits.split([5, 5], dim=2) # mu and log_std (5, 5)
-            preds = raw_logits
-            pred_std = torch.exp(raw_pred_std)
-            pred_variance = pred_std ** 2
+        match self.args.prediction_type:
+            case "gaussian":
+                raw_logits, raw_pred_std = raw_logits.split([5, 5], dim=2) # mu and log_std (5, 5)
+                preds = raw_logits
+                pred_std = torch.exp(raw_pred_std)
+                pred_variance = pred_std ** 2
 
-            loss = 0
-            target_weights = [1.0 for _ in range(max(self.pred_indices))]
-            for i in range(max(self.pred_indices)):
-                seen_unseen_weights = [1.0, 1.0]
-                seen_current_preds = preds[:, :-1, :, i, :]
-                unseen_current_preds = preds[:, -1:, :, i, :]
-                seen_current_targets = targets[:, :-1, :, i, :]
-                unseen_current_targets = targets[:, -1:, :, i, :]
-                seen_current_pred_variance = pred_variance[:, :-1, :, i, :]
-                unseen_current_pred_variance = pred_variance[:, -1:, :, i, :]
+                loss = 0
+                target_weights = [1.0 for _ in range(max(self.pred_indices))]
+                for i in range(max(self.pred_indices)):
+                    seen_unseen_weights = [1.0, 1.0]
+                    seen_current_preds = preds[:, :-1, :, i, :]
+                    unseen_current_preds = preds[:, -1:, :, i, :]
+                    seen_current_targets = targets[:, :-1, :, i, :]
+                    unseen_current_targets = targets[:, -1:, :, i, :]
+                    seen_current_pred_variance = pred_variance[:, :-1, :, i, :]
+                    unseen_current_pred_variance = pred_variance[:, -1:, :, i, :]
 
-                loss += (
-                    target_weights[i]
-                    * (seen_unseen_weights[0] * 2 / sum(seen_unseen_weights))
-                    * self.loss_fn(seen_current_preds, seen_current_targets, seen_current_pred_variance)
-                    * ((seq_len-1)/seq_len)
-                )
-                loss += (
-                    target_weights[i]
-                    * (seen_unseen_weights[1] * 2 / sum(seen_unseen_weights))
-                    * self.loss_fn(unseen_current_preds, unseen_current_targets, unseen_current_pred_variance)
-                    * (1/seq_len)
-                )
+                    loss += (
+                        target_weights[i]
+                        * (seen_unseen_weights[0] * 2 / sum(seen_unseen_weights))
+                        * self.loss_fn(seen_current_preds, seen_current_targets, seen_current_pred_variance)
+                        * ((seq_len-1)/seq_len)
+                    )
+                    loss += (
+                        target_weights[i]
+                        * (seen_unseen_weights[1] * 2 / sum(seen_unseen_weights))
+                        * self.loss_fn(unseen_current_preds, unseen_current_targets, unseen_current_pred_variance)
+                        * (1/seq_len)
+                    )
 
-                seen_losses.append(
-                    self.MAE(seen_current_preds, seen_current_targets)
-                )
-                unseen_losses.append(
-                    self.MAE(unseen_current_preds, unseen_current_targets)
-                )
+                    seen_losses.append(
+                        self.MAE(seen_current_preds, seen_current_targets)
+                    )
+                    unseen_losses.append(
+                        self.MAE(unseen_current_preds, unseen_current_targets)
+                    )
 
-            loss = loss / sum(target_weights)
-        else:
-            preds = raw_logits
-            loss = 0
-            target_weights = [1.0 for _ in range(max(self.pred_indices))]
-            for i in range(max(self.pred_indices)):
-                # seen_unseen_weights = [
-                #     self.pred_indices[i],
-                #     seq_len - self.pred_indices[i],
-                # ]
-                seen_unseen_weights = [1.0, 1.0]
-                seen_current_preds = preds[:, :-1, :, i, :]
-                unseen_current_preds = preds[:, -1:, :, i, :]
-                seen_current_targets = targets[:, :-1, :, i, :]
-                unseen_current_targets = targets[:, -1:, :, i, :]
-                loss += (
-                    target_weights[i]
-                    * (seen_unseen_weights[0] * 2 / sum(seen_unseen_weights))
-                    * self.loss_fn(seen_current_preds, seen_current_targets)
-                    * ((seq_len-1)/seq_len)
-                )
-                loss += (
-                    target_weights[i]
-                    * (seen_unseen_weights[1] * 2 / sum(seen_unseen_weights))
-                    * self.loss_fn(unseen_current_preds, unseen_current_targets)
-                    * (1/seq_len)
-                )
+                loss = loss / sum(target_weights)
+            case "regression":
+                preds = raw_logits
+                loss = 0
+                target_weights = [1.0 for _ in range(max(self.pred_indices))]
+                for i in range(max(self.pred_indices)):
+                    # seen_unseen_weights = [
+                    #     self.pred_indices[i],
+                    #     seq_len - self.pred_indices[i],
+                    # ]
+                    seen_unseen_weights = [1.0, 1.0]
+                    seen_current_preds = preds[:, :-1, :, i, :]
+                    unseen_current_preds = preds[:, -1:, :, i, :]
+                    seen_current_targets = targets[:, :-1, :, i, :]
+                    unseen_current_targets = targets[:, -1:, :, i, :]
+                    loss += (
+                        target_weights[i]
+                        * (seen_unseen_weights[0] * 2 / sum(seen_unseen_weights))
+                        * self.loss_fn(seen_current_preds, seen_current_targets)
+                        * ((seq_len-1)/seq_len)
+                    )
+                    loss += (
+                        target_weights[i]
+                        * (seen_unseen_weights[1] * 2 / sum(seen_unseen_weights))
+                        * self.loss_fn(unseen_current_preds, unseen_current_targets)
+                        * (1/seq_len)
+                    )
 
-                seen_losses.append(
-                    self.MAE(seen_current_preds, seen_current_targets)
-                )
-                unseen_losses.append(
-                    self.MAE(unseen_current_preds, unseen_current_targets)
-                )
-            loss = loss / sum(target_weights)
+                    seen_losses.append(
+                        self.MAE(seen_current_preds, seen_current_targets)
+                    )
+                    unseen_losses.append(
+                        self.MAE(unseen_current_preds, unseen_current_targets)
+                    )
+                loss = loss / sum(target_weights)
 
         if stage == "train":
             cummulative_times["loss"] += (time.time_ns() - time_loss_calc_start) / 1e6
@@ -384,7 +387,7 @@ class MoneyExperiment(pl.LightningModule):
         if torch.isnan(loss).any():
             print("NAN IN LOSS")
 
-        if self.args.predict_gaussian:
+        if self.args.prediction_type == "gaussian":
             self.log(
                 f"Loss/{stage}_loss",
                 loss,
@@ -394,7 +397,7 @@ class MoneyExperiment(pl.LightningModule):
                 logger=True,
                 sync_dist=True,
             )
-        else:
+        elif self.args.prediction_type == "regression":
             naive_loss = self.MAE(torch.zeros_like(targets), targets)
             self.log(
                 f"Loss/{stage}_loss",
@@ -454,17 +457,11 @@ class MoneyExperiment(pl.LightningModule):
                 )
 
             (
-                direction_total_acc,
-                _,
-                _,
-                _,
-                expected_acc_target,
+                direction_total_acc, _, _, _, expected_acc_target,
                 # expected_acc_sequence,
                 acc_target,
                 # acc_sequence,
-            ) = get_direction_accuracy_returns(
-                targets, preds, thresholds=self.threshold
-            )
+            ) = get_direction_accuracy_returns(targets, preds, thresholds=self.threshold)
             self.log(
                 f"Accuracy/{stage}_accuracy", direction_total_acc, **current_log_opts
             )
@@ -485,12 +482,12 @@ class MoneyExperiment(pl.LightningModule):
             if stage == "val":
                 avg_unseen_target_acc = []
                 for i in range(len(self.pred_indices)):
-                    seen_current_preds = preds[:, :, :-1, i, :]
-                    seen_current_targets = targets[:, :, :-1, i, :]
+                    seen_current_preds = preds[:, :-1, :, i, :]
+                    seen_current_targets = targets[:, :-1, :, i, :]
                     seen_MAE = self.MAE(seen_current_preds, seen_current_targets)
 
-                    unseen_current_preds = preds[:, :, -1:, i, :]
-                    unseen_current_targets = targets[:, :, -1:, i, :]
+                    unseen_current_preds = preds[:, -1:, :, i, :]
+                    unseen_current_targets = targets[:, -1:, :, i, :]
                     unseen_MAE = self.MAE(unseen_current_preds, unseen_current_targets)
 
                     relative_MAE = unseen_MAE / (seen_MAE + 1e-6)
@@ -554,94 +551,18 @@ class MoneyExperiment(pl.LightningModule):
                     avg_unseen_target_acc,
                     **current_log_opts,
                 )
-            naive_MSE = self.MSE(torch.zeros_like(targets), targets)
-            naive_MAE = self.MAE(torch.zeros_like(targets), targets)
-            MSSE = self.MSE(preds, targets) / (naive_MSE + 1e-6)
-            MASE = self.MAE(preds, targets) / (naive_MAE + 1e-6)
-
-            # Log Relative Losses under a common group
-            self.log(f"Relative_Losses/{stage}_MSSE", MSSE, **current_log_opts)
-            self.log(f"Relative_Losses/{stage}_MASE", MASE, **current_log_opts)
 
             # can only be done per time step
             # ICs = get_spearmanr_correlations_pytorch(
             #     targets.clone().detach(), preds.clone().detach()
             # )
-
-            # for i in range(len(self.pred_indices)):
-                # valid_ics_target = ICs[:, :, i][~torch.isnan(ICs[:, :, i])]
-                # if len(valid_ics_target) > 1:
-                #     temp_IR = valid_ics_target.mean() / (valid_ics_target.std() + 1e-9)
-                #     mean_IC_target = valid_ics_target.mean()
-                # elif len(valid_ics_target) == 1:
-                #     temp_IR = torch.tensor(float("nan"), device=ICs.device)
-                #     mean_IC_target = valid_ics_target[0]
-                # else:
-                #     temp_IR = torch.tensor(float("nan"), device=ICs.device)
-                #     mean_IC_target = torch.tensor(float("nan"), device=ICs.device)
-
-                # self.log(
-                #     f"IR/{stage}_target_{self.pred_indices[i]}",
-                #     temp_IR,
-                #     **current_log_opts,
-                # )
-                # self.log(
-                #     f"IC/{stage}_target_{self.pred_indices[i]}",
-                #     mean_IC_target,
-                #     **current_log_opts,
-                # )
-
-                # unseen_ICs = ICs[:, -self.pred_indices[i] :, i][
-                #     ~torch.isnan(ICs[:, -self.pred_indices[i] :, i])
-                # ]
-                # if len(unseen_ICs) > 1:
-                #     self.log(
-                #         f"IR/{stage}_target_{self.pred_indices[i]}_unseen",
-                #         unseen_ICs.mean() / (unseen_ICs.std() + 1e-9),
-                #         **current_log_opts,
-                #     )
-                # else:
-                #     self.log(
-                #         f"IR/{stage}_target_{self.pred_indices[i]}_unseen",
-                #         torch.tensor(float("nan"), device=ICs.device),
-                #         **current_log_opts,
-                #     )
-                # self.log(
-                #     f"IC/{stage}_target_{self.pred_indices[i]}_unseen",
-                #     unseen_ICs.mean(),
-                #     **current_log_opts,
-                # )
-
-                #############################################
-                # self.log(
-                #     f"Target_Accuracy/{stage}_target_{self.pred_indices[i]}",
-                #     acc_target[i],
-                #     **current_log_opts,
-                # )
-
-                # # Log losses per target
-                # current_target_preds = preds[:, :, i : i + 1, :]
-                # current_target_targets = targets[:, :, i : i + 1, :]
-                # temp_MSE = self.MSE(current_target_preds, current_target_targets)
-                # temp_MAE = self.MAE(current_target_preds, current_target_targets)
-                # self.log(
-                #     f"Losses_target/{stage}_target_{self.pred_indices[i]}_MSE",
-                #     temp_MSE,
-                #     **current_log_opts,
-                # )
-                # self.log(
-                #     f"Losses_target/{stage}_target_{self.pred_indices[i]}_MAE",
-                #     temp_MAE,
-                #     **current_log_opts,
-                # )
-
             for i in range(self.num_sequences):
-                seen_current_preds = preds[:, :, :-1, :, i]
-                seen_current_targets = targets[:, :, :-1, :, i]
+                seen_current_preds = preds[:, :-1, :, :, i]
+                seen_current_targets = targets[:, :-1, :, :, i]
                 seen_MAE = self.MAE(seen_current_preds, seen_current_targets)
 
-                unseen_current_preds = preds[:, :, -1:, :, i]
-                unseen_current_targets = targets[:, :, -1:, :, i]
+                unseen_current_preds = preds[:, -1:, :, :, i]
+                unseen_current_targets = targets[:, -1:, :, :, i]
                 unseen_MAE = self.MAE(unseen_current_preds, unseen_current_targets)
 
                 self.log(
@@ -655,7 +576,7 @@ class MoneyExperiment(pl.LightningModule):
                     **current_log_opts,
                 )
 
-            if self.args.predict_gaussian:
+            if self.args.prediction_type == "gaussian":
                 self.log(
                     f"Std_dev/{stage}",
                     torch.mean(pred_std),
@@ -668,8 +589,8 @@ class MoneyExperiment(pl.LightningModule):
                         **current_log_opts,
                     )
                 for i in range(len(self.pred_indices)):
-                    seen_current_pred_std = pred_std[:, :, :-1, :, i]
-                    unseen_current_pred_std = pred_std[:, :, -1:, :, i]
+                    seen_current_pred_std = pred_std[:, :-1, :, :, i]
+                    unseen_current_pred_std = pred_std[:, -1:, :, :, i]
 
                     self.log(
                         f"Std_dev/{stage}_seen_{self.pred_indices[i]}",
@@ -693,6 +614,82 @@ class MoneyExperiment(pl.LightningModule):
                     on_step=True,
                     logger=True,
                 )
+            
+
+            # close specific losses + accs (unseen, val specifically because these are the ones i actually care about)
+            for i in range(len(self.pred_indices)): # close by target period
+                unseen_current_preds_close = preds[:, -1:, 0, i, :]
+                unseen_current_targets_close = targets[:, -1:, 0, i, :]
+                unseen_MAE_close = self.MAE(
+                    unseen_current_preds_close, unseen_current_targets_close
+                )
+                self.log(
+                    f"Close_Target/{stage}_unseen_{self.pred_indices[i]}_MAE",
+                    unseen_MAE_close,
+                    **current_log_opts,
+                )
+
+                unseen_target_movements_close = torch.where(
+                    unseen_current_targets_close > self.threshold,
+                    1,
+                    torch.where(
+                        unseen_current_targets_close < -self.threshold, -1, 0
+                    ),
+                )
+                unseen_predicted_movements_close = torch.where(
+                    unseen_current_preds_close > self.threshold,
+                    1,
+                    torch.where(
+                        unseen_current_preds_close < -self.threshold, -1, 0
+                    ),
+                )
+                unseen_direction_acc_close = (
+                    unseen_target_movements_close
+                    == unseen_predicted_movements_close
+                ).sum() / unseen_target_movements_close.numel()
+
+                self.log(
+                    f"Close_Target/{stage}_unseen_{self.pred_indices[i]}_accuracy",
+                    unseen_direction_acc_close,
+                    **current_log_opts,
+                )
+            
+            for i in range(self.num_sequences): # close by sequence
+                unseen_current_preds_close = preds[:, -1:, 0, :, i]
+                unseen_current_targets_close = targets[:, -1:, 0, :, i]
+                unseen_MAE_close = self.MAE(
+                    unseen_current_preds_close, unseen_current_targets_close
+                )
+                self.log(
+                    f"Close_Sequence/{stage}_unseen_{self.tickers[i]}_MAE",
+                    unseen_MAE_close,
+                    **current_log_opts,
+                )
+
+                unseen_target_movements_close = torch.where(
+                    unseen_current_targets_close > self.threshold,
+                    1,
+                    torch.where(
+                        unseen_current_targets_close < -self.threshold, -1, 0
+                    ),
+                )
+                unseen_predicted_movements_close = torch.where(
+                    unseen_current_preds_close > self.threshold,
+                    1,
+                    torch.where(
+                        unseen_current_preds_close < -self.threshold, -1, 0
+                    ),
+                )
+                unseen_direction_acc_close = (
+                    unseen_target_movements_close
+                    == unseen_predicted_movements_close
+                ).sum() / unseen_target_movements_close.numel()
+                self.log(
+                    f"Close_Sequence/{stage}_unseen_{self.tickers[i]}_accuracy",
+                    unseen_direction_acc_close,
+                    **current_log_opts,
+                )
+
         return loss
 
     def training_step(self, batch, batch_idx):

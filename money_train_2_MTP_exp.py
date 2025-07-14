@@ -50,7 +50,7 @@ from training.utils import (
 #     FinancialNumericalDataModule,
 #     download_numerical_financial_data,
 # )
-from training.data_loaders.test_feats_stocks_time_series_2_MTP import (
+from training.data_loaders.test_feats_stocks_time_series_2_MTP_new import (
     FinancialNumericalDataModule,
     download_numerical_financial_data,
 )
