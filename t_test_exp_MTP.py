@@ -252,7 +252,30 @@ bee6_local_price_emas_vol_ppo_clv = np.array([0.3531, 0.3483, 0.3539])
 bee6_local_price_emas_vol_ppo_clv_vpt = np.array([0.3444, 0.3512, 0.3492])
 bee6_local_price_emas_vol_ppo_clv_ret_emas = np.array([0.3357, 0.3295, 0.3335])
 bee6_local_price_emas_vol_ppo_clv_vpt_ret_emas = np.array([0.3386, 0.3353]) # worse?
-bee6_local_price_emas_vol_ppo_clv_vpt_ret_emas_fixed = np.array([0.33]) # 
+bee6_local_price_emas_vol_ppo_clv_vpt_ret_emas_fixed = np.array([0.333, 0.3267, 0.3332]) # best so far
+
+# bee6_local_price_emas_vol_ppo_clv_vpt_ret_emas_bb_c_ret = np.array([0.3276, 0.3304, 0.3193])
+# bee6_local_price_emas_vol_ppo_clv_vpt_ret_emas_bb_c_price = np.array([0.3288, 0.3274, 0.3239])
+# bee6_local_price_emas_vol_ppo_clv_vpt_ret_emas_bb_c_combined = np.array([0.3278, 0.3219, 0.3286])
+bee6_local_price_emas_vol_ppo_clv_vpt_ret_emas_bb_c_combined_hist = np.array([0.3211, 0.3226, 0.3246, 0.3256]) # best of bb
+
+bee6_local_price_emas_vol_ppo_clv_vpt_ret_emas_atr_div = np.array([0.3277, 0.3292, 0.3262])
+# bee6_local_price_emas_vol_ppo_clv_vpt_ret_emas_chaikin = np.array([0.3381, 0.3342, 0.3339])
+# bee6_local_price_emas_vol_ppo_clv_vpt_ret_emas_chaikin_old = np.array([0.3344, 0.3361, 0.3326])
+# bee6_local_price_emas_vol_ppo_clv_vpt_ret_emas_ad = np.array([0.328, 0.3294, 0.339])
+# bee6_local_price_emas_vol_ppo_clv_vpt_ret_emas_adr = np.array([0.3338, 0.3275, 0.3301])
+# bee6_local_price_emas_vol_ppo_clv_vpt_ret_emas_macd_c = np.array([0.332, 0.3332])
+# bee6_local_price_emas_vol_ppo_clv_vpt_ret_emas_macd_c_hist = np.array([0.335, 0.3348])
+
+
+# bee6_local_price_emas_vol_ppo_clv_vpt_ret_emas_mfi = np.array([0.3345, 0.3343, 0.3351])
+# bee6_local_price_emas_vol_ppo_clv_vpt_ret_emas_mfi_ch = np.array([0.3343, 0.3283, 0.332])
+
+bee6_local_price_emas_vol_ppo_clv_vpt_ret_emas_ret_vol_chlov = np.array([0.319, 0.3229, 0.3259])
+# bee6_local_price_emas_vol_ppo_clv_vpt_ret_emas_rsi = np.array([0.3355, 0.3401])
+# bee6_local_price_emas_vol_ppo_clv_vpt_ret_emas_stoch_osc = np.array([0.3303, 0.3373])
+# bee6_local_price_emas_vol_ppo_clv_vpt_ret_emas_vpt_old = np.array([0.3323, 0.3346, 0.3288])
+
 
 print(f"Mean bee6_local_price_emas: {np.mean(bee6_local_price_emas)}")
 print(f"Mean bee6_local_price_emas_vol: {np.mean(bee6_local_price_emas_vol)}")
@@ -274,3 +297,17 @@ welch_t_test(bee6_local_price_emas, bee6_local_price_emas_vol) # 0.0009 better
 print(f"Mean bee6_local_price_emas_vol_ppo_clv_ret_emas: {np.mean(bee6_local_price_emas_vol_ppo_clv_ret_emas)}")
 print("Welch's t-test: bee6_local_price_emas_vol vs bee6_local_price_emas_vol_ppo_clv_ret_emas")
 welch_t_test(bee6_local_price_emas_vol, bee6_local_price_emas_vol_ppo_clv_ret_emas) # 0.0045
+
+
+print(f"Mean bee6_local_price_emas_vol_ppo_clv_vpt_ret_emas_bb_c_combined_hist: {np.mean(bee6_local_price_emas_vol_ppo_clv_vpt_ret_emas_bb_c_combined_hist)}")
+print("Welch's t-test: bee6_local_price_emas_vol_ppo_clv_vpt_ret_emas_fixed vs bee6_local_price_emas_vol_ppo_clv_vpt_ret_emas_bb_c_combined_hist")
+welch_t_test(bee6_local_price_emas_vol_ppo_clv_vpt_ret_emas_fixed, bee6_local_price_emas_vol_ppo_clv_vpt_ret_emas_bb_c_combined_hist) # 0.05 best of the block
+
+
+print(f"Mean bee6_local_price_emas_vol_ppo_clv_vpt_ret_emas_atr_div: {np.mean(bee6_local_price_emas_vol_ppo_clv_vpt_ret_emas_atr_div)}")
+print("Welch's t-test: bee6_local_price_emas_vol_ppo_clv_vpt_ret_emas_fixed vs bee6_local_price_emas_vol_ppo_clv_vpt_ret_emas_atr_div")
+welch_t_test(bee6_local_price_emas_vol_ppo_clv_vpt_ret_emas_fixed, bee6_local_price_emas_vol_ppo_clv_vpt_ret_emas_atr_div) # 0.26 maybe
+
+print(f"Mean bee6_local_price_emas_vol_ppo_clv_vpt_ret_emas_ret_vol_chlov: {np.mean(bee6_local_price_emas_vol_ppo_clv_vpt_ret_emas_ret_vol_chlov)}")
+print("Welch's t-test: bee6_local_price_emas_vol_ppo_clv_vpt_ret_emas_fixed vs bee6_local_price_emas_vol_ppo_clv_vpt_ret_emas_ret_vol_chlov")
+welch_t_test(bee6_local_price_emas_vol_ppo_clv_vpt_ret_emas_fixed, bee6_local_price_emas_vol_ppo_clv_vpt_ret_emas_ret_vol_chlov) # 0.046 better

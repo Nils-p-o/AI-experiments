@@ -1,0 +1,24 @@
+ppo family:
+chlo are basically the same for global, so maybe only need one of these (likely c or o)
+local chlo 10_20 are very similar too
+
+volatility family:
+local price 50+ lookback are very similar for chlo, so maybe only include one
+50+ look back of returns does not hav ethat issue, somehow
+
+maybe 3, 7 as additional vol lookbacks (+ 100, 200, 500?)
+global price vol seems pointless? (except for volume?)
+
+ema family:
+maybe try 3, 7, 15, 50, 200 as lookbacks?
+
+bb family:
+maybe exclude 20 and 50 signals? (very similar to local returns, apparently)
+
+fundamentals:
+total_equity, local+global pe+pb+pe ratio
+some random for volume
+
+time feats:
+is_ feats might be useless (is_quarter_..., is_month_..., is_leap_year)
+day of year is technically redundant, because of month and day of month

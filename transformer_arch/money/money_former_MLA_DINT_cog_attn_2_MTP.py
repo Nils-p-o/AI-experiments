@@ -30,6 +30,7 @@ class Money_former_MLA_DINT_cog_attn_MTP(nn.Module):
             [Money_former_block(args, depth) for depth in range(self.num_layers)]
         )
         self.input_features = args.input_features
+        self.scaling = self.d_model ** -0.5
 
         self.ticker_embedding = nn.Embedding(len(args.tickers), self.d_model)
         self.shared_value_input_dim = (self.d_model // sum(args.unique_inputs_ratio) * args.unique_inputs_ratio[1])
@@ -56,6 +57,10 @@ class Money_former_MLA_DINT_cog_attn_MTP(nn.Module):
             case "regression":
                 self.out = nn.Linear(
                     self.d_model, 5, bias=args.bias
+                )  # decodes to target(s) features
+            case "classification":
+                self.out = nn.Linear(
+                    self.d_model, 5 * args.num_classes, bias=args.bias
                 )  # decodes to target(s) features
 
         self.register_buffer("freqs_cis", precompute_freqs_cis(args), persistent=False)
@@ -84,37 +89,39 @@ class Money_former_MLA_DINT_cog_attn_MTP(nn.Module):
         x = self.encode_inputs(x)
 
         x = torch.cat([seperator, x], dim=2)
-        x = x + tickers
+        x = (x + tickers) * self.scaling
 
-        x = x / math.sqrt(self.d_model)
         x = self.dropout(x)
 
         x = x.view(
             batch_size, targets, -1, self.d_model
         )  # (batch_size, (seq_len+1)*num_sequences, d_model)
 
-        x_end = torch.empty_like(x)
+        x_end = []
         x_main = x[:, 0, :, :]
         freqs_cis = self.freqs_cis[0 : 0 + seq_len].to(x.device)
         for layer in self.layers:
             x_main = layer(x_main, freqs_cis)
         x_main = self.norm(x_main)  # (batch_size, seq_len, d_model)
-        x_end[:, 0, :, :] = x_main
-        for i in range(1, targets):
-            x_end[:, i, :, :] = self.norm(self.MTP_blocks[i-1](x[:, i, :, :], x_end[:, i-1, :, :], freqs_cis))
+
+        x_as_list = [t.squeeze(1) for t in torch.split(x[:,1:], 1, dim=1)]
+        x_end.append(x_main)
+        for MTP_block in self.MTP_blocks:
+            x_end.append(self.norm(MTP_block(x_as_list.pop(0), x_end[-1], freqs_cis)))
+        x_end = torch.stack(x_end, dim=1)
 
         x_end = self.out(x_end)
         return x_end  # (batch_size, targets, seq_len, features) logits
     
     def encode_inputs(self, x):
-        batch_size, targets, seq_len, num_sequences, _ = x.size()
+        # batch_size, targets, seq_len, num_sequences, _ = x.size()
         shared_temp_x = self.shared_value_input(x)
         if self.unique_inputs:
-            unique_temp_x = torch.empty(
-                batch_size, targets, seq_len, num_sequences, self.unique_value_input_dim
-            ).to(x.device)
-            for i in range(num_sequences):
-                unique_temp_x[:, :, :, i, :] = self.unique_value_input[i](x[:, :, :, i, :])
+            unique_temp_x = []
+            x_as_list = [t.squeeze(3) for t in torch.split(x, 1, dim=3)]
+            for unique_input in self.unique_value_input:
+                unique_temp_x.append(unique_input(x_as_list.pop(0)))
+            unique_temp_x = torch.stack(unique_temp_x, dim=3)
             x = torch.cat([shared_temp_x, unique_temp_x], dim=-1)
         else:
             x = shared_temp_x
@@ -131,14 +138,17 @@ class Money_former_block(nn.Module):
         self.norm2 = nn.RMSNorm(args.d_model)
         self.ff = SwiGLU_feed_forward(args)
         self.num_sequences = len(args.tickers)
+        self.mask = get_causal_mask(args.seq_len+1)
+        self.mask = self.mask.repeat(1, 1, self.num_sequences, self.num_sequences)
 
     def forward(self, x, freqs_cis):
         batch_size, seq_len, _ = x.size()
-        seq_len = seq_len // self.num_sequences
-        mask = get_causal_mask(seq_len).to(x.device)
-        mask = mask.repeat(
-            1, 1, self.num_sequences, self.num_sequences
-        ).expand(batch_size, 2 * self.nhead, -1, -1)
+        # seq_len = seq_len // self.num_sequences
+        # mask = get_causal_mask(seq_len).to(x.device)
+        # mask = mask.repeat(
+        #     1, 1, self.num_sequences, self.num_sequences
+        # ).expand(batch_size, 2 * self.nhead, -1, -1)
+        mask = self.mask.expand(batch_size, 2 * self.nhead, -1, -1)
         x = x + self.mha(
             self.norm1(x), mask, freqs_cis
         )  # (batch_size, seq_len, d_model)
@@ -249,21 +259,22 @@ class custom_MHA(nn.Module): # a mix of MLA and DINT
 
         q_rope = q_rope.reshape(batch_size, seq_len, self.nhead*2, self.rope_dim//2)
         k_rope = k_rope.reshape(batch_size, seq_len, self.nhead*2, self.rope_dim//2)
-        q_rope = q_rope.view(batch_size, seq_per_stock, self.num_sequences, self.nhead*2, self.rope_dim//2).permute(0, 1, 3, 4, 2)
-        k_rope = k_rope.view(batch_size, seq_per_stock, self.num_sequences, self.nhead*2, self.rope_dim//2).permute(0, 1, 3, 4, 2)
+        q_rope = q_rope.view(batch_size, self.num_sequences, seq_per_stock, self.nhead*2, self.rope_dim//2)
+        k_rope = k_rope.view(batch_size, self.num_sequences, seq_per_stock, self.nhead*2, self.rope_dim//2)
 
-        # --- RoPE (decoupled) ---
-        for i in range(self.num_sequences):
-            q_temp, k_temp = q_rope[:, :, :, :, i], k_rope[:, :, :, :, i]
-            q_sep, q_temp = q_temp.split([1, seq_per_stock - 1], dim=1)
-            k_sep, k_temp = k_temp.split([1, seq_per_stock - 1], dim=1)
-            q_temp = apply_rotary_emb(q_temp, freqs_cis=freqs_cis)
-            k_temp = apply_rotary_emb(k_temp, freqs_cis=freqs_cis)
-            q_rope[:, :, :, :, i] = torch.cat([q_sep, q_temp], dim=1)
-            k_rope[:, :, :, :, i] = torch.cat([k_sep, k_temp], dim=1)
-        
-        q_rope = q_rope.permute(0, 1, 4, 2, 3).view(batch_size, seq_len, self.nhead*2, self.rope_dim//2)
-        k_rope = k_rope.permute(0, 1, 4, 2, 3).view(batch_size, seq_len, self.nhead*2, self.rope_dim//2)
+        # # --- RoPE (decoupled) ---
+        # #q/k_rope (batch_size, num_sequences, seq_per_stock, nhead*2, rope_dim//2)
+        q_sep, q_to_rotate = q_rope.split([1, seq_per_stock - 1], dim=2)
+        k_sep, k_to_rotate = k_rope.split([1, seq_per_stock - 1], dim=2)
+
+        q_to_rotate = apply_rotary_emb_multiple_sequences(q_to_rotate, freqs_cis=freqs_cis)
+        k_to_rotate = apply_rotary_emb_multiple_sequences(k_to_rotate, freqs_cis=freqs_cis)
+
+        q_rope = torch.cat([q_sep, q_to_rotate], dim=2)
+        k_rope = torch.cat([k_sep, k_to_rotate], dim=2)
+
+        q_rope = q_rope.view(batch_size, seq_len, self.nhead*2, self.rope_dim//2)
+        k_rope = k_rope.view(batch_size, seq_len, self.nhead*2, self.rope_dim//2)
 
         q = torch.cat([q, q_rope], dim=-1).transpose(1, 2)  # (batch_size, 2*nhead, seq_len, (head_dim+rope_dim)//2)
         k = torch.cat([k, k_rope], dim=-1).transpose(1, 2)  # (batch_size, 2*nhead, seq_len, (head_dim+rope_dim)//2)
@@ -290,7 +301,6 @@ class custom_MHA(nn.Module): # a mix of MLA and DINT
         # assert torch.isclose((lambda_full * a[:, :, 1, :, :]).sum(dim=-1),(a3 * lambda_full).sum(dim=-1),rtol=1e-3,atol=1e-5).all() == True
         a = a[:, :, 0, :, :] - lambda_full * a[:, :, 1, :, :] + G_vec * lambda_full
         # a = a * (1/ (1 - lambda_full)) 
-        # assert (a[0,0].sum(dim=-1) == 1.0).all() == True
         a = a.masked_fill(mask[:, : self.nhead, :, :] == 1, 0)
         a = self.dropout(a)
 
@@ -381,13 +391,19 @@ def precompute_freqs_cis(args) -> torch.Tensor:
     return freqs_cis
 
 
-def apply_rotary_emb(x: torch.Tensor, freqs_cis: torch.Tensor) -> torch.Tensor:
+def apply_rotary_emb(x: torch.Tensor, freqs_cis: torch.Tensor) -> torch.Tensor: # expects x to be of shape (bs, seq_len, head, rope_dim)
     dtype = x.dtype
     x = torch.view_as_complex(x.float().view(*x.shape[:-1], -1, 2))
     freqs_cis = freqs_cis.view(1, x.size(1), 1, x.size(-1))
     y = torch.view_as_real(x * freqs_cis).flatten(3)
     return y.to(dtype)
 
+def apply_rotary_emb_multiple_sequences(x: torch.Tensor, freqs_cis: torch.Tensor) -> torch.Tensor: # expects x to be of shape (bs, num_sequences, seq_len, head, rope_dim)
+    dtype = x.dtype
+    x = torch.view_as_complex(x.float().view(*x.shape[:-1], -1, 2))
+    freqs_cis = freqs_cis.view(1, 1, x.size(2), 1, x.size(-1))
+    y = torch.view_as_real(x * freqs_cis).flatten(4)
+    return y.to(dtype)
 
 def lambda_init_fn(depth):
     return 0.8 - 0.6 * math.exp(-0.3 * depth)

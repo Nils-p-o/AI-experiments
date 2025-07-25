@@ -13,13 +13,11 @@ import time
 import requests
 
 import warnings
-
-warnings.simplefilter(action="ignore", category=FutureWarning)
+warnings.simplefilter(action='ignore', category=FutureWarning)
 
 # TODO noise
 
 # TODO comparison metrics for later
-
 
 class FinancialNumericalDataset(Dataset):
     def __init__(
@@ -49,7 +47,9 @@ class FinancialNumericalDataset(Dataset):
 
     def __getitem__(self, idx):
         if self.preload:
-            input_sequence = self.sequences_data[:, :, idx, :, :]
+            input_sequence = self.sequences_data[
+                :, :, idx, :, :
+            ]
             target_sequence = self.targets_data[:, :, idx, :, :]
             return input_sequence, target_sequence
         else:  # TODO?
@@ -80,7 +80,6 @@ class FinancialNumericalDataModule(pl.LightningDataModule):
         self.metadata_file = metadata_file
         self.batch_size = batch_size
         self.num_workers = num_workers
-        self.persistent_workers = num_workers > 0
         self.seq_len = seq_len
 
         self.train_dataset: Optional[FinancialNumericalDataset] = None
@@ -122,7 +121,7 @@ class FinancialNumericalDataModule(pl.LightningDataModule):
             batch_size=self.batch_size,
             shuffle=True,
             num_workers=self.num_workers,
-            persistent_workers=self.persistent_workers,
+            # persistent_workers=True,
             # prefetch_factor=4,
         )
 
@@ -132,7 +131,7 @@ class FinancialNumericalDataModule(pl.LightningDataModule):
             batch_size=self.batch_size,
             shuffle=False,
             num_workers=self.num_workers,
-            persistent_workers=self.persistent_workers,
+            # persistent_workers=True,
             # prefetch_factor=4,
         )
 
@@ -164,7 +163,6 @@ def save_indexes_to_csv(indexes, output_file):
     with open(output_file, "w") as f:
         f.write("\n".join(str(s) for s in indexes))
 
-
 def download_with_retry(tickers, max_retries=5, delay_seconds=3, **kwargs):
     """
     Downloads data from Yahoo Finance with a robust retry mechanism that handles
@@ -186,14 +184,12 @@ def download_with_retry(tickers, max_retries=5, delay_seconds=3, **kwargs):
     requested_tickers = [tickers] if isinstance(tickers, str) else tickers
     last_exception = None
 
-    if "progress" not in kwargs:
-        kwargs["progress"] = False
+    if 'progress' not in kwargs:
+        kwargs['progress'] = False
 
     for attempt in range(max_retries):
         try:
-            print(
-                f"Attempt {attempt + 1}/{max_retries} to download data for: {requested_tickers}..."
-            )
+            print(f"Attempt {attempt + 1}/{max_retries} to download data for: {requested_tickers}...")
             # DO NOT use group_by='ticker' to preserve the desired (OHLCV, Ticker) structure
             data = yf.download(tickers, **kwargs)
 
@@ -224,10 +220,8 @@ def download_with_retry(tickers, max_retries=5, delay_seconds=3, **kwargs):
                     failed_tickers.append(requested_tickers[0])
 
             if failed_tickers:
-                raise ValueError(
-                    f"Data for tickers failed (all NaN or missing): {failed_tickers}"
-                )
-
+                raise ValueError(f"Data for tickers failed (all NaN or missing): {failed_tickers}")
+            
             # If we reach here, all checks passed.
             print("Download successful for all requested tickers.")
             return data
@@ -243,9 +237,8 @@ def download_with_retry(tickers, max_retries=5, delay_seconds=3, **kwargs):
                 if last_exception:
                     raise last_exception
                 raise Exception("All download retries failed.")
-
+    
     return pd.DataFrame()
-
 
 def download_numerical_financial_data(
     tickers: List[str],
@@ -257,8 +250,6 @@ def download_numerical_financial_data(
     val_split_ratio: float = 0.21,  # to keep the same val dataset
     test_split_ratio: float = 0.0,  # dont need it for now
     check_if_already_downloaded: bool = True,
-    prediction_type: str = "classification",  # any of the types in trainer
-    classification_threshold: float = 0.005,  # used for classification
 ):
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
@@ -266,14 +257,9 @@ def download_numerical_financial_data(
     if check_if_already_downloaded and is_already_downloaded(tickers, output_dir):
         print("Data already downloaded.")
         return
-
+    
     raw_data = download_with_retry(
-        tickers,
-        start=start_date,
-        end=end_date,
-        progress=True,
-        auto_adjust=False,
-        back_adjust=False,
+        tickers, start=start_date, end=end_date, progress=True, auto_adjust=False, back_adjust=False,
     )
     aligned_raw_data = pd.DataFrame(columns=raw_data.columns)
     for i in range(len(tickers)):
@@ -292,19 +278,20 @@ def download_numerical_financial_data(
         print("No data downloaded.")
         return
 
+
     # daily_index = raw_data.index
     # daily_close_prices = raw_data['Close']
 
     # aligned_fundamentals_df, fundamental_col_names = fetch_and_align_fundamental_data(
     #     tickers, daily_index, daily_close_prices
     # )
-
+    
     # # Convert the multi-level column dataframe to a tensor
     # # Shape: (time, features, tickers) -> transpose to (features, time, tickers)
     # if not aligned_fundamentals_df.empty:
     #     # Filter to only include columns we successfully generated
     #     aligned_fundamentals_df = aligned_fundamentals_df.reindex(columns=fundamental_col_names, level=0)
-
+        
     #     fundamental_data_tensor = torch.tensor(aligned_fundamentals_df.values, dtype=torch.float32)
     #     num_fundamental_features = fundamental_data_tensor.shape[1] // len(tickers)
     #     fundamental_data_tensor = fundamental_data_tensor.reshape(len(daily_index), num_fundamental_features, len(tickers))
@@ -313,7 +300,8 @@ def download_numerical_financial_data(
     #     fundamental_data_tensor = torch.empty(0)
     #     fundamental_col_names = []
 
-    unique_tickers = sorted(list(set(tickers)))
+
+    unique_tickers = list(set(tickers))
     ticker_to_id = {ticker: i for i, ticker in enumerate(unique_tickers)}
 
     indexes = raw_data.index
@@ -326,17 +314,11 @@ def download_numerical_financial_data(
 
     raw_data = raw_data[1:, :, :]
     full_data, columns, local_columns = calculate_features(raw_data, tickers)
-    full_data = data_fix_ffill(full_data)
+    full_data = data_fix_bfill_ffill(full_data)
 
-    data = torch.empty(
-        full_data.shape[0],
-        max(target_dates),
-        full_data.shape[1] - max(target_dates),
-        full_data.shape[2],
-        dtype=torch.float32,
-    )
+    data = torch.empty(full_data.shape[0], max(target_dates), full_data.shape[1]-max(target_dates), full_data.shape[2], dtype=torch.float32)
     for i in range(max(target_dates)):
-        data[:, i, :, :] = full_data[:, i : -(max(target_dates) - i), :]
+        data[:,i,:,:] = full_data[:,i:-(max(target_dates)-i),:]
     data = data[:, :, 20:, :]  # (features, target_inputs, time series, tickers)
 
     # time data
@@ -344,22 +326,21 @@ def download_numerical_financial_data(
     data = torch.cat((data, time_data), dim=0)
     columns.extend(time_columns)
 
-    MTP_targets = torch.empty(
-        (5, max(target_dates), data.shape[2] + 20, len(tickers)), dtype=torch.float32
-    )  # (chlov, target_dates, time series, tickers)
-    MTP_full = (raw_data[:, 1:, :] - raw_data[:, :-1, :]) / raw_data[:, :-1, :]
-    MTP_full = data_fix_ffill(MTP_full)
-    # if prediction_type == "classification":
-    #     MTP_targets_classes = torch.full_like(MTP_full, 1)
-    #     MTP_targets_classes[MTP_full < -classification_threshold] = 0
-    #     MTP_targets_classes[MTP_full > classification_threshold] = 2
-    #     MTP_full = MTP_targets_classes.long()
 
+    MTP_targets = torch.empty(
+        (5, max(target_dates), data.shape[2]+20+1, len(tickers)), dtype=torch.float32
+    ) # (chlov, target_dates, time series, tickers)
+    MTP_full = (raw_data[:, 1:, :] - raw_data[:, :-1, :]) / raw_data[:, :-1, :]
+    # MTP_full[4, 5928] = MTP_full[4, 5927] # ffil fix for inf
+    MTP_full = torch.cat(
+        (torch.zeros_like(MTP_full[:, 0:1, :]), MTP_full), dim=1
+    )  # (features, time series, tickers)
+    MTP_full = data_fix_bfill_ffill(MTP_full)
     for i in range(max(target_dates)):
         if i == max(target_dates) - 1:
             MTP_targets[:, i, :, :] = MTP_full[:, i:, :]
         else:
-            MTP_targets[:, i, :, :] = MTP_full[:, i : -(max(target_dates) - i - 1), :]
+            MTP_targets[:, i, :, :] = MTP_full[:, i:-(max(target_dates) - i - 1), :]
     MTP_targets = MTP_targets[:, :, 20:, :]
 
     column_to_id = {column: i for i, column in enumerate(columns)}
@@ -369,7 +350,7 @@ def download_numerical_financial_data(
 
     if (torch.isnan(MTP_targets)).any() or (torch.isinf(MTP_targets)).any():
         print("MTP_targets contains NaN or Inf values.")
-
+    
     data_length = data.shape[2]
 
     train_data_length = int(data_length * (1 - val_split_ratio - test_split_ratio))
@@ -383,7 +364,7 @@ def download_numerical_financial_data(
     #     data, [train_data_length, val_data_length, test_data_length], dim=2
     # )
     train_indexes, val_indexes, test_indexes = (
-        indexes[: train_data_length + seq_len - 1],
+        indexes[:train_data_length + seq_len - 1],
         indexes[train_data_length : train_data_length + val_data_length + seq_len - 1],
         indexes[train_data_length + val_data_length :],
     )
@@ -392,52 +373,31 @@ def download_numerical_financial_data(
 
     num_of_non_global_norm_feats = len(local_columns) + len(time_columns)
 
-    means = data[:-num_of_non_global_norm_feats, :, :train_data_length, :].mean(
-        dim=2, keepdim=True
-    )
-    stds = data[:-num_of_non_global_norm_feats, :, :train_data_length, :].std(
-        dim=2, keepdim=True
-    )
-    data[:-num_of_non_global_norm_feats] = (
-        data[:-num_of_non_global_norm_feats] - means
-    ) / (stds + 1e-8)
+    means = data[: -num_of_non_global_norm_feats, :, :train_data_length, :].mean(dim=2, keepdim=True)
+    stds = data[: -num_of_non_global_norm_feats, :, :train_data_length, :].std(dim=2, keepdim=True)
+    data[: -num_of_non_global_norm_feats] = (data[: -num_of_non_global_norm_feats] - means) / (stds + 1e-8)
 
-    if prediction_type != "classification":
-        MTP_targets = (MTP_targets - means[:5]) / stds[:5]
+    MTP_targets = (MTP_targets - means[:5]) / stds[:5]
 
-    # new reshape (into seq_len chunks)
-    data = data.unfold(
-        2, seq_len, 1
-    ).contiguous()  # (features, target_inputs, time series, tickers, seq_len)
-    MTP_targets = MTP_targets.unfold(
-        2, seq_len, 1
-    ).contiguous()  # (chlov, target_inputs, time series, tickers, seq_len)
+    # new reshape (into seq_len chunks) 
+    data = data.unfold(2, seq_len, 1) # (features, target_inputs, time series, tickers, seq_len)
+    MTP_targets = MTP_targets.unfold(2, seq_len+1, 1) # (chlov, target_inputs, time series, tickers, seq_len)
 
     data = data.permute(0, 1, 2, 4, 3)
     MTP_targets = MTP_targets.permute(0, 1, 2, 4, 3)
 
     # local znorm
-    if num_of_non_global_norm_feats != len(time_columns):
-        local_means = data[-num_of_non_global_norm_feats : -len(time_columns)].mean(
-            dim=3, keepdim=True
-        )
-        local_stds = data[-num_of_non_global_norm_feats : -len(time_columns)].std(
-            dim=3, keepdim=True
-        )
-        data[-num_of_non_global_norm_feats : -len(time_columns)] = (
-            data[-num_of_non_global_norm_feats : -len(time_columns)] - local_means
-        ) / (local_stds + 1e-8)
-    
+    local_means = data[-num_of_non_global_norm_feats:-len(time_columns)].mean(dim=3, keepdim=True)
+    local_stds = data[-num_of_non_global_norm_feats:-len(time_columns)].std(dim=3, keepdim=True)
+    data[-num_of_non_global_norm_feats:-len(time_columns)] = (data[-num_of_non_global_norm_feats:-len(time_columns)] - local_means) / (local_stds + 1e-8)
+
     train_data, val_data, test_data = torch.split(
-        data,
-        [train_data_length, val_data_length - seq_len + 1, test_data_length],
-        dim=2,
+        data, [train_data_length, val_data_length - seq_len + 1, test_data_length], dim=2
     )
     train_MTP_targets, val_MTP_targets, test_MTP_targets = torch.split(
-        MTP_targets,
-        [train_data_length, val_data_length - seq_len + 1, test_data_length],
-        dim=2,
+        MTP_targets, [train_data_length, val_data_length - seq_len + 1, test_data_length], dim=2
     )
+
 
     save_indexes_to_csv(train_indexes, os.path.join(output_dir, "train.csv"))
     save_indexes_to_csv(val_indexes, os.path.join(output_dir, "val.csv"))
@@ -469,34 +429,24 @@ def download_numerical_financial_data(
 
     with open(os.path.join(output_dir, "metadata.json"), "w") as f:
         json.dump(metadata, f, indent=4)
+    
+    return means[:,0,0,:].tolist(), stds[:,0,0,:].tolist()
 
-    return means[:, 0, 0, :].tolist(), stds[:, 0, 0, :].tolist()
-
-
-def calculate_features(
-    data: torch.Tensor, tickers: List[str]
-) -> Tuple[torch.Tensor, List[str], List[str]]:
+def calculate_features(data: torch.Tensor, tickers: List[str]) -> Tuple[torch.Tensor, List[str], List[str]]:
     raw_data = data.clone()
 
-    returns_columns = [
-        "close_returns",
-        "high_returns",
-        "low_returns",
-        "open_returns",
-        "volume_returns",
-    ]
+    returns_columns = ["close_returns", "high_returns", "low_returns", "open_returns", "volume_returns"]
     price_columns = ["close", "high", "low", "open", "volume"]
     columns = []
     columns.extend(returns_columns)
+        
 
     # TODO maybe norm ema and such using same values as returns and such
     # TODO revisit vpt with sma/ema of itself
-    full_data = (raw_data[:, 1:, :] - raw_data[:, :-1, :]) / raw_data[
-        :, :-1, :
-    ]  # (features, time series, tickers)
-    full_data = torch.cat((torch.zeros_like(full_data[:, 0:1, :]), full_data), dim=1)
+    full_data = (raw_data[:,1:,:] - raw_data[:,:-1,:]) / raw_data[:,:-1,:]  # (features, time series, tickers)
+    full_data = torch.cat((torch.zeros_like(full_data[:,0:1,:]), full_data), dim=1)
     # full_data[4, 5929] = full_data[4, 5928] # ffil fix for inf
-    full_data = data_fix_ffill(full_data)
+    full_data = data_fix_bfill_ffill(full_data)
 
     vol_data, vol_columns = feature_volatility_ret(returns=full_data[0:1], prefix="close_returns_")
     full_data = torch.cat((full_data, vol_data), dim=0)
@@ -505,6 +455,7 @@ def calculate_features(
     vol_data, vol_columns = feature_volatility_ret(returns=full_data[4:5], prefix="volume_returns_")
     full_data = torch.cat((full_data, vol_data), dim=0)
     columns.extend(vol_columns)
+
 
     full_ema = []
     full_ema_columns = []
@@ -519,7 +470,7 @@ def calculate_features(
     columns.extend(full_ema_columns)
 
     full_vpt = []
-    vpt_data = calculate_volume_price_trend_standard(full_data[:4], raw_data[4:])
+    vpt_data = calculate_volume_price_trend_standard(raw_data[:4], raw_data[4:])
     full_vpt.append(vpt_data)
     full_data = torch.cat((full_data, torch.cat(full_vpt, dim=0)), dim=0)
     columns.extend(["vpt_close", "vpt_high", "vpt_low", "vpt_open"])
@@ -542,8 +493,8 @@ def calculate_features(
 
     prices = raw_data
     full_data = torch.cat((full_data, prices), dim=0)
-    local_price_columns = ["local_" + s for s in price_columns]
-    local_returns_columns = ["local_" + s for s in returns_columns]
+    local_price_columns = ["local_"+s for s in price_columns]
+    local_returns_columns = ["local_"+s for s in returns_columns]
     local_columns = []
     local_columns.extend(local_price_columns)
 
@@ -586,6 +537,7 @@ def calculate_features(
     full_data = torch.cat((full_data, torch.cat(full_ppo, dim=0)), dim=0)
     local_columns.extend(full_ppo_columns)
 
+
     returns = full_data[:5, :, :]
     full_data = torch.cat((full_data, returns), dim=0)
     local_columns.extend(local_returns_columns)
@@ -619,14 +571,14 @@ def calculate_features(
     full_data = torch.cat((full_data, bb_data), dim=0)
     local_columns.extend(bb_columns)
 
+
     columns.extend(local_columns)
 
     return full_data, columns, local_columns
 
-
-def data_fix_ffill(data: torch.Tensor) -> torch.Tensor:
+def data_fix_bfill_ffill(data: torch.Tensor) -> torch.Tensor:
     """
-    Fills NaN values in a tensor using forward fill.
+    Fills NaN values in a tensor using backward fill followed by forward fill.
     This is a robust method to ensure no NaNs remain in the data.
 
     Args:
@@ -635,43 +587,26 @@ def data_fix_ffill(data: torch.Tensor) -> torch.Tensor:
     Returns:
         torch.Tensor: Tensor with NaN values filled.
     """
-    # Forward fill
+    # Backward fill
     is_bad = torch.isnan(data) | torch.isinf(data)
     good_values = data.clone()
     good_values[is_bad] = 0  # Temporarily set bad values to 0
 
-    last_good_idx = torch.cummax(
-        torch.logical_not(is_bad).int()
-        * torch.arange(data.shape[1], device=data.device).view(1, -1, 1),
-        dim=1,
-    )[0]
-    filled_indices = torch.gather(
-        last_good_idx,
-        1,
-        torch.arange(data.shape[1], device=data.device)
-        .view(1, -1, 1)
-        .expand_as(last_good_idx),
-    )
-    filled_data = torch.gather(good_values, 1, filled_indices)
-
-    return filled_data
-
-    # flipped_data = torch.flip(good_values, dims=[1])
-    # flipped_is_bad = torch.flip(is_bad, dims=[1])
-
-    # last_good_idx = torch.cummax(torch.logical_not(flipped_is_bad).int() * torch.arange(data.shape[1], device=data.device).view(1, -1, 1), dim=1)[0]
-    # filled_indices = torch.gather(last_good_idx, 1, torch.arange(data.shape[1], device=data.device).view(1, -1, 1).expand_as(last_good_idx))
-    # bfilled_data = torch.gather(flipped_data, 1, filled_indices)
-
-    # # Forward fill
-    # bfilled_data = torch.flip(bfilled_data, dims=[1])
-
-    # is_bad = torch.isnan(bfilled_data) | torch.isinf(bfilled_data)
-    # last_good_idx = torch.cummax(torch.logical_not(is_bad).int() * torch.arange(bfilled_data.shape[1], device=bfilled_data.device).view(1, -1, 1), dim=1)[0]
-    # filled_indices = torch.gather(last_good_idx, 1, torch.arange(bfilled_data.shape[1], device=bfilled_data.device).view(1, -1, 1).expand_as(last_good_idx))
-
-    # return torch.gather(bfilled_data, 1, filled_indices)
-
+    flipped_data = torch.flip(good_values, dims=[1])
+    flipped_is_bad = torch.flip(is_bad, dims=[1])
+    
+    last_good_idx = torch.cummax(torch.logical_not(flipped_is_bad).int() * torch.arange(data.shape[1], device=data.device).view(1, -1, 1), dim=1)[0]
+    filled_indices = torch.gather(last_good_idx, 1, torch.arange(data.shape[1], device=data.device).view(1, -1, 1).expand_as(last_good_idx))
+    bfilled_data = torch.gather(flipped_data, 1, filled_indices)
+    
+    # Forward fill
+    bfilled_data = torch.flip(bfilled_data, dims=[1])
+    
+    is_bad = torch.isnan(bfilled_data) | torch.isinf(bfilled_data)
+    last_good_idx = torch.cummax(torch.logical_not(is_bad).int() * torch.arange(bfilled_data.shape[1], device=bfilled_data.device).view(1, -1, 1), dim=1)[0]
+    filled_indices = torch.gather(last_good_idx, 1, torch.arange(bfilled_data.shape[1], device=bfilled_data.device).view(1, -1, 1).expand_as(last_good_idx))
+    
+    return torch.gather(bfilled_data, 1, filled_indices)
 
 if __name__ == "__main__":
     tickers = ["AAPL", "^GSPC"]  # Reduced for faster testing
@@ -686,9 +621,8 @@ if __name__ == "__main__":
     )
 
 
-def feature_volatility_ret(
-    returns: torch.Tensor, prefix: str = "returns_"
-) -> torch.Tensor:
+
+def feature_volatility_ret(returns: torch.Tensor, prefix: str = "returns_") -> torch.Tensor:
     vol_columns = []
     vol = calculate_volatility_returns(returns, lookback=5)
     vol_data = vol.unsqueeze(0)
@@ -708,10 +642,7 @@ def feature_volatility_ret(
 
     return vol_data, vol_columns
 
-
-def feature_bollinger_bands_returns(
-    returns: torch.Tensor, prefix: str = "returns_"
-) -> torch.Tensor:
+def feature_bollinger_bands_returns(returns: torch.Tensor, prefix: str = "returns_") -> torch.Tensor:
     bb_columns = []
     sma_5 = calculate_sma(returns, lookback=5)
     vol_5 = calculate_volatility_returns(returns, lookback=5).unsqueeze(0)
@@ -751,10 +682,7 @@ def feature_bollinger_bands_returns(
 
     return bb_data, bb_columns
 
-
-def feature_bollinger_bands_price_histogram(
-    price: torch.Tensor, prefix: str = "price_"
-) -> torch.Tensor:
+def feature_bollinger_bands_price_histogram(price: torch.Tensor, prefix: str = "price_") -> torch.Tensor:
     bb_columns = []
     sma_5 = calculate_sma(price, lookback=5)
     vol_5 = calculate_volatility_returns(price, lookback=5).unsqueeze(0)
@@ -802,8 +730,8 @@ def feature_bollinger_bands_price_histogram(
 
     return bb_data, bb_columns
 
-
-def feature_ema(price: torch.Tensor, prefix: str = "price_") -> torch.Tensor:
+def feature_ema(
+    price: torch.Tensor, prefix: str = "price_") -> torch.Tensor:
     ema_columns = []
     ema = calculate_ema_pandas(price, lookback=5)
     ema_data = ema.unsqueeze(0)
@@ -823,7 +751,6 @@ def feature_ema(price: torch.Tensor, prefix: str = "price_") -> torch.Tensor:
 
     return ema_data, ema_columns
 
-
 def feature_ppo(price: torch.Tensor, prefix: str = "price_") -> torch.Tensor:
     ppo_columns = []
     ema_5 = calculate_ema_pandas(price, lookback=5)
@@ -832,18 +759,17 @@ def feature_ppo(price: torch.Tensor, prefix: str = "price_") -> torch.Tensor:
 
     ppo = (ema_5 - ema_10) / ema_10
     ppo_data = ppo.unsqueeze(0)
-    ppo_columns.append(prefix + "ppo_5_10")
+    ppo_columns.append(prefix+"ppo_5_10")
 
     ppo = (ema_10 - ema_20) / ema_20
     ppo_data = torch.cat((ppo_data, ppo.unsqueeze(0)), dim=0)
-    ppo_columns.append(prefix + "ppo_10_20")
+    ppo_columns.append(prefix+"ppo_10_20")
 
     ppo = (ema_5 - ema_20) / ema_20
     ppo_data = torch.cat((ppo_data, ppo.unsqueeze(0)), dim=0)
-    ppo_columns.append(prefix + "ppo_5_20")
+    ppo_columns.append(prefix+"ppo_5_20")
 
     return ppo_data, ppo_columns
-
 
 def feature_macd(price: torch.Tensor, prefix: str = "price_") -> torch.Tensor:
     macd_columns = []
@@ -853,36 +779,35 @@ def feature_macd(price: torch.Tensor, prefix: str = "price_") -> torch.Tensor:
 
     macd = ema_5 - ema_10
     macd_data = macd.unsqueeze(0)
-    macd_columns.append(prefix + "macd_5_10")
+    macd_columns.append(prefix+"macd_5_10")
     macd_signal = calculate_ema_pandas(macd, lookback=5)
     macd_data = torch.cat((macd_data, macd_signal.unsqueeze(0)), dim=0)
-    macd_columns.append(prefix + "macd_signal_5_10_5")
+    macd_columns.append(prefix+"macd_signal_5_10_5")
     macd_histogram = macd - macd_signal
     macd_data = torch.cat((macd_data, macd_histogram.unsqueeze(0)), dim=0)
-    macd_columns.append(prefix + "macd_histogram_5_10_5")
+    macd_columns.append(prefix+"macd_histogram_5_10_5")
 
     macd = ema_10 - ema_20
     macd_data = torch.cat((macd_data, macd.unsqueeze(0)), dim=0)
-    macd_columns.append(prefix + "macd_10_20")
+    macd_columns.append(prefix+"macd_10_20")
     macd_signal = calculate_ema_pandas(macd, lookback=10)
     macd_data = torch.cat((macd_data, macd_signal.unsqueeze(0)), dim=0)
-    macd_columns.append(prefix + "macd_signal_10_20_10")
+    macd_columns.append(prefix+"macd_signal_10_20_10")
     macd_histogram = macd - macd_signal
     macd_data = torch.cat((macd_data, macd_histogram.unsqueeze(0)), dim=0)
-    macd_columns.append(prefix + "macd_histogram_10_20_10")
+    macd_columns.append(prefix+"macd_histogram_10_20_10")
 
     macd = ema_5 - ema_20
     macd_data = torch.cat((macd_data, macd.unsqueeze(0)), dim=0)
-    macd_columns.append(prefix + "macd_5_20")
+    macd_columns.append(prefix+"macd_5_20")
     macd_signal = calculate_ema_pandas(macd, lookback=10)
     macd_data = torch.cat((macd_data, macd_signal.unsqueeze(0)), dim=0)
-    macd_columns.append(prefix + "macd_signal_5_20_10")
+    macd_columns.append(prefix+"macd_signal_5_20_10")
     macd_histogram = macd - macd_signal
     macd_data = torch.cat((macd_data, macd_histogram.unsqueeze(0)), dim=0)
-    macd_columns.append(prefix + "macd_histogram_5_20_10")
+    macd_columns.append(prefix+"macd_histogram_5_20_10")
 
     return macd_data, macd_columns
-
 
 def feature_macd_histogram(price: torch.Tensor, prefix: str = "close_") -> torch.Tensor:
     macd_histogram_columns = []
@@ -894,23 +819,19 @@ def feature_macd_histogram(price: torch.Tensor, prefix: str = "close_") -> torch
     macd_signal = calculate_ema_pandas(macd, lookback=5)
     macd_histogram = macd - macd_signal
     macd_histogram_data = macd_histogram.unsqueeze(0)
-    macd_histogram_columns.append(prefix + "macd_histogram_5_10_5")
+    macd_histogram_columns.append(prefix+"macd_histogram_5_10_5")
 
     macd = ema_10 - ema_20
     macd_signal = calculate_ema_pandas(macd, lookback=10)
     macd_histogram = macd - macd_signal
-    macd_histogram_data = torch.cat(
-        (macd_histogram_data, macd_histogram.unsqueeze(0)), dim=0
-    )
-    macd_histogram_columns.append(prefix + "macd_histogram_10_20_10")
+    macd_histogram_data = torch.cat((macd_histogram_data, macd_histogram.unsqueeze(0)), dim=0)
+    macd_histogram_columns.append(prefix+"macd_histogram_10_20_10")
 
     macd = ema_5 - ema_20
     macd_signal = calculate_ema_pandas(macd, lookback=10)
     macd_histogram = macd - macd_signal
-    macd_histogram_data = torch.cat(
-        (macd_histogram_data, macd_histogram.unsqueeze(0)), dim=0
-    )
-    macd_histogram_columns.append(prefix + "macd_histogram_5_20_10")
+    macd_histogram_data = torch.cat((macd_histogram_data, macd_histogram.unsqueeze(0)), dim=0)
+    macd_histogram_columns.append(prefix+"macd_histogram_5_20_10")
 
     return macd_histogram_data, macd_histogram_columns
 
@@ -977,16 +898,12 @@ def feature_time_data(
     # time_data = time_data[:, : -max(target_dates)]
     # time_data = time_data[:, 20:].unsqueeze(-1)
     # time_data = time_data.tile(1, 1, len(tickers))
-    time_data_target = torch.empty(
-        (time_data.shape[0], max(target_dates), time_data.shape[1] - max(target_dates)),
-        dtype=torch.float32,
-    )
+    time_data_target = torch.empty((time_data.shape[0], max(target_dates), time_data.shape[1] - max(target_dates)), dtype=torch.float32)
     for i in range(max(target_dates)):
-        time_data_target[:, i, :] = time_data[:, i : -(max(target_dates) - i)]
+        time_data_target[:, i, :] = time_data[:, i:-(max(target_dates) - i)]
     time_data_target = time_data_target.unsqueeze(-1)
-    time_data = time_data_target[:, :, 20:, :].expand(-1, -1, -1, len(tickers))
+    time_data = time_data_target[:,:,20:,:].expand(-1, -1, -1, len(tickers))
     return time_data, time_columns
-
 
 def calculate_volatility_log_ret(
     data: torch.Tensor, lookback: int = 30
@@ -1013,13 +930,10 @@ def calculate_true_range(
     trs = torch.cat((trs[:, 0:1], trs), dim=1)  # add first value
     return torch.max(trs, dim=0).values
 
-
 def calculate_sma(series: torch.Tensor, lookback: int = 10) -> torch.Tensor:
     sma = torch.empty_like(series)
     cumsum = torch.cumsum(series, dim=1)
-    sma[:, :lookback] = cumsum[:, :lookback] / torch.arange(1, lookback + 1).view(
-        1, -1, 1
-    )
+    sma[:, :lookback] = cumsum[:, :lookback] / torch.arange(1, lookback + 1).view(1,-1,1)
     sma[:, lookback:] = (cumsum[:, lookback:] - cumsum[:, :-lookback]) / lookback
     return sma
 
@@ -1041,12 +955,13 @@ def calculate_volatility_returns(
     volatility = torch.zeros(returns.shape[1], returns.shape[2])
     for i in range(2, returns.shape[1]):
         if i < lookback:
-            volatility[i] = returns[:, :i].std(dim=(0, 1))
+            volatility[i] = returns[:, :i].std(dim=(0,1))
         else:
-            volatility[i] = returns[:, i - lookback : i].std(dim=(0, 1))
+            volatility[i] = returns[:, i - lookback : i].std(dim=(0,1))
     volatility[0] = volatility[2]  # maybe wrong, but its just two datapoints
     volatility[1] = volatility[2]
     return volatility
+
 
 
 def calculate_close_line_values(
@@ -1089,7 +1004,11 @@ def calculate_volume_price_trend(
     return vpt
 
 
-def calculate_volume_price_trend_standard(returns: torch.Tensor, volume: torch.Tensor):
+def calculate_volume_price_trend_standard(price: torch.Tensor, volume: torch.Tensor):
+    returns = torch.empty_like(price)
+    returns[:, 1:] = (price[:, 1:] - price[:, :-1]) / (price[:, :-1] + 1e-6)
+    returns[:, 0] = returns[:, 1]
+
     vtr = volume * returns
     return torch.cumsum(vtr, dim=1)
 
@@ -1199,7 +1118,6 @@ def calculate_negative_mfr(
 
     mfr = rolling_neg_mf / rolling_total_mf
     return mfr
-
 
 def calculate_rsi(
     prices: torch.Tensor, lookback: int = 14
@@ -1370,66 +1288,38 @@ def align_financial_dataframes(
 
 
 METRIC_TAG_MAP = {
-    "revenue": (
-        [
-            "Revenues",
-            "RevenueFromContractWithCustomerExcludingAssessedTax",
-            "SalesRevenueNet",
-        ],
-        "USD",
-    ),
-    "net_income": (["NetIncomeLoss", "ProfitLoss"], "USD"),
-    "eps": (["EarningsPerShareDiluted", "EarningsPerShareBasic"], "USD/shares"),
-    "shares_outstanding": (
-        [
-            "WeightedAverageNumberOfDilutedSharesOutstanding",
-            "WeightedAverageNumberOfSharesOutstandingBasic",
-        ],
-        "shares",
-    ),
-    "total_assets": (["Assets"], "USD"),
-    "total_liabilities": (["Liabilities"], "USD"),
-    "current_assets": (["AssetsCurrent"], "USD"),
-    "current_liabilities": (["LiabilitiesCurrent"], "USD"),
-    "equity": (["StockholdersEquity"], "USD"),
-    "operating_cash_flow": (["NetCashProvidedByUsedInOperatingActivities"], "USD"),
-    "capex": (
-        [
-            "PaymentsToAcquirePropertyPlantAndEquipment",
-            "PaymentsToAcquireProductiveAssets",
-        ],
-        "USD",
-    ),
+    'revenue': (['Revenues', 'RevenueFromContractWithCustomerExcludingAssessedTax', 'SalesRevenueNet'], 'USD'),
+    'net_income': (['NetIncomeLoss', 'ProfitLoss'], 'USD'),
+    'eps': (['EarningsPerShareDiluted', 'EarningsPerShareBasic'], 'USD/shares'),
+    'shares_outstanding': (['WeightedAverageNumberOfDilutedSharesOutstanding', 'WeightedAverageNumberOfSharesOutstandingBasic'], 'shares'),
+    'total_assets': (['Assets'], 'USD'),
+    'total_liabilities': (['Liabilities'], 'USD'),
+    'current_assets': (['AssetsCurrent'], 'USD'),
+    'current_liabilities': (['LiabilitiesCurrent'], 'USD'),
+    'equity': (['StockholdersEquity'], 'USD'),
+    'operating_cash_flow': (['NetCashProvidedByUsedInOperatingActivities'], 'USD'),
+    'capex': (['PaymentsToAcquirePropertyPlantAndEquipment', 'PaymentsToAcquireProductiveAssets'], 'USD'),
 }
 
-
-def _get_sec_data_series(
-    company_facts: dict, tag_list: List[str], unit: str
-) -> Optional[pd.Series]:
+def _get_sec_data_series(company_facts: dict, tag_list: List[str], unit: str) -> Optional[pd.Series]:
     """
     Helper to find the first available data for a list of possible XBRL tags
     and return it as a pandas Series indexed by the filing end date.
     """
-    for standard in company_facts.get("facts", {}):
+    for standard in company_facts.get('facts', {}):
         for tag in tag_list:
-            if (
-                tag in company_facts["facts"][standard]
-                and unit in company_facts["facts"][standard][tag]["units"]
-            ):
-                data = company_facts["facts"][standard][tag]["units"][unit]
+            if tag in company_facts['facts'][standard] and unit in company_facts['facts'][standard][tag]['units']:
+                data = company_facts['facts'][standard][tag]['units'][unit]
                 if data:
                     df = pd.DataFrame(data)
                     # Filter for annual (10-K) and quarterly (10-Q) filings
-                    df = df[df["frame"].notna()]
+                    df = df[df['frame'].notna()]
                     if not df.empty:
-                        df["end"] = pd.to_datetime(df["end"])
+                        df['end'] = pd.to_datetime(df['end'])
                         # Use the most recent value for any given date
-                        series = df.drop_duplicates(
-                            subset="end", keep="last"
-                        ).set_index("end")["val"]
+                        series = df.drop_duplicates(subset='end', keep='last').set_index('end')['val']
                         return series.sort_index()
     return None
-
 
 def fetch_and_align_fundamental_data(
     tickers: List[str], daily_index: pd.DatetimeIndex, daily_close_prices: pd.DataFrame
@@ -1439,17 +1329,12 @@ def fetch_and_align_fundamental_data(
     and aligns them to a daily time series using a robust build-then-populate method.
     """
     print("Fetching full historical fundamental data from SEC EDGAR API...")
-    headers = {"User-Agent": "YourName YourEmail@example.com"}
+    headers = {'User-Agent': 'YourName YourEmail@example.com'}
 
     try:
-        company_tickers_response = requests.get(
-            "https://www.sec.gov/files/company_tickers.json", headers=headers
-        )
+        company_tickers_response = requests.get("https://www.sec.gov/files/company_tickers.json", headers=headers)
         company_tickers_response.raise_for_status()
-        ticker_to_cik = {
-            item["ticker"]: str(item["cik_str"]).zfill(10)
-            for item in company_tickers_response.json().values()
-        }
+        ticker_to_cik = {item['ticker']: str(item['cik_str']).zfill(10) for item in company_tickers_response.json().values()}
     except requests.exceptions.RequestException as e:
         print(f"FATAL: Could not download ticker-to-CIK mapping. Error: {e}")
         return pd.DataFrame(), []
@@ -1457,11 +1342,9 @@ def fetch_and_align_fundamental_data(
     # --- Step 1: Fetch and calculate all raw/ratio series for each ticker individually ---
     all_tickers_features = {}
     for ticker in tickers:
-        if ticker.startswith("^"):
-            continue
+        if ticker.startswith('^'): continue
         cik = ticker_to_cik.get(ticker.upper())
-        if not cik:
-            continue
+        if not cik: continue
 
         print(f"  - Processing fundamentals for {ticker} (CIK: {cik})")
         try:
@@ -1470,124 +1353,84 @@ def fetch_and_align_fundamental_data(
             facts_response.raise_for_status()
             facts_data = facts_response.json()
 
-            raw_components = {
-                metric: _get_sec_data_series(facts_data, tags, unit)
-                for metric, (tags, unit) in METRIC_TAG_MAP.items()
-            }
-
+            raw_components = {metric: _get_sec_data_series(facts_data, tags, unit) for metric, (tags, unit) in METRIC_TAG_MAP.items()}
+            
             calculated_ratios = {}
-
             def safe_divide(num, den):
-                if num is None or den is None:
-                    return None
-                num_aligned, den_aligned = num.align(den, method="ffill", join="outer")
+                if num is None or den is None: return None
+                num_aligned, den_aligned = num.align(den, method='ffill', join='outer')
                 return num_aligned / den_aligned.where(den_aligned != 0, np.nan)
 
-            calculated_ratios["roe"] = safe_divide(
-                raw_components["net_income"], raw_components["equity"]
-            )
-            calculated_ratios["roa"] = safe_divide(
-                raw_components["net_income"], raw_components["total_assets"]
-            )
-            calculated_ratios["net_profit_margin"] = safe_divide(
-                raw_components["net_income"], raw_components["revenue"]
-            )
-            calculated_ratios["debt_to_equity"] = safe_divide(
-                raw_components["total_liabilities"], raw_components["equity"]
-            )
-            calculated_ratios["current_ratio"] = safe_divide(
-                raw_components["current_assets"], raw_components["current_liabilities"]
-            )
-            calculated_ratios["asset_turnover"] = safe_divide(
-                raw_components["revenue"], raw_components["total_assets"]
-            )
+            calculated_ratios['roe'] = safe_divide(raw_components['net_income'], raw_components['equity'])
+            calculated_ratios['roa'] = safe_divide(raw_components['net_income'], raw_components['total_assets'])
+            calculated_ratios['net_profit_margin'] = safe_divide(raw_components['net_income'], raw_components['revenue'])
+            calculated_ratios['debt_to_equity'] = safe_divide(raw_components['total_liabilities'], raw_components['equity'])
+            calculated_ratios['current_ratio'] = safe_divide(raw_components['current_assets'], raw_components['current_liabilities'])
+            calculated_ratios['asset_turnover'] = safe_divide(raw_components['revenue'], raw_components['total_assets'])
 
-            if raw_components["operating_cash_flow"] is not None:
-                capex = raw_components.get(
-                    "capex",
-                    pd.Series(0, index=raw_components["operating_cash_flow"].index),
-                ).abs()
-                fcf, _ = raw_components["operating_cash_flow"].align(
-                    capex, method="ffill", join="outer"
-                )
-                fcf = fcf.fillna(0) - capex.reindex(fcf.index, method="ffill").fillna(0)
-                calculated_ratios["fcf_per_share"] = safe_divide(
-                    fcf, raw_components["shares_outstanding"]
-                )
+            if raw_components['operating_cash_flow'] is not None:
+                capex = raw_components.get('capex', pd.Series(0, index=raw_components['operating_cash_flow'].index)).abs()
+                fcf, _ = raw_components['operating_cash_flow'].align(capex, method='ffill', join='outer')
+                fcf = fcf.fillna(0) - capex.reindex(fcf.index, method='ffill').fillna(0)
+                calculated_ratios['fcf_per_share'] = safe_divide(fcf, raw_components['shares_outstanding'])
 
-            ticker_features = {
-                k: v for k, v in calculated_ratios.items() if v is not None
-            }
+            ticker_features = {k: v for k, v in calculated_ratios.items() if v is not None}
             # Add raw fundamentals needed for later valuation calcs
-            if raw_components["eps"] is not None:
-                ticker_features["eps"] = raw_components["eps"]
-            if raw_components["shares_outstanding"] is not None:
-                ticker_features["shares_outstanding"] = raw_components[
-                    "shares_outstanding"
-                ]
-            if raw_components["revenue"] is not None:
-                ticker_features["total_revenue"] = raw_components["revenue"]
-            if raw_components["equity"] is not None:
-                ticker_features["total_equity"] = raw_components["equity"]
-
+            if raw_components['eps'] is not None: ticker_features['eps'] = raw_components['eps']
+            if raw_components['shares_outstanding'] is not None: ticker_features['shares_outstanding'] = raw_components['shares_outstanding']
+            if raw_components['revenue'] is not None: ticker_features['total_revenue'] = raw_components['revenue']
+            if raw_components['equity'] is not None: ticker_features['total_equity'] = raw_components['equity']
+            
             all_tickers_features[ticker] = ticker_features
             time.sleep(0.15)
         except Exception as e:
             print(f"    - An unexpected error occurred for {ticker}: {e}")
-
+            
     # --- Step 2: Create the final, perfectly structured container DataFrame ---
-    base_feature_names = sorted(
-        list(set(k for d in all_tickers_features.values() for k in d.keys()))
-    )
-    valuation_feature_names = ["pe_ratio", "ps_ratio", "pb_ratio"]
+    base_feature_names = sorted(list(set(k for d in all_tickers_features.values() for k in d.keys())))
+    valuation_feature_names = ['pe_ratio', 'ps_ratio', 'pb_ratio']
     all_feature_names = base_feature_names + valuation_feature_names
 
-    multi_index_columns = pd.MultiIndex.from_product(
-        [all_feature_names, tickers], names=["feature", "ticker"]
-    )
+    multi_index_columns = pd.MultiIndex.from_product([all_feature_names, tickers], names=['feature', 'ticker'])
     final_df = pd.DataFrame(index=daily_index, columns=multi_index_columns)
 
     # --- Step 3: Populate the container with the calculated data ---
     for ticker, features_dict in all_tickers_features.items():
         for feature_name, raw_series in features_dict.items():
-            if raw_series is None or raw_series.empty:
-                continue
-
+            if raw_series is None or raw_series.empty: continue
+            
             # Align the quarterly/annual series to the daily index
             combined_index = daily_index.union(raw_series.index).sort_values()
-            aligned_series = (
-                raw_series.reindex(combined_index).ffill().reindex(daily_index).bfill()
-            )
-
+            aligned_series = raw_series.reindex(combined_index).ffill().reindex(daily_index).bfill()
+            
             # Place the aligned data into the correct column of our final DataFrame
             final_df.loc[:, (feature_name, ticker)] = aligned_series
-
+            
     # --- Step 4: Calculate valuation ratios directly on the aligned DataFrame ---
-    market_cap = daily_close_prices * final_df["shares_outstanding"]
+    market_cap = daily_close_prices * final_df['shares_outstanding']
 
-    if "eps" in final_df:
-        pe_ratio = daily_close_prices / final_df["eps"]
-        pe_ratio[final_df["eps"] <= 0] = np.nan  # Use NaN for meaningless P/E
-        final_df["pe_ratio"] = pe_ratio
+    if 'eps' in final_df:
+        pe_ratio = daily_close_prices / final_df['eps']
+        pe_ratio[final_df['eps'] <= 0] = np.nan # Use NaN for meaningless P/E
+        final_df['pe_ratio'] = pe_ratio
 
-    if "total_revenue" in final_df:
-        ps_ratio = market_cap / final_df["total_revenue"]
-        final_df["ps_ratio"] = ps_ratio
+    if 'total_revenue' in final_df:
+        ps_ratio = market_cap / final_df['total_revenue']
+        final_df['ps_ratio'] = ps_ratio
 
-    if "total_equity" in final_df:
-        pb_ratio = market_cap / final_df["total_equity"]
-        final_df["pb_ratio"] = pb_ratio
-
+    if 'total_equity' in final_df:
+        pb_ratio = market_cap / final_df['total_equity']
+        final_df['pb_ratio'] = pb_ratio
+        
     # --- Step 5: Final Cleanup ---
     # Ensure column order is consistent
     final_df = final_df.reindex(columns=all_feature_names, level=0)
-
+    
     # Fill any remaining NaNs (e.g., for ^GSPC or from calcs) with 0 and clean infs
     final_df.fillna(0, inplace=True)
     final_df.replace([np.inf, -np.inf], 0, inplace=True)
 
     return final_df, all_feature_names
-
 
 # E. Fundamental Data (More Involved - yf.Ticker().info, .financials, etc.):
 # Examples: P/E Ratio, EPS, P/S Ratio, Dividend Yield, Market Cap, Beta.

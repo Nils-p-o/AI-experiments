@@ -15,19 +15,6 @@
 
 # TODO set up old pc for training
 
-
-# Once you have multiple performance scores for each option (e.g., 3 validation MASE scores for Option A, 3 for Option B), you can use statistical tests to compare their means.
-# Common Tests:
-# Independent two-sample t-test: If you assume the scores are approximately normally distributed and have roughly equal variances. Given only 3 samples per group, checking these assumptions is hard, but it's a common starting point.
-# Mann-Whitney U test (Wilcoxon rank-sum test): A non-parametric alternative to the t-test, which doesn't assume normality. Often safer for ML metrics with small sample sizes.
-# Paired t-test (or Wilcoxon signed-rank test): If there's a natural pairing between the runs (e.g., you use the exact same set of 3 random seeds for Option A and Option B). This can be more powerful as it controls for variance due to specific seeds.
-# What to Test: You'd apply this to your key metrics:
-# Final validation loss (e.g., scaled L1 loss)
-# Directional accuracy
-# Information Ratio (IR) or Mean IC
-# MSSE/MASE
-# Interpretation: The p-value from the test will tell you the probability of observing the difference in means (or a larger difference) if there were actually no true difference between the options. A small p-value (e.g., < 0.05) suggests the difference is statistically significant.
-
 # TODO test nGPT
 
 # TODO check stat for noise
@@ -71,6 +58,14 @@ from transformer_arch.money.money_former_MLA_DINT_cog_attn_2 import Money_former
 from transformer_arch.money.money_former_MLA_DINT_cog_attn_2_MTP import Money_former_MLA_DINT_cog_attn_MTP
 
 
+# for profiling
+from torch.profiler import profile, record_function, ProfilerActivity
+import time
+
+# Before compiling run this line (to set up c++ compiling things)
+# & "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Auxiliary\Build\vcvarsall.bat" x64
+
+
 def proceed(args: argparse.Namespace):
     architecture = args.architecture
     seq_len = args.seq_len
@@ -108,7 +103,7 @@ def proceed(args: argparse.Namespace):
         f"LLaMa seq_len:{seq_len} d_model:{d_model} d_ff:{d_ff} num_layers:{num_layers} nhead:{nhead} dropout:{dropout} lr:{lr} t_total:{t_total} warmup_steps:{warmup_steps} t_0:{t_0} t_mult:{t_mult} lr_mult:{lr_mult} batch_size:{batch_size}"
     )
 
-    name = f"{args.dataset}/{args.folder_name}/{architecture}_{seq_len}_{d_model}_{d_ff}_{num_layers}_{nhead}_{batch_size}"
+    name = f"profiling/{args.dataset}/{args.folder_name}/{architecture}_{seq_len}_{d_model}_{d_ff}_{num_layers}_{nhead}_{batch_size}"
     if args.extra_descriptor:
         name = name + "_" + args.extra_descriptor
 
@@ -117,6 +112,10 @@ def proceed(args: argparse.Namespace):
         name=name,  # seq, d_model, d_ff mult, num_layers, nhead
     )  # Optional logging
     # --- Data Loading ---
+
+    # NUM_WORKERS = os.cpu_count() // 2 if os.cpu_count() > 1 else 0
+    NUM_WORKERS = 0
+
     if args.dataset == "Money":  # yahoo finance stock data
 
         args.normalization_means, args.normalization_stds = download_numerical_financial_data(
@@ -137,6 +136,7 @@ def proceed(args: argparse.Namespace):
             metadata_file="time_series_data/metadata.json",
             seq_len=seq_len,
             batch_size=batch_size,
+            num_workers=NUM_WORKERS
         )
 
     data_module.setup()  # Very important to setup the data
@@ -169,9 +169,6 @@ def proceed(args: argparse.Namespace):
     )
     args.num_params = num_params
 
-    # torch compile
-    # model = torch.compile(model)
-
     # --- Training Setup ---
     if model.__class__.__name__ == "Money_former_nGPT":
         normalize_weights_and_enforce_positive_eigenvalues(model)
@@ -188,45 +185,78 @@ def proceed(args: argparse.Namespace):
         # dtype=torch_dtype_for_params
     )  # Use vocab_size
 
-    # Checkpointing
-    checkpoint_callback = ModelCheckpoint(
-        dirpath="checkpoints/",
-        filename="{name}-{epoch}-{val_loss:.2f}",
-        save_top_k=5,
-        monitor="Losses_seen_unseen/val_loss_unseen",
-        # monitor="Loss/val_loss",
-        mode="min",
-    )
 
-    # Early Stopping
-    early_stopping_callback = EarlyStopping(
-        monitor="Losses_seen_unseen/val_loss_unseen", patience=1000, verbose=True, mode="min"
-        # monitor="Loss/val_loss", patience=1000, verbose=True, mode="min"
-    )
+    model = experiment.model
+    optimizer = experiment.configure_optimizers()['optimizer']
+    # checking torch.compile()
+    model = torch.compile(model)
 
-    trainer = pl.Trainer(
-        max_steps=t_total,
-        accelerator="auto",
-        devices="auto",
-        callbacks=[checkpoint_callback, early_stopping_callback],
-        # limit_train_batches=1000,
-        limit_val_batches=50,
-        logger=logger,
-        log_every_n_steps=100,
-        val_check_interval=300,
-        precision=trainer_precision,
-        check_val_every_n_epoch=None,
-    )
+    train_loader = data_module.train_dataloader()
+    data_iter = iter(train_loader)
 
-    trainer.fit(experiment, datamodule=data_module)
+    compile_start_time = time.time()
+    print("Warming up...")
+    for _ in range(2):
+        try:
+            batch = next(data_iter)
+            # ... (simplified training step logic) ...
+            inputs, labels = batch
+            inputs = inputs.permute(0, 2, 3, 4, 1)
+            tickers = torch.arange(experiment.num_sequences, device=inputs.device).unsqueeze(0).unsqueeze(0).repeat(inputs.shape[0], inputs.shape[1], 1)
+            outputs = model(inputs, tickers)
+            loss = torch.mean(outputs.view(-1))
+            loss.backward()
+            optimizer.step()
+            optimizer.zero_grad(set_to_none=True)
+        except StopIteration:
+            print("Dataloader too small for warmup.")
+            break # Exit warmup if dataloader is exhausted
+    
+    compile_time = time.time() - compile_start_time
+    print(f"Warmed and/or compiled model in {compile_time:.2f} seconds")
+    
+    # --- The Main Profiling Block (e.g., 5 steps) ---
+    start_time = time.time()
+    print("Starting profiled steps...")
+    PROFILED_STEPS = 20
+    with profile(
+        activities=[ProfilerActivity.CPU], # Change to [ProfilerActivity.CPU, ProfilerActivity.CUDA] on GPU
+        schedule=torch.profiler.schedule(wait=1, warmup=1, active=18, repeat=1), # A schedule to ignore the first step
+        on_trace_ready=torch.profiler.tensorboard_trace_handler('./profiler_logs'), # For detailed analysis
+        record_shapes=False,
+        with_stack=True,
+        with_modules=True
+    ) as prof:
+        for step in range(PROFILED_STEPS):
+            try:
+                batch = next(data_iter)
+            except StopIteration:
+                print("Dataloader ran out of batches during profiling.")
+                break # Exit loop if dataloader is exhausted
 
-    model_dir = f"models"
-    if not os.path.exists(model_dir):
-        os.makedirs(model_dir)
-    torch.save(
-        experiment.model, f"{model_dir}/{args.architecture}_{name.split('/')[-1]}.pth"
-    )  # TODO make this more specific
-    print("Model saved.")
+            # with record_function(f"train_step"):
+                # The full training step logic is inside the profiler's scope
+            inputs, labels = batch
+            inputs = inputs.permute(0, 2, 3, 4, 1)
+            tickers = torch.arange(experiment.num_sequences, device=inputs.device).unsqueeze(0).unsqueeze(0).repeat(inputs.shape[0], inputs.shape[1], 1)
+            outputs = model(inputs, tickers)
+            loss = torch.mean(outputs.view(-1))
+            loss.backward()
+            optimizer.step()
+            optimizer.zero_grad(set_to_none=True)
+            
+            # This tells the profiler that a step is complete. Important for the schedule.
+            prof.step()
+
+
+    # --- Print the results ---
+    print("\n--- Profiler Results (Averaged over profiled steps) ---")
+    # Sort by total CUDA time if on GPU, otherwise by total CPU time
+    sort_key = "cuda_time_total" if torch.cuda.is_available() else "cpu_time_total"
+    print(prof.key_averages().table(sort_by=sort_key, row_limit=30))
+
+    print(f"Total time: {time.time() - start_time:.2f} seconds")
+
     return
 
 
@@ -334,47 +364,3 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
     run_experiment(args)
-
-
-# What to do now:
-
-# Feature Engineering: The model defaulting to persistence suggests your current input features might not contain sufficient signal to predict changes effectively. Revisit your features:
-# Are you using standard technical indicators (moving averages, RSI, MACD, Bollinger Bands)?
-# Volume data?
-# Volatility measures (e.g., ATR)? Historical Volatility, Implied Volatility, Future / Expected Volatility
-
-# Model Complexity and Regularization:
-# Is the model complex enough to capture non-linear patterns (if they exist)?
-# Is it too complex and overfitting to noise, effectively cancelling out any real signal and defaulting to persistence? Try adjusting model size, dropout rates, weight decay.
-# Using techniques designed for time series with distribution shifts (though this is advanced).
-
-
-# Standard Deviation of IC:
-# Measures the volatility or consistency of your ICs over time. A lower standard deviation is generally better, indicating a more stable signal.
-
-# Information Ratio (IR):
-# IR = Mean(IC) / StdDev(IC)
-# This is a crucial metric, similar to a Sharpe ratio for a trading strategy. It tells you how much predictive power you get per unit of risk (volatility of the IC). Higher is better. A common rule of thumb is that an IR > 0.5 is considered good.
-# IC Skewness and Kurtosis: Provides insights into the distribution of your ICs.
-# Percentage of Positive ICs (Hit Rate):
-# The proportion of periods where IC_t > 0.
-# t-statistic for Mean IC:
-# t_stat = Mean(IC) * sqrt(Number of Periods) / StdDev(IC)
-# This tests the statistical significance of your mean IC (i.e., how likely is it that your mean IC is different from zero by chance). A t-stat > 2 (or < -2) is often considered statistically significant.
-# Example Scenario:
-# Predictions: At the end of Day D, your model predicts the next day's return for 100 stocks. You get a list of 100 predicted returns.
-# Actuals: At the end of Day D+1, you record the actual returns for those 100 stocks that occurred during Day D+1. You get a list of 100 actual returns.
-# Calculate IC_D: You compute the Spearman correlation between your list of 100 predictions and the list of 100 actual returns. This gives you one IC value for Day D.
-# Repeat: You do this every day for a year. You now have ~252 daily IC values.
-# Analyze: Calculate the mean, std dev, IR, and t-stat of these ~252 ICs.
-# What do IC values mean (heuristics for daily stock return prediction):
-# |IC| > 0.02 - 0.03: Might be interesting if very consistent.
-# |IC| > 0.05: Generally considered good.
-# |IC| > 0.10: Very good.
-# |IC| > 0.15: Excellent (rarely sustained).
-# Important Considerations:
-# Forward-Looking Nature: Ensure your actual outcomes are strictly after your predictions are made. No look-ahead bias.
-# Alignment: Predictions and actuals must be perfectly aligned by asset and by the prediction/outcome period.
-# Universe Consistency: The set of assets used for IC calculation should be consistent or handled carefully if it changes (e.g., stocks entering/leaving an index).
-# Transaction Costs: IC measures raw predictive power. It doesn't account for transaction costs, liquidity, or portfolio construction constraints that would affect a real trading strategy.
-# Decay: Signals can decay. The IC might be stronger for 1-day forward returns than for 5-day forward returns using the same prediction.
