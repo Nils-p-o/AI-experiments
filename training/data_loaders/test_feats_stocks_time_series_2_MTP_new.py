@@ -123,6 +123,7 @@ class FinancialNumericalDataModule(pl.LightningDataModule):
             shuffle=True,
             num_workers=self.num_workers,
             persistent_workers=self.persistent_workers,
+            drop_last=True,
             # prefetch_factor=4,
         )
 
@@ -133,6 +134,7 @@ class FinancialNumericalDataModule(pl.LightningDataModule):
             shuffle=False,
             num_workers=self.num_workers,
             persistent_workers=self.persistent_workers,
+            drop_last=True,
             # prefetch_factor=4,
         )
 
@@ -292,26 +294,26 @@ def download_numerical_financial_data(
         print("No data downloaded.")
         return
 
-    # daily_index = raw_data.index
-    # daily_close_prices = raw_data['Close']
+    daily_index = raw_data.index
+    daily_close_prices = raw_data['Close']
 
-    # aligned_fundamentals_df, fundamental_col_names = fetch_and_align_fundamental_data(
-    #     tickers, daily_index, daily_close_prices
-    # )
+    aligned_fundamentals_df, fundamental_col_names = fetch_and_align_fundamental_data(
+        tickers, daily_index, daily_close_prices
+    )
 
-    # # Convert the multi-level column dataframe to a tensor
-    # # Shape: (time, features, tickers) -> transpose to (features, time, tickers)
-    # if not aligned_fundamentals_df.empty:
-    #     # Filter to only include columns we successfully generated
-    #     aligned_fundamentals_df = aligned_fundamentals_df.reindex(columns=fundamental_col_names, level=0)
+    # Convert the multi-level column dataframe to a tensor
+    # Shape: (time, features, tickers) -> transpose to (features, time, tickers)
+    if not aligned_fundamentals_df.empty:
+        # Filter to only include columns we successfully generated
+        aligned_fundamentals_df = aligned_fundamentals_df.reindex(columns=fundamental_col_names, level=0)
 
-    #     fundamental_data_tensor = torch.tensor(aligned_fundamentals_df.values, dtype=torch.float32)
-    #     num_fundamental_features = fundamental_data_tensor.shape[1] // len(tickers)
-    #     fundamental_data_tensor = fundamental_data_tensor.reshape(len(daily_index), num_fundamental_features, len(tickers))
-    #     fundamental_data_tensor = fundamental_data_tensor.permute(1, 0, 2) # (features, time, tickers)
-    # else:
-    #     fundamental_data_tensor = torch.empty(0)
-    #     fundamental_col_names = []
+        fundamental_data_tensor = torch.tensor(aligned_fundamentals_df.values, dtype=torch.float32)
+        num_fundamental_features = fundamental_data_tensor.shape[1] // len(tickers)
+        fundamental_data_tensor = fundamental_data_tensor.reshape(len(daily_index), num_fundamental_features, len(tickers))
+        fundamental_data_tensor = fundamental_data_tensor.permute(1, 0, 2) # (features, time, tickers)
+    else:
+        fundamental_data_tensor = torch.empty(0)
+        fundamental_col_names = []
 
     unique_tickers = sorted(list(set(tickers)))
     ticker_to_id = {ticker: i for i, ticker in enumerate(unique_tickers)}
@@ -327,6 +329,19 @@ def download_numerical_financial_data(
     raw_data = raw_data[1:, :, :]
     full_data, columns, local_columns = calculate_features(raw_data, tickers)
     full_data = data_fix_ffill(full_data)
+
+    global_data, local_data = torch.split(full_data, [len(columns), len(local_columns)], dim=0)
+    # EPS and other fundamentals
+    if not aligned_fundamentals_df.empty:
+        global_data = torch.cat((global_data, fundamental_data_tensor), dim=0)
+        local_data = torch.cat((local_data, fundamental_data_tensor), dim=0)
+        columns.extend(fundamental_col_names)
+        local_columns.extend(fundamental_col_names)
+        full_data = torch.cat((global_data, local_data), dim=0)
+
+    columns.extend(local_columns)
+
+    # time series data
 
     data = torch.empty(
         full_data.shape[0],
@@ -618,8 +633,6 @@ def calculate_features(
     bb_data, bb_columns = feature_bollinger_bands_price_histogram(returns[0:1], prefix=local_returns_columns[0] + "_")
     full_data = torch.cat((full_data, bb_data), dim=0)
     local_columns.extend(bb_columns)
-
-    columns.extend(local_columns)
 
     return full_data, columns, local_columns
 

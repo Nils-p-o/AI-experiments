@@ -190,12 +190,14 @@ def proceed(args: argparse.Namespace):
 
     # Checkpointing
     checkpoint_callback = ModelCheckpoint(
-        dirpath="checkpoints/",
-        filename="{name}-{epoch}-{val_loss:.2f}",
-        save_top_k=5,
-        monitor="Losses_seen_unseen/val_loss_unseen",
+        # dirpath="checkpoints/",
+        filename="{name}-{epoch}-{Trading_strategy_metrics/val_Calmar Ratio:.2f}",
+        save_top_k=3,
+        monitor="Trading_strategy_metrics/val_Calmar Ratio",
+        mode="max",
+        # monitor="Losses_seen_unseen/val_loss_unseen",
         # monitor="Loss/val_loss",
-        mode="min",
+        # mode="min",
     )
 
     # Early Stopping
