@@ -304,22 +304,26 @@ class MoneyExperiment(pl.LightningModule):
                 time.time_ns() - time_preprocessing_start
             ) / 1e6
         time_model_start = time.time_ns()
+        outputs = self(inputs, tickers)
+        if self.args.use_global_seperator:
+            outputs = outputs[:, :, 1:, :]
         match self.args.prediction_type:
             case "gaussian":
-                outputs = self(inputs, tickers).view(
-                    batch_size, max(self.pred_indices), (seq_len+1), self.num_sequences, 10
+                outputs = outputs.view(
+                    batch_size, max(self.pred_indices), (seq_len+1-int(self.args.use_global_seperator)), self.num_sequences, 10
                 ).permute(0, 2, 4, 1, 3)  # (batch_size, seq_len, features (chlov), targets, num_sequences)
             case "regression":
-                outputs = self(inputs, tickers).view(
-                    batch_size, max(self.pred_indices), (seq_len+1), self.num_sequences, 5
+                outputs = outputs.view(
+                    batch_size, max(self.pred_indices), (seq_len+1-int(self.args.use_global_seperator)), self.num_sequences, 5
                 ).permute(0, 2, 4, 1, 3)  # (batch_size, seq_len, features (chlov), targets, num_sequences)
             case "classification":
-                outputs = self(inputs, tickers).view(
-                    batch_size, max(self.pred_indices), (seq_len+1), self.num_sequences, 5 * self.args.num_classes
+                outputs = outputs.view(
+                    batch_size, max(self.pred_indices), (seq_len+1-int(self.args.use_global_seperator)), self.num_sequences, 5 * self.args.num_classes
                 ).permute(0, 2, 4, 1, 3)  # (batch_size, seq_len, features (chlov) * classes, targets, num_sequences)
         if stage == "train":
             cummulative_times["model"] += (time.time_ns() - time_model_start) / 1e6
-        outputs = outputs[:, 1:, :, :, :]
+        if not (self.args.use_global_seperator or self.args.include_sep_in_loss):
+            outputs = outputs[:, 1:, :, :, :]
 
         # for debugging reasons
         if torch.isnan(outputs).any():
@@ -412,9 +416,11 @@ class MoneyExperiment(pl.LightningModule):
                 targets_classes[targets < -self.args.classification_threshold] = 0
                 targets_classes[targets > self.args.classification_threshold] = 2
                 targets_classes = targets_classes.long()
-                logits = raw_logits.view(
-                    batch_size, seq_len, 5, self.args.num_classes, max(self.pred_indices), self.num_sequences
-                ).permute(0,3,1,2,4,5)  # (batch_size, num_classes, seq_len, features, targets, num_sequences)
+                if self.args.include_sep_in_loss:
+                    view_shape = (batch_size, seq_len+1, 5, self.args.num_classes, max(self.pred_indices), self.num_sequences)
+                else:
+                    view_shape = (batch_size, seq_len, 5, self.args.num_classes, max(self.pred_indices), self.num_sequences)
+                logits = raw_logits.view(view_shape).permute(0,3,1,2,4,5)  # (batch_size, num_classes, seq_len, features, targets, num_sequences)
                 loss = 0
                 target_weights = [1.0 for _ in range(max(self.pred_indices))]
                 for i in range(max(self.pred_indices)):
@@ -427,13 +433,13 @@ class MoneyExperiment(pl.LightningModule):
                         target_weights[i]
                         * (seen_unseen_weights[0] * 2 / sum(seen_unseen_weights))
                         * self.loss_fn(seen_current_logits, seen_current_targets)
-                        * ((seq_len-1)/seq_len)
+                        * ((seq_len-1)/seq_len if not self.args.include_sep_in_loss else (seq_len/(seq_len+1)))
                     )
                     loss += (
                         target_weights[i]
                         * (seen_unseen_weights[1] * 2 / sum(seen_unseen_weights))
                         * self.loss_fn(unseen_current_logits, unseen_current_targets)
-                        * (1/seq_len)
+                        * (1/seq_len if not self.args.include_sep_in_loss else (1/(seq_len+1)))
                     )
                     seen_losses.append(
                         self.loss_fn(
@@ -966,7 +972,7 @@ class MoneyExperiment(pl.LightningModule):
                     on_step=True,
                     logger=True,
                 )
-        output_data = {'loss':loss}
+
         if stage == 'val':
             if self.args.prediction_type == 'regression':
                 final_preds = preds
@@ -1088,7 +1094,8 @@ class MoneyExperiment(pl.LightningModule):
         all_targets = torch.cat([x['targets'] for x in outputs], dim=0) # (batch/time, seq_len, features, targets, num_sequences)
         targets = all_targets[:, -1, 0, self.cli_args.pred_day-1, :] # time, num_sequences 
         if self.cli_args.average_predictions:
-            targets = targets[:-(preds.shape[1]-1)]
+            if max(self.pred_indices) != 1:
+                targets = targets[:-(preds.shape[1]-1)]
 
 
         # gets average time for each stage

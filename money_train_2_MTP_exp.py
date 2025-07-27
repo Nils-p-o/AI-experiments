@@ -87,7 +87,6 @@ def proceed(args: argparse.Namespace):
     t_mult = args.t_mult
     lr_mult = args.lr_mult
     # TODO add loss functions
-    # seed = args.seed
     pred_indices = (
         args.indices_to_predict
     )  # how many datapoints in the future to predict (workdays, not regular days, because market no work weekend)
@@ -102,7 +101,8 @@ def proceed(args: argparse.Namespace):
         case _:
             args.dtype = "fp32"
             trainer_precision = "32-true"
-
+    seed = torch.seed()
+    args.seed = seed
     # pl.seed_everything(seed)
     print(
         f"LLaMa seq_len:{seq_len} d_model:{d_model} d_ff:{d_ff} num_layers:{num_layers} nhead:{nhead} dropout:{dropout} lr:{lr} t_total:{t_total} warmup_steps:{warmup_steps} t_0:{t_0} t_mult:{t_mult} lr_mult:{lr_mult} batch_size:{batch_size}"
@@ -124,8 +124,7 @@ def proceed(args: argparse.Namespace):
             seq_len=seq_len,
             check_if_already_downloaded=False,  # TODO make this better/check which features are missing
             target_dates=pred_indices,
-            prediction_type=args.prediction_type,
-            classification_threshold=args.classification_threshold
+            config_args=args,
         )
         data_module = FinancialNumericalDataModule(
             train_file="time_series_data/train.pt",
@@ -222,13 +221,13 @@ def proceed(args: argparse.Namespace):
 
     trainer.fit(experiment, datamodule=data_module)
 
-    model_dir = f"models"
-    if not os.path.exists(model_dir):
-        os.makedirs(model_dir)
-    torch.save(
-        experiment.model, f"{model_dir}/{args.architecture}_{name.split('/')[-1]}.pth"
-    )  # TODO make this more specific
-    print("Model saved.")
+    # model_dir = f"models"
+    # if not os.path.exists(model_dir):
+    #     os.makedirs(model_dir)
+    # torch.save(
+    #     experiment.model, f"{model_dir}/{args.architecture}_{name.split('/')[-1]}.pth"
+    # )  # TODO make this more specific
+    # print("Model saved.")
     return
 
 
@@ -269,6 +268,7 @@ if __name__ == "__main__":
             args = json.load(f)
         for k, v in args.items():
             parser.set_defaults(**{k: v})
+            # parser.add_argument(f"--{k}", type=type(v), default=v)
     else:
         # Model architecture arguments (same as before)
         parser.add_argument(

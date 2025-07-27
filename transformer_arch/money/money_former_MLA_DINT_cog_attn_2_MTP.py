@@ -68,6 +68,7 @@ class Money_former_MLA_DINT_cog_attn_MTP(nn.Module):
         # seperator/attention sink token
         # self.seperator = nn.Embedding(1, self.d_model)
         self.seperator = nn.Parameter(torch.zeros(self.d_model, dtype=torch.float32).normal_(mean=0.0, std=1.0))
+        self.use_global_seperator = args.use_global_seperator
 
         self.MTP_blocks = nn.ModuleList(
             [MTP_money_former_block(args, depth + self.num_layers) for depth in range(max(args.indices_to_predict)-1)]
@@ -78,24 +79,41 @@ class Money_former_MLA_DINT_cog_attn_MTP(nn.Module):
     ):  # seperator (batch_size, targets, 1); tickers (batch_size, targets, num_sequences)
         batch_size, targets, seq_len, num_sequences, _ = x.size()
 
-        # seperator = self.seperator(seperator).unsqueeze(2)
-        # seperator = seperator.repeat(1, 1, 1, num_sequences, 1)
-        seperator = self.seperator.view(1, 1, 1, 1, self.d_model)
-        seperator = seperator.expand(batch_size, targets, 1, num_sequences, -1)
-
-        tickers = self.ticker_embedding(tickers).unsqueeze(2)
-        tickers = tickers.repeat(1, 1, seq_len + 1, 1, 1)
-
         x = self.encode_inputs(x)
 
-        x = torch.cat([seperator, x], dim=2)
-        x = (x + tickers) * self.scaling
+        if self.use_global_seperator:
+            x = x.permute(0, 1, 3, 2, 4).contiguous()
+            x = x.view(batch_size, targets, num_sequences * seq_len, self.d_model)
+            seperator = self.seperator.view(1, 1, 1, self.d_model)
+            seperator = seperator.expand(batch_size, targets, 1, -1)
+            x = torch.cat([seperator, x], dim=2)
+            
+            ticker_embs = self.ticker_embedding(tickers).unsqueeze(3)
+            ticker_embs = ticker_embs.expand(-1, -1, -1, seq_len, -1)
+            ticker_embs = ticker_embs.contiguous().view(batch_size, targets, num_sequences * seq_len, self.d_model)
+
+            sep_ticker_emb = torch.zeros(batch_size, targets, 1, self.d_model, dtype=torch.float32, device=x.device)
+            ticker_embs = torch.cat([sep_ticker_emb, ticker_embs], dim=2)
+
+            x = (x + ticker_embs) * self.scaling
+        else:
+            seperator = self.seperator.view(1, 1, 1, 1, self.d_model)
+            seperator = seperator.expand(batch_size, targets, 1, num_sequences, -1)
+
+            tickers = self.ticker_embedding(tickers).unsqueeze(2)
+            tickers = tickers.repeat(1, 1, seq_len + 1, 1, 1)
+
+
+            x = torch.cat([seperator, x], dim=2)
+            x = (x + tickers) * self.scaling
+
+            x = x.permute(0, 1, 3, 2, 4).contiguous() # fix to prevent data mixing
+
+            x = x.view(
+                batch_size, targets, -1, self.d_model
+            )  # (batch_size, targets, (seq_len+1)*num_sequences, d_model)
 
         x = self.dropout(x)
-
-        x = x.view(
-            batch_size, targets, -1, self.d_model
-        )  # (batch_size, (seq_len+1)*num_sequences, d_model)
 
         x_end = []
         x_main = x[:, 0, :, :]
@@ -138,16 +156,19 @@ class Money_former_block(nn.Module):
         self.norm2 = nn.RMSNorm(args.d_model)
         self.ff = SwiGLU_feed_forward(args)
         self.num_sequences = len(args.tickers)
-        self.mask = get_causal_mask(args.seq_len+1)
-        self.mask = self.mask.repeat(1, 1, self.num_sequences, self.num_sequences)
+        if args.use_global_seperator:
+            temp_mask = get_causal_mask(args.seq_len)
+            temp_mask = temp_mask.repeat(1, 1, self.num_sequences, self.num_sequences)# TODO make first column zero, not one, 1 = masked
+            self.mask = torch.zeros(1, 1, args.seq_len*self.num_sequences+1, args.seq_len*self.num_sequences+1)
+            self.mask[:,:,:,0] = 1.0
+            self.mask[:,:,1:,1:] = temp_mask
+
+        else:
+            self.mask = get_causal_mask(args.seq_len+1)
+            self.mask = self.mask.repeat(1, 1, self.num_sequences, self.num_sequences)
 
     def forward(self, x, freqs_cis):
         batch_size, seq_len, _ = x.size()
-        # seq_len = seq_len // self.num_sequences
-        # mask = get_causal_mask(seq_len).to(x.device)
-        # mask = mask.repeat(
-        #     1, 1, self.num_sequences, self.num_sequences
-        # ).expand(batch_size, 2 * self.nhead, -1, -1)
         mask = self.mask.expand(batch_size, 2 * self.nhead, -1, -1)
         x = x + self.mha(
             self.norm1(x), mask, freqs_cis
@@ -228,10 +249,11 @@ class custom_MHA(nn.Module): # a mix of MLA and DINT
         # )
 
         self.num_sequences = len(args.tickers)
+        self.use_global_seperator = args.use_global_seperator
 
     def forward(self, x, mask=None, freqs_cis=None):
         batch_size, seq_len, _ = x.shape
-        seq_per_stock = seq_len // self.num_sequences
+
 
         c_kv = self.kv_down(x)
         c_kv, k_rope = c_kv.split([self.kv_compression_dim, self.rope_dim], dim=-1)
@@ -259,22 +281,40 @@ class custom_MHA(nn.Module): # a mix of MLA and DINT
 
         q_rope = q_rope.reshape(batch_size, seq_len, self.nhead*2, self.rope_dim//2)
         k_rope = k_rope.reshape(batch_size, seq_len, self.nhead*2, self.rope_dim//2)
-        q_rope = q_rope.view(batch_size, self.num_sequences, seq_per_stock, self.nhead*2, self.rope_dim//2)
-        k_rope = k_rope.view(batch_size, self.num_sequences, seq_per_stock, self.nhead*2, self.rope_dim//2)
 
         # # --- RoPE (decoupled) ---
-        # #q/k_rope (batch_size, num_sequences, seq_per_stock, nhead*2, rope_dim//2)
-        q_sep, q_to_rotate = q_rope.split([1, seq_per_stock - 1], dim=2)
-        k_sep, k_to_rotate = k_rope.split([1, seq_per_stock - 1], dim=2)
+        if self.use_global_seperator:
+            seq_per_stock = (seq_len - 1) // self.num_sequences
 
-        q_to_rotate = apply_rotary_emb_multiple_sequences(q_to_rotate, freqs_cis=freqs_cis)
-        k_to_rotate = apply_rotary_emb_multiple_sequences(k_to_rotate, freqs_cis=freqs_cis)
+            q_sep, q_to_rotate = q_rope.split([1, seq_len-1], dim=1)
+            k_sep, k_to_rotate = k_rope.split([1, seq_len-1], dim=1)
 
-        q_rope = torch.cat([q_sep, q_to_rotate], dim=2)
-        k_rope = torch.cat([k_sep, k_to_rotate], dim=2)
+            q_to_rotate = q_to_rotate.view(batch_size, self.num_sequences, seq_per_stock, self.nhead*2, self.rope_dim//2)
+            k_to_rotate = k_to_rotate.view(batch_size, self.num_sequences, seq_per_stock, self.nhead*2, self.rope_dim//2)
 
-        q_rope = q_rope.view(batch_size, seq_len, self.nhead*2, self.rope_dim//2)
-        k_rope = k_rope.view(batch_size, seq_len, self.nhead*2, self.rope_dim//2)
+            q_to_rotate = apply_rotary_emb_multiple_sequences(q_to_rotate, freqs_cis=freqs_cis)
+            k_to_rotate = apply_rotary_emb_multiple_sequences(k_to_rotate, freqs_cis=freqs_cis)
+
+            q_rope = torch.cat([q_sep, q_to_rotate.reshape(batch_size, seq_len-1, self.nhead*2, self.rope_dim//2)], dim=1)
+            k_rope = torch.cat([k_sep, k_to_rotate.reshape(batch_size, seq_len-1, self.nhead*2, self.rope_dim//2)], dim=1)
+
+        else:
+            seq_per_stock = seq_len // self.num_sequences
+
+            q_rope = q_rope.view(batch_size, self.num_sequences, seq_per_stock, self.nhead*2, self.rope_dim//2)
+            k_rope = k_rope.view(batch_size, self.num_sequences, seq_per_stock, self.nhead*2, self.rope_dim//2)
+            # #q/k_rope (batch_size, num_sequences, seq_per_stock, nhead*2, rope_dim//2)
+            q_sep, q_to_rotate = q_rope.split([1, seq_per_stock - 1], dim=2)
+            k_sep, k_to_rotate = k_rope.split([1, seq_per_stock - 1], dim=2)
+
+            q_to_rotate = apply_rotary_emb_multiple_sequences(q_to_rotate, freqs_cis=freqs_cis)
+            k_to_rotate = apply_rotary_emb_multiple_sequences(k_to_rotate, freqs_cis=freqs_cis)
+
+            q_rope = torch.cat([q_sep, q_to_rotate], dim=2)
+            k_rope = torch.cat([k_sep, k_to_rotate], dim=2)
+
+            q_rope = q_rope.view(batch_size, seq_len, self.nhead*2, self.rope_dim//2)
+            k_rope = k_rope.view(batch_size, seq_len, self.nhead*2, self.rope_dim//2)
 
         q = torch.cat([q, q_rope], dim=-1).transpose(1, 2)  # (batch_size, 2*nhead, seq_len, (head_dim+rope_dim)//2)
         k = torch.cat([k, k_rope], dim=-1).transpose(1, 2)  # (batch_size, 2*nhead, seq_len, (head_dim+rope_dim)//2)

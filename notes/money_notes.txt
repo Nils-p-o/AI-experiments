@@ -4,15 +4,31 @@ Money former
 V2:
 2 signifies using multiple time series sequences (the vision), might be merged into normal file, if performs better
 
-DINT is much better than just MHA, likely because of the denoising properties, potentially confirming my suspicions about the problem
-
-adding s&p 500 helps AAPL prediction, but more tech stocks seem to hurt. (likely need more macroeconomic indicators/indexes)
-still missing some flavours of data in input features (VIX, for example)
-overnight trading to fill gaps in info? (or readadd times)
+overnight trading to fill gaps in info?
 
 threshold plays a big part in accuracy
 
 for iteration speed purposes currently running models with ~4 attn heads, even though more seems to be better in general (2-3x faster than 20 or 30 heads)
+"AAPL","^GSPC", "MSFT", "INTC", "NVDA", "AMZN"
+, "^DJI", "^NDX", "ORCL", "CSCO", "IBM", "TXN", "KO", "PG", "PEP", "WMT", "JNJ", "PFE", "MRK", "JPM", "BA", "CAT", "MMM", "RTX", "XOM", "CVX"
+
+current optimum:
+d_model = 128
+num_layers = 6
+nhead = 8
+head_dim = 32
+rope_dim = 8
+d_ff = 128
+kv_com_dim = 48
+q_com_dim = 64
+seq_len = 8
+
+6 tickers
+
+info baseline: (3bee6)
+all global znorm (vpt_chlo, ppo_chlov, clv, vix_chlo, copper_chlov, emas of chlov returns, vol of c returns)
+tickers: ["AAPL","^GSPC", "MSFT", "INTC", "NVDA", "AMZN"]
+
 
 V1:
 (from training on one stock and 3 points in time for prediction)
@@ -38,9 +54,10 @@ lower head dim too, but better to reduce both at once
 
 
 TODOs
-reorganise lightning logs (way too much of a mess rn)
-Bayesian optim to actually properly analyse test results
-add more data to time_series_data
+
+use more ochlv for trading strategy
+nll for confidence measure
+financial data inputs
 
 
 # 1. Major Equity Market Indexes (Broad Market Sentiment & Benchmarks):

@@ -11,6 +11,8 @@ import pandas as pd
 import time
 
 import requests
+import argparse
+import matplotlib.pyplot as plt
 
 import warnings
 
@@ -259,8 +261,7 @@ def download_numerical_financial_data(
     val_split_ratio: float = 0.21,  # to keep the same val dataset
     test_split_ratio: float = 0.0,  # dont need it for now
     check_if_already_downloaded: bool = True,
-    prediction_type: str = "classification",  # any of the types in trainer
-    classification_threshold: float = 0.005,  # used for classification
+    config_args: argparse.Namespace = None,
 ):
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
@@ -294,26 +295,26 @@ def download_numerical_financial_data(
         print("No data downloaded.")
         return
 
-    daily_index = raw_data.index
-    daily_close_prices = raw_data['Close']
+    # daily_index = raw_data.index
+    # daily_close_prices = raw_data['Close']
 
-    aligned_fundamentals_df, fundamental_col_names = fetch_and_align_fundamental_data(
-        tickers, daily_index, daily_close_prices
-    )
+    # aligned_fundamentals_df, fundamental_col_names = fetch_and_align_fundamental_data(
+    #     tickers, daily_index, daily_close_prices
+    # )
 
-    # Convert the multi-level column dataframe to a tensor
-    # Shape: (time, features, tickers) -> transpose to (features, time, tickers)
-    if not aligned_fundamentals_df.empty:
-        # Filter to only include columns we successfully generated
-        aligned_fundamentals_df = aligned_fundamentals_df.reindex(columns=fundamental_col_names, level=0)
+    # # Convert the multi-level column dataframe to a tensor
+    # # Shape: (time, features, tickers) -> transpose to (features, time, tickers)
+    # if not aligned_fundamentals_df.empty:
+    #     # Filter to only include columns we successfully generated
+    #     aligned_fundamentals_df = aligned_fundamentals_df.reindex(columns=fundamental_col_names, level=0)
 
-        fundamental_data_tensor = torch.tensor(aligned_fundamentals_df.values, dtype=torch.float32)
-        num_fundamental_features = fundamental_data_tensor.shape[1] // len(tickers)
-        fundamental_data_tensor = fundamental_data_tensor.reshape(len(daily_index), num_fundamental_features, len(tickers))
-        fundamental_data_tensor = fundamental_data_tensor.permute(1, 0, 2) # (features, time, tickers)
-    else:
-        fundamental_data_tensor = torch.empty(0)
-        fundamental_col_names = []
+    #     fundamental_data_tensor = torch.tensor(aligned_fundamentals_df.values, dtype=torch.float32)
+    #     num_fundamental_features = fundamental_data_tensor.shape[1] // len(tickers)
+    #     fundamental_data_tensor = fundamental_data_tensor.reshape(len(daily_index), num_fundamental_features, len(tickers))
+    #     fundamental_data_tensor = fundamental_data_tensor.permute(1, 0, 2) # (features, time, tickers)
+    # else:
+    #     fundamental_data_tensor = torch.empty(0)
+    #     fundamental_col_names = []
 
     unique_tickers = sorted(list(set(tickers)))
     ticker_to_id = {ticker: i for i, ticker in enumerate(unique_tickers)}
@@ -327,21 +328,20 @@ def download_numerical_financial_data(
     raw_data = raw_data.transpose(0, 1)  # (Features, Time series, tickers)
 
     raw_data = raw_data[1:, :, :]
-    full_data, columns, local_columns = calculate_features(raw_data, tickers)
-    full_data = data_fix_ffill(full_data)
+    full_data, columns, local_columns, time_columns = calculate_features(raw_data, tickers, indexes)
+    full_data[:len(columns)+len(local_columns)] = data_fix_ffill(full_data[:len(columns)+len(local_columns)])
 
-    global_data, local_data = torch.split(full_data, [len(columns), len(local_columns)], dim=0)
-    # EPS and other fundamentals
-    if not aligned_fundamentals_df.empty:
-        global_data = torch.cat((global_data, fundamental_data_tensor), dim=0)
-        local_data = torch.cat((local_data, fundamental_data_tensor), dim=0)
-        columns.extend(fundamental_col_names)
-        local_columns.extend(fundamental_col_names)
-        full_data = torch.cat((global_data, local_data), dim=0)
+    # global_data, local_data = torch.split(full_data, [len(columns), len(local_columns)], dim=0)
+    # # EPS and other fundamentals
+    # if not aligned_fundamentals_df.empty:
+    #     global_data = torch.cat((global_data, fundamental_data_tensor), dim=0)
+    #     local_data = torch.cat((local_data, fundamental_data_tensor), dim=0)
+    #     columns.extend(fundamental_col_names)
+    #     local_columns.extend(fundamental_col_names)
+    #     full_data = torch.cat((global_data, local_data), dim=0)
 
     columns.extend(local_columns)
-
-    # time series data
+    columns.extend(time_columns)
 
     data = torch.empty(
         full_data.shape[0],
@@ -355,14 +355,21 @@ def download_numerical_financial_data(
     data = data[:, :, 20:, :]  # (features, target_inputs, time series, tickers)
 
     # time data
-    time_data, time_columns = feature_time_data(indexes, target_dates, tickers)
-    data = torch.cat((data, time_data), dim=0)
-    columns.extend(time_columns)
+    # time_data, time_columns = feature_time_data(indexes, target_dates, tickers)
+    # data = torch.cat((data, time_data), dim=0)
+    # columns.extend(time_columns)
 
-    MTP_targets = torch.empty(
-        (5, max(target_dates), data.shape[2] + 20, len(tickers)), dtype=torch.float32
-    )  # (chlov, target_dates, time series, tickers)
+    if config_args.include_sep_in_loss:
+        MTP_targets = torch.empty(
+            (5, max(target_dates), data.shape[2] + 21, len(tickers)), dtype=torch.float32
+        )
+    else:
+        MTP_targets = torch.empty(
+            (5, max(target_dates), data.shape[2] + 20, len(tickers)), dtype=torch.float32
+        )  # (chlov, target_dates, time series, tickers)
     MTP_full = (raw_data[:, 1:, :] - raw_data[:, :-1, :]) / raw_data[:, :-1, :]
+    if config_args.include_sep_in_loss:
+        MTP_full = torch.cat((torch.zeros_like(MTP_full[:, :1, :]), MTP_full), dim=1)
     MTP_full = data_fix_ffill(MTP_full)
     # if prediction_type == "classification":
     #     MTP_targets_classes = torch.full_like(MTP_full, 1)
@@ -417,16 +424,22 @@ def download_numerical_financial_data(
         data[:-num_of_non_global_norm_feats] - means
     ) / (stds + 1e-8)
 
-    if prediction_type != "classification":
+    if config_args.prediction_type != "classification":
         MTP_targets = (MTP_targets - means[:5]) / stds[:5]
 
     # new reshape (into seq_len chunks)
     data = data.unfold(
         2, seq_len, 1
     ).contiguous()  # (features, target_inputs, time series, tickers, seq_len)
-    MTP_targets = MTP_targets.unfold(
-        2, seq_len, 1
-    ).contiguous()  # (chlov, target_inputs, time series, tickers, seq_len)
+
+    if config_args.include_sep_in_loss:
+        MTP_targets = MTP_targets.unfold(
+            2, seq_len + 1, 1
+        ).contiguous()
+    else:
+        MTP_targets = MTP_targets.unfold(
+            2, seq_len, 1
+        ).contiguous()  # (chlov, target_inputs, time series, tickers, seq_len)
 
     data = data.permute(0, 1, 2, 4, 3)
     MTP_targets = MTP_targets.permute(0, 1, 2, 4, 3)
@@ -453,6 +466,32 @@ def download_numerical_financial_data(
         [train_data_length, val_data_length - seq_len + 1, test_data_length],
         dim=2,
     )
+    if config_args.n_noisy_copies > 0:
+        noisy_copies = generate_noisy_copies(raw_data, tickers, target_dates, indexes, train_data_length, 20, config_args.n_noisy_copies, config_args.noise_factor)
+        processed_copies = []
+        for copy in noisy_copies:
+            copy[:-num_of_non_global_norm_feats] = (copy[:-num_of_non_global_norm_feats] - means) / (stds + 1e-8)
+
+            copy = copy.unfold(2, seq_len, 1).contiguous()
+            copy = copy.permute(0, 1, 2, 4, 3)
+            copy = copy[:,:,:train_data_length]
+            if num_of_non_global_norm_feats != len(time_columns):
+                noisy_local_means = copy[-num_of_non_global_norm_feats : -len(time_columns)].mean(
+                    dim=3, keepdim=True
+                )
+                noisy_local_stds = copy[-num_of_non_global_norm_feats : -len(time_columns)].std(
+                    dim=3, keepdim=True
+                )
+                copy[-num_of_non_global_norm_feats : -len(time_columns)] = (
+                    copy[-num_of_non_global_norm_feats : -len(time_columns)] - noisy_local_means
+                ) / (noisy_local_stds + 1e-8)
+
+            processed_copies.append(copy)
+
+        train_MTP_targets = train_MTP_targets.repeat(1, 1, config_args.n_noisy_copies+1, 1, 1)
+        noisy_tensor = torch.cat(processed_copies, dim=2)
+        train_data = torch.cat((train_data, noisy_tensor), dim=2)
+
 
     save_indexes_to_csv(train_indexes, os.path.join(output_dir, "train.csv"))
     save_indexes_to_csv(val_indexes, os.path.join(output_dir, "val.csv"))
@@ -489,8 +528,8 @@ def download_numerical_financial_data(
 
 
 def calculate_features(
-    data: torch.Tensor, tickers: List[str]
-) -> Tuple[torch.Tensor, List[str], List[str]]:
+    data: torch.Tensor, tickers: List[str], indexes
+) -> Tuple[torch.Tensor, List[str], List[str], List[str]]:
     raw_data = data.clone()
 
     returns_columns = [
@@ -634,7 +673,10 @@ def calculate_features(
     full_data = torch.cat((full_data, bb_data), dim=0)
     local_columns.extend(bb_columns)
 
-    return full_data, columns, local_columns
+    time_data, time_columns = feature_time_data(indexes, tickers)
+    full_data = torch.cat((full_data, time_data), dim=0)
+
+    return full_data, columns, local_columns, time_columns
 
 
 def data_fix_ffill(data: torch.Tensor) -> torch.Tensor:
@@ -685,6 +727,54 @@ def data_fix_ffill(data: torch.Tensor) -> torch.Tensor:
 
     # return torch.gather(bfilled_data, 1, filled_indices)
 
+
+def generate_noisy_copies(raw_prices: torch.Tensor, tickers: List[str], target_dates: List[int], indexes, data_length: int, cutoff: int, n_copies: int, noise_factor: float) -> List[torch.Tensor]:
+    # relevant_data = raw_prices[:, :data_length + cutoff, :]
+    # relevant_indexes = indexes[:data_length + cutoff]
+
+    relevant_data = raw_prices
+    relevant_indexes = indexes
+
+    relevant_data_returns = (relevant_data[:, 1:] - relevant_data[:, :-1]) / relevant_data[:, :-1]
+    relevant_data_returns = torch.cat([torch.zeros_like(relevant_data_returns[:, :1]), relevant_data_returns], dim=1)
+
+    relevant_vol = []
+    for i in range(relevant_data_returns.shape[0]):
+        temp_vol = []
+        for j in range(relevant_data_returns.shape[2]):
+            temp_vol.append(calculate_ema_vol_pandas(relevant_data_returns[i, :, j], lookback=22))
+        relevant_vol.append(torch.stack(temp_vol, dim=-1))
+    relevant_vol = torch.stack(relevant_vol, dim=0)
+
+    relevant_vol = torch.cat([relevant_vol[:,:1],relevant_vol[:,:-1]], dim=1)
+
+    noisy_copies = []
+    for i in range(n_copies):
+        noisy_relevant_data = relevant_data * (1 + torch.randn_like(relevant_data) * relevant_vol * noise_factor)
+        full_data, columns, local_columns, time_columns = calculate_features(noisy_relevant_data, tickers, relevant_indexes)
+        full_data[:len(columns)+len(local_columns)] = data_fix_ffill(full_data[:len(columns)+len(local_columns)])
+
+        data = torch.empty(
+            full_data.shape[0],
+            max(target_dates),
+            full_data.shape[1] - max(target_dates),
+            full_data.shape[2],
+            dtype=torch.float32,
+        )
+        for i in range(max(target_dates)):
+            data[:, i, :, :] = full_data[:, i : -(max(target_dates) - i), :]
+        data = data[:, :, cutoff:, :]  # (features, target_inputs, time series, tickers)
+
+        noisy_copies.append(data.clone())
+    
+    return noisy_copies
+
+def draw_graph(original_data, noisy_data):
+    plt.plot(original_data, label='Original')
+    plt.plot(noisy_data, label='Noisy')
+    plt.legend()
+    plt.show()
+    return
 
 if __name__ == "__main__":
     tickers = ["AAPL", "^GSPC"]  # Reduced for faster testing
@@ -929,7 +1019,7 @@ def feature_macd_histogram(price: torch.Tensor, prefix: str = "close_") -> torch
 
 
 def feature_time_data(
-    indexes: pd.DatetimeIndex, target_dates: List[int], tickers: List[str]
+    indexes: pd.DatetimeIndex, tickers: List[str]
 ) -> torch.Tensor:
     time_columns = []
     day_of_week = torch.tensor(indexes.dayofweek, dtype=torch.float32)
@@ -990,14 +1080,17 @@ def feature_time_data(
     # time_data = time_data[:, : -max(target_dates)]
     # time_data = time_data[:, 20:].unsqueeze(-1)
     # time_data = time_data.tile(1, 1, len(tickers))
-    time_data_target = torch.empty(
-        (time_data.shape[0], max(target_dates), time_data.shape[1] - max(target_dates)),
-        dtype=torch.float32,
-    )
-    for i in range(max(target_dates)):
-        time_data_target[:, i, :] = time_data[:, i : -(max(target_dates) - i)]
-    time_data_target = time_data_target.unsqueeze(-1)
-    time_data = time_data_target[:, :, 20:, :].expand(-1, -1, -1, len(tickers))
+
+    # time_data_target = torch.empty(
+    #     (time_data.shape[0], max(target_dates), time_data.shape[1] - max(target_dates)),
+    #     dtype=torch.float32,
+    # )
+    # for i in range(max(target_dates)):
+    #     time_data_target[:, i, :] = time_data[:, i : -(max(target_dates) - i)]
+    # time_data_target = time_data_target.unsqueeze(-1)
+    # time_data = time_data_target[:, :, 20:, :].expand(-1, -1, -1, len(tickers))
+    time_data = time_data.unsqueeze(-1)
+    time_data = time_data.expand(-1, -1, len(tickers))
     return time_data, time_columns
 
 
@@ -1116,6 +1209,16 @@ def calculate_ema_pandas(
     ema = series_pd.ewm(span=lookback, adjust=False, min_periods=1).mean()
     return torch.from_numpy(ema.values).to(original_dtype)
 
+def calculate_ema_vol_pandas(
+    returns: torch.Tensor, lookback: int = 22
+) -> torch.Tensor: # to calculate ema of volatility
+    original_dtype = returns.dtype
+
+    series_pd = pd.Series(returns.cpu().numpy())
+    emv = series_pd.ewm(span=lookback, adjust=False, min_periods=1).std()
+    emv.ffill(inplace=True)
+    emv.bfill(inplace=True) # idk if this is valid for feature, but ir wrks for noise
+    return torch.from_numpy(emv.values).to(original_dtype)
 
 def calculate_mfi(
     close: torch.Tensor,

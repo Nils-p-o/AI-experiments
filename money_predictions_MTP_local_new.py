@@ -193,8 +193,8 @@ def download_and_process_inference_data(args, start_date, end_date, cli_args):
 
     # --- Start of Feature Engineering (Replicated from Dataloader) ---
     raw_data = raw_data_tensor[1:, :, :] # Remove 'Adj Close'
-    full_data, columns, local_columns = calculate_features(raw_data, tickers)
-    full_data = data_fix_ffill(full_data)
+    full_data, columns, local_columns, time_columns = calculate_features(raw_data, tickers, indexes)
+    full_data[:len(columns)+len(local_columns)] = data_fix_ffill(full_data[:len(columns)+len(local_columns)])
 
     # --- MTP Input Stacking and Time Features ---
     data = torch.empty(full_data.shape[0], max(target_dates), full_data.shape[1] - max(target_dates), full_data.shape[2], dtype=torch.float32)
@@ -205,8 +205,8 @@ def download_and_process_inference_data(args, start_date, end_date, cli_args):
     min_lookback_to_drop = 20
     data = data[:, :, min_lookback_to_drop:, :]
 
-    time_data, time_columns = feature_time_data(indexes, target_dates, tickers)
-    data = torch.cat((data, time_data), dim=0)
+    # time_data, time_columns = feature_time_data(indexes, target_dates, tickers)
+    # data = torch.cat((data, time_data), dim=0)
     columns.extend(local_columns)
     columns.extend(time_columns)
     
