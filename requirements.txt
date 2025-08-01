@@ -4,3 +4,6 @@ pytorch-lightning==2.5.1.post0
 torch==2.7.0
 scipy
 numpy
+optuna
+mup
+git+https://github.com/KellerJordan/Muon
