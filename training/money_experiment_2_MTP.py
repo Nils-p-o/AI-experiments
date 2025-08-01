@@ -12,11 +12,18 @@ from transformer_arch.money.money_former_nGPT_2 import (
     normalize_weights_and_enforce_positive_eigenvalues,
 )
 from money_predictions_MTP_local_new import (
-    download_and_process_inference_data,
-    get_mtp_predictions_for_backtest,
     calculate_metrics,
     trading_metrics
 )
+
+from muon import MuonWithAuxAdam
+from muon import Muon
+from torch.optim import Optimizer
+from functools import partial
+from collections import ChainMap
+import torch.distributed as dist
+
+from transformers import get_linear_schedule_with_warmup, get_constant_schedule_with_warmup
 
 # for debug / timimg for speedups
 import time
@@ -223,6 +230,7 @@ def get_spearmanr_correlations_pytorch( # TODO adapt for MTP
     return correlations
 
 
+
 class MoneyExperiment(pl.LightningModule):
     def __init__(
         self,
@@ -244,13 +252,16 @@ class MoneyExperiment(pl.LightningModule):
         self.t_mult = t_mult
         self.lr_mult = lr_mult
         self.batch_size = batch_size
+
+        class_weights = [1.0, 1.0, 1.0]
+
         match args.prediction_type:
             case "gaussian":
                 self.loss_fn = nn.GaussianNLLLoss(reduction="mean")
             case "regression":
                 self.loss_fn = nn.L1Loss()
             case "classification":
-                self.loss_fn = nn.CrossEntropyLoss()
+                self.loss_fn = nn.CrossEntropyLoss(weight=torch.tensor(class_weights), reduction="none")
         self.MAE = nn.L1Loss()
         self.threshold = 0.003
         self.pred_indices = args.indices_to_predict
@@ -269,10 +280,19 @@ class MoneyExperiment(pl.LightningModule):
         if self.cli_args.average_predictions:
             self.cli_args.pred_day = max(self.pred_indices)
         self.validation_step_outputs = []
-        # self.backtest_input_data, self.backtest_target_data = download_and_process_inference_data(
-        #     args, self.cli_args.start_date_data, self.cli_args.end_date_data, self.cli_args)
-        # self.backtest_input_data = self.backtest_input_data[:, :, -self.cli_args.days_to_check:, :, :]
-        # self.backtest_target_data = self.backtest_target_data[0, -self.cli_args.days_to_check:, :]
+
+
+        feature_weights = [10, 1, 1, 1, 1]
+        ticker_weights = [1, 1, 1, 1, 1, 1]
+        seen_unseen_weights = [1 for _ in range(args.seq_len)]
+
+        feature_weights = torch.tensor([w*len(feature_weights)/sum(feature_weights) for w in feature_weights])
+        ticker_weights = torch.tensor([w*len(ticker_weights)/sum(ticker_weights) for w in ticker_weights])
+        seen_unseen_weights = torch.tensor([w*len(seen_unseen_weights)/sum(seen_unseen_weights) for w in seen_unseen_weights])
+
+        loss_weights = feature_weights.unsqueeze(-1) * ticker_weights.unsqueeze(0)
+        loss_weights = seen_unseen_weights.unsqueeze(-1).unsqueeze(-1) * loss_weights.unsqueeze(0)
+        self.loss_weights = loss_weights.unsqueeze(0).unsqueeze(3)
 
 
     def forward(self, *args, **kwargs):
@@ -291,9 +311,6 @@ class MoneyExperiment(pl.LightningModule):
         targets = labels  # (batch_size, features, targets, seq_len, num_sequences)
         targets = targets.permute(0, 3, 1, 2, 4)  # (batch_size, seq_len, features, targets, num_sequences)
 
-        # seperator = torch.zeros(
-        #     (batch_size, len(self.pred_indices), 1), dtype=torch.int, device=inputs.device
-        # )  # (batch_size, targets, 1)
         tickers = torch.arange(self.num_sequences, device=inputs.device)
         tickers = tickers.unsqueeze(0).unsqueeze(0).repeat(
             batch_size, len(self.pred_indices), 1
@@ -421,40 +438,14 @@ class MoneyExperiment(pl.LightningModule):
                 else:
                     view_shape = (batch_size, seq_len, 5, self.args.num_classes, max(self.pred_indices), self.num_sequences)
                 logits = raw_logits.view(view_shape).permute(0,3,1,2,4,5)  # (batch_size, num_classes, seq_len, features, targets, num_sequences)
-                loss = 0
-                target_weights = [1.0 for _ in range(max(self.pred_indices))]
-                for i in range(max(self.pred_indices)):
-                    seen_unseen_weights = [1.0, 1.0]
-                    seen_current_logits = logits[:, :, :-1, :, i, :]
-                    unseen_current_logits = logits[:, :, -1:, :, i, :]
-                    seen_current_targets = targets_classes[:, :-1, :, i, :]
-                    unseen_current_targets = targets_classes[:, -1:, :, i, :]
-                    loss += (
-                        target_weights[i]
-                        * (seen_unseen_weights[0] * 2 / sum(seen_unseen_weights))
-                        * self.loss_fn(seen_current_logits, seen_current_targets)
-                        * ((seq_len-1)/seq_len if not self.args.include_sep_in_loss else (seq_len/(seq_len+1)))
-                    )
-                    loss += (
-                        target_weights[i]
-                        * (seen_unseen_weights[1] * 2 / sum(seen_unseen_weights))
-                        * self.loss_fn(unseen_current_logits, unseen_current_targets)
-                        * (1/seq_len if not self.args.include_sep_in_loss else (1/(seq_len+1)))
-                    )
-                    seen_losses.append(
-                        self.loss_fn(
-                            seen_current_logits, seen_current_targets
-                        )
-                    )
-                    unseen_losses.append(
-                        self.loss_fn(
-                            unseen_current_logits, unseen_current_targets
-                        )
-                    )
-                loss = loss / sum(target_weights)
+
+                loss_tensor = self.loss_fn(logits, targets_classes)
+                loss = (loss_tensor * self.loss_weights).mean()
+
+                seen_losses = loss_tensor[:, :-1, :, :, :].mean(dim=(0, 1, 2, 4))
+                unseen_losses = loss_tensor[:, -1:, :, :, :].mean(dim=(0, 1, 2, 4))
 
                 
-
         if stage == "train":
             cummulative_times["loss"] += (time.time_ns() - time_loss_calc_start) / 1e6
 
@@ -510,15 +501,15 @@ class MoneyExperiment(pl.LightningModule):
 
             self.log(
                 f"Losses_seen_unseen/{stage}_loss_seen",
-                torch.mean(torch.stack(seen_losses)),
+                torch.mean(seen_losses),
                 **current_log_opts,
             )
             self.log(
                 f"Losses_seen_unseen/{stage}_loss_unseen",
-                torch.mean(torch.stack(unseen_losses)),
+                torch.mean(unseen_losses),
                 **current_log_opts,
             )
-            for i in range(len(self.pred_indices)): # always MAE to compare
+            for i in range(len(self.pred_indices)):
                 self.log(
                     f"Losses_seen_unseen/{stage}_loss_seen_{self.pred_indices[i]}",
                     seen_losses[i],
@@ -559,19 +550,19 @@ class MoneyExperiment(pl.LightningModule):
                     for i in range(len(self.pred_indices)):
                         seen_current_preds = preds[:, :-1, :, i, :]
                         seen_current_targets = targets[:, :-1, :, i, :]
-                        seen_MAE = self.MAE(seen_current_preds, seen_current_targets)
+                        # seen_MAE = self.MAE(seen_current_preds, seen_current_targets)
 
                         unseen_current_preds = preds[:, -1:, :, i, :]
                         unseen_current_targets = targets[:, -1:, :, i, :]
-                        unseen_MAE = self.MAE(unseen_current_preds, unseen_current_targets)
+                        # unseen_MAE = self.MAE(unseen_current_preds, unseen_current_targets)
 
-                        relative_MAE = unseen_MAE / (seen_MAE + 1e-6)
+                        # relative_MAE = unseen_MAE / (seen_MAE + 1e-6)
 
-                        self.log(
-                            f"Split_Error/{stage}_relative_MAE_{self.pred_indices[i]}",
-                            relative_MAE,
-                            **current_log_opts,
-                        )
+                        # self.log(
+                        #     f"Split_Error/{stage}_relative_MAE_{self.pred_indices[i]}",
+                        #     relative_MAE,
+                        #     **current_log_opts,
+                        # )
 
                         # TODO maybe add split directional accuracy
                         seen_target_movements = torch.where(
@@ -753,6 +744,9 @@ class MoneyExperiment(pl.LightningModule):
                         **current_log_opts,
                     )
             else: # acc metrics for classification
+                class_names = [
+                    "down", "flat", "up"
+                ]
                 if stage == "val": # expected accuracy
                     for i in range(len(self.pred_indices)):
                         blind_guess_acc = []
@@ -930,36 +924,24 @@ class MoneyExperiment(pl.LightningModule):
                 unseen_probs_close = torch.softmax(
                     unseen_logits_close, dim=1
                 ).max(dim=1).values
-                uccc_up = unseen_class_close == 2
-                unseen_confidence_close_up = (unseen_probs_close * (uccc_up).float()).sum() / (
-                    (uccc_up).float().sum() + 1e-6
-                ) if uccc_up.sum() > 0 else torch.tensor(0.0, device=unseen_probs_close.device)
-                uccc_down = unseen_class_close == 0
-                unseen_confidence_close_down = (unseen_probs_close * (uccc_down).float()).sum() / (
-                    (uccc_down).float().sum() + 1e-6
-                ) if uccc_down.sum() > 0 else torch.tensor(0.0, device=unseen_probs_close.device)
-                uccc_flat = unseen_class_close == 1
-                unseen_confidence_close_flat = (unseen_probs_close * (uccc_flat).float()).sum() / (
-                    (uccc_flat).float().sum() + 1e-6
-                ) if uccc_flat.sum() > 0 else torch.tensor(0.0, device=unseen_probs_close.device)
+                for i in range(self.args.num_classes):
+                    self.log(
+                        f"Close_Conf/{stage}_unseen_confidence_class_{class_names[i]}",
+                        unseen_probs_close[unseen_class_close == i].mean() if unseen_class_close[unseen_class_close == i].numel() > 0 else torch.tensor(0.0),
+                        **current_log_opts,
+                    )
 
-                self.log(
-                    f"Close_Conf/{stage}_unseen_confidence_up",
-                    unseen_confidence_close_up,
-                    **current_log_opts,
+                cost_matrix = torch.tensor(
+                    [[0, 1, 10], [1, 0, 1], [10, 1, 0]], device=self.device
                 )
-
-                self.log(
-                    f"Close_Conf/{stage}_unseen_confidence_down",
-                    unseen_confidence_close_down,
-                    **current_log_opts,
-                )
-
-                self.log(
-                    f"Close_Conf/{stage}_unseen_confidence_flat",
-                    unseen_confidence_close_flat,
-                    **current_log_opts,
-                )
+                
+                for i in range(self.args.num_classes):
+                    self.log(
+                        f"Close_Conf/{stage}_unseen_cost_class_{i}",
+                        (confusion_matrix[i] * cost_matrix[i]).sum(),
+                        **current_log_opts,
+                    )
+                
 
             if stage == "train":
                 cummulative_times["metrics"] += (
@@ -996,49 +978,148 @@ class MoneyExperiment(pl.LightningModule):
         return self._shared_step(batch, batch_idx, "test")
 
     def configure_optimizers(self):
-        if self.args.orthograd:
+        
+        # if self.args.optimizer == 'muon':
+        #     print(f"Using Muon optimizer with {self.args.aux_optimizer} as auxiliary.")
+
+        #     # --- Parameter splitting logic remains the same ---
+        #     muon_params = []
+        #     aux_params = []
+        #     assigned_params = set()
+        #     for module in self.model.modules():
+        #         if isinstance(module, nn.Linear):
+        #             muon_params.append(module.weight)
+        #             assigned_params.add(module.weight)
+        #             if module.bias is not None:
+        #                 aux_params.append(module.bias)
+        #                 assigned_params.add(module.bias)
+        #     for name, p in self.model.named_parameters():
+        #         if p not in assigned_params:
+        #             aux_params.append(p)
+
+        #     # --- Create partial constructors for the optimizers ---
+        #     # The Muon optimizer constructor
+        #     muon_optimizer_cls = partial(Muon, lr=self.args.muon_lr)
+            
+        #     # The auxiliary optimizer constructor
+        #     if self.args.aux_optimizer == 'orthograd':
+        #         aux_optimizer_cls = partial(
+        #             OrthoGrad, 
+        #             lr=self.learning_rate, 
+        #             base_optimizer_cls=optim.Adam
+        #         )
+        #     else: # Default to AdamW
+        #         aux_optimizer_cls = partial(optim.AdamW, lr=self.learning_rate)
+                
+        #     # --- Instantiate your custom wrapper ---
+        #     optimizer = MuonWithCustomAux(
+        #         params=self.parameters(), # Passed for compatibility, not used directly
+        #         muon_optimizer_cls=muon_optimizer_cls,
+        #         aux_optimizer_cls=aux_optimizer_cls,
+        #         muon_params=muon_params,
+        #         aux_params=aux_params
+        #     )
+
+        weight_decay = getattr(self.args, 'weight_decay', 0.0)
+
+        if self.args.optimizer == 'muon':
+            print("Using Muon optimizer with FULLY refined parameter splitting for MLA.")
+
+            muon_params = []
+            aux_params = []
+
+            # Define the full parameter names of layers that should NOT use Muon.
+            non_muon_linear_weights = {
+                'model.shared_value_input.weight',
+                'model.out.weight'
+            }
+            if self.args.unique_inputs_ratio[0] > 0:
+                for i in range(len(self.model.unique_value_input)):
+                    non_muon_linear_weights.add(f'model.unique_value_input.{i}.weight')
+
+            # # --- ADD THIS NEW BLOCK ---
+            # # Add the MLA projection layers to the exclusion set dynamically
+            # for i in range(self.model.num_layers): # Assuming self.model.num_layers is correct
+            #     non_muon_linear_weights.add(f'model.layers.{i}.mha.kv_down.weight')
+            #     non_muon_linear_weights.add(f'model.layers.{i}.mha.q_down.weight')
+            #     non_muon_linear_weights.add(f'model.layers.{i}.mha.kv_up.weight')
+            #     non_muon_linear_weights.add(f'model.layers.{i}.mha.q_up.weight')
+            # # --- END OF NEW BLOCK ---
+
+            # The rest of the logic is the same and now works perfectly
+            for name, p in self.named_parameters():
+                if p.ndim == 2 and 'weight' in name:
+                    if name in non_muon_linear_weights:
+                        aux_params.append(p)
+                    else:
+                        muon_params.append(p)
+                else:
+                    aux_params.append(p)
+            
+            # 2. Define the parameter groups for the built-in optimizer
+            param_groups = [
+                dict(params=muon_params, use_muon=True, lr=self.args.muon_lr),
+                # NOTE: MuonWithAuxAdam hardcodes the aux optimizer to Adam.
+                # It will use the lr from this group.
+                dict(params=aux_params, use_muon=False, lr=self.learning_rate),
+            ]
+
+            # 3. Instantiate the built-in optimizer directly
+            optimizer = MuonWithAuxAdam(param_groups, weight_decay=weight_decay)
+
+        elif self.args.optimizer == 'orthograd':
             optimizer = OrthoGrad(
                 params=self.parameters(),
                 base_optimizer_cls=optim.Adam,
                 lr=self.learning_rate,
             )
-        else:
+        elif self.args.optimizer == 'adamw':
+            optimizer = optim.AdamW(self.parameters(), lr=self.learning_rate)
+        elif self.args.optimizer == 'adam':
             optimizer = optim.Adam(self.parameters(), lr=self.learning_rate)
+        else:
+            raise ValueError(f"Unknown optimizer: {self.args.optimizer}")
 
-        def lr_lambda(current_step):
-            min_lr = 1e-8 / self.learning_rate
+        scheduler_type = getattr(self.args, 'scheduler_type', 'cosine_restarts') # Default to your original
+        print(f"Using learning rate scheduler: {scheduler_type}")
 
-            current_cycle_step = current_step
-            cycle_nr = 0
-            for _ in range(50):
-                t_curr = self.t_0 * (self.t_mult**cycle_nr)
-                if current_cycle_step > t_curr:
-                    current_cycle_step -= t_curr
-                    cycle_nr += 1
-                else:
-                    break
+        if scheduler_type == 'cosine_restarts':
+            def lr_lambda(current_step):
+                min_lr = 1e-7 / self.learning_rate
+                current_cycle_step = current_step
+                cycle_nr = 0
+                for _ in range(50):
+                    t_curr = self.t_0 * (self.t_mult**cycle_nr)
+                    if current_cycle_step > t_curr:
+                        current_cycle_step -= t_curr
+                        cycle_nr += 1
+                    else:
+                        break
+                current_peak_lr = self.lr_mult**cycle_nr
+                if current_cycle_step < self.warmup_steps:
+                    return ((current_peak_lr) * float(current_cycle_step) / float(max(1, self.warmup_steps)))
+                if current_cycle_step >= self.warmup_steps and current_cycle_step <= t_curr:
+                    progress = float(current_cycle_step - self.warmup_steps) / float(max(1, t_curr - self.warmup_steps))
+                    return (current_peak_lr * 0.5 * (math.cos(math.pi * progress) + 1) + min_lr)
+                return min_lr
+            
+            scheduler = LambdaLR(optimizer, lr_lambda)
 
-            current_peak_lr = self.lr_mult**cycle_nr
+        elif scheduler_type == 'linear_decay':
+            scheduler = get_linear_schedule_with_warmup(
+                optimizer,
+                num_warmup_steps=self.warmup_steps,
+                num_training_steps=self.args.t_total
+            )
+        
+        elif scheduler_type == 'constant':
+            scheduler = get_constant_schedule_with_warmup(
+                optimizer,
+                num_warmup_steps=self.warmup_steps
+            )
 
-            if current_cycle_step < self.warmup_steps:  # Linear warmup
-                return (
-                    (current_peak_lr)
-                    * float(current_cycle_step)
-                    / float(max(1, self.warmup_steps))
-                )
-                # return (current_peak_lr - min_lr) * float(current_cycle_step) / float(
-                #     max(1, self.warmup_steps)
-                # ) + min_lr
-
-            if current_cycle_step >= self.warmup_steps and current_cycle_step <= t_curr:
-                progress = float(current_cycle_step - self.warmup_steps) / float(
-                    max(1, t_curr - self.warmup_steps)
-                )
-                return (
-                    current_peak_lr * 0.5 * (math.cos(math.pi * progress) + 1) + min_lr
-                )
-
-        scheduler = LambdaLR(optimizer, lr_lambda)
+        else:
+            raise ValueError(f"Unknown scheduler type: {scheduler_type}")
 
         return {
             "optimizer": optimizer,
@@ -1047,6 +1128,7 @@ class MoneyExperiment(pl.LightningModule):
                 "interval": "step",
             },
         }
+
 
     def on_validation_epoch_start(self):
         self.validation_step_outputs.clear()
@@ -1061,8 +1143,8 @@ class MoneyExperiment(pl.LightningModule):
         if self.cli_args.average_predictions:
             if self.args.prediction_type == 'regression':
                 preds = all_preds[:, -1, 0, :, :]
-                norm_means_for_close = self.args.normalization_means[0, :].to(device)
-                norm_stds_for_close = self.args.normalization_stds[0, :].to(device)
+                norm_means_for_close = self.args.normalization_means[0, :]
+                norm_stds_for_close = self.args.normalization_stds[0, :]
 
                 aligned_predictions = torch.empty((preds.shape[0]-(preds.shape[1]-1), preds.shape[1], preds.shape[2]), device=device)
                 for i in range(preds.shape[1]):
@@ -1082,8 +1164,8 @@ class MoneyExperiment(pl.LightningModule):
         else:
             if self.args.prediction_type == 'regression':
                 preds = all_preds[:, -1, 0, self.cli_args.pred_day-1, :]
-                norm_means_for_close = self.args.normalization_means[0, :].to(device)
-                norm_stds_for_close = self.args.normalization_stds[0, :].to(device)
+                norm_means_for_close = self.args.normalization_means[0, :]
+                norm_stds_for_close = self.args.normalization_stds[0, :]
 
                 backtest_predictions = (aligned_predictions * norm_stds_for_close) + norm_means_for_close
             elif self.args.prediction_type == 'classification':
@@ -1153,3 +1235,47 @@ class MoneyExperiment(pl.LightningModule):
         if self.model.__class__.__name__ == "Money_former_nGPT":
             normalize_weights_and_enforce_positive_eigenvalues(self.model)
         return
+
+# class MuonWithCustomAux(Optimizer):
+    # """
+    # A final, robust custom optimizer that wraps the Muon optimizer for 2D weights
+    # and a customizable auxiliary optimizer for all other parameters.
+    # This version handles both single-device and distributed training environments.
+    # """
+    # def __init__(self, params, muon_optimizer_cls, aux_optimizer_cls, muon_params, aux_params):
+    #     self.muon_optimizer = muon_optimizer_cls(muon_params)
+    #     self.aux_optimizer = aux_optimizer_cls(aux_params)
+    #     self.param_groups = self.muon_optimizer.param_groups + self.aux_optimizer.param_groups
+    #     self.defaults = {}
+
+    # @property
+    # def state(self):
+    #     return ChainMap(self.muon_optimizer.state, self.aux_optimizer.state)
+
+    # # --- THIS IS THE CRITICAL FIX FOR THE NEW ERROR ---
+    # def step(self, closure=None):
+    #     # PyTorch Lightning's automatic optimization provides a closure that
+    #     # does model_forward -> loss -> loss.backward().
+    #     # We need to execute this once to get the gradients.
+    #     if closure is not None:
+    #         closure()
+
+    #     # Now that gradients are populated, we can step both optimizers.
+    #     self.muon_optimizer.step()
+    #     self.aux_optimizer.step()
+
+    # def zero_grad(self, set_to_none: bool = True):
+    #     self.muon_optimizer.zero_grad(set_to_none=set_to_none)
+    #     self.aux_optimizer.zero_grad(set_to_none=set_to_none)
+
+    # def state_dict(self):
+    #     return {
+    #         "muon_optimizer": self.muon_optimizer.state_dict(),
+    #         "aux_optimizer": self.aux_optimizer.state_dict(),
+    #     }
+
+    # def load_state_dict(self, state_dict):
+    #     self.muon_optimizer.load_state_dict(state_dict["muon_optimizer"])
+    #     self.aux_optimizer.load_state_dict(state_dict["aux_optimizer"])
+
+

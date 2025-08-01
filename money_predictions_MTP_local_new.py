@@ -939,6 +939,111 @@ def trading_metrics(actuals, predictions, args):
 
     return metrics
 
+
+
+# def calculate_metrics(actuals, predictions, args, ticker_names: list):
+    # """
+    # Calculates predictive quality metrics.
+    # Returns two dictionaries: one for the portfolio and one for individual stocks.
+    # """
+    # portfolio_metrics = {}
+    # individual_metrics = {}
+    # num_tickers = predictions.shape[1]
+
+    # # --- Overall Portfolio Metrics ---
+    # if args.prediction_type == "regression":
+    #     portfolio_metrics["MAE_Loss"] = torch.mean(torch.abs(predictions - actuals)).item()
+    #     portfolio_metrics["Total_Accuracy"] = torch.mean((predictions.sign() == actuals.sign()).float()).item()
+    
+    # elif args.prediction_type == "classification":
+    #     pred_classes_all = predictions.argmax(dim=-1)
+    #     actual_classes_all = torch.ones_like(actuals, dtype=torch.long)
+    #     actual_classes_all[actuals < -args.classification_threshold] = 0
+    #     actual_classes_all[actuals > args.classification_threshold] = 2
+    #     portfolio_metrics["Total_Accuracy"] = torch.mean((pred_classes_all == actual_classes_all).float()).item()
+
+    # # --- Per-Stock Metrics ---
+    # for i in range(num_tickers):
+    #     ticker = ticker_names[i]
+    #     preds_stock = predictions[:, i]
+    #     actuals_stock = actuals[:, i]
+
+    #     if args.prediction_type == "regression":
+    #         individual_metrics[f"{ticker}_MAE_Loss"] = torch.mean(torch.abs(preds_stock - actuals_stock)).item()
+    #         individual_metrics[f"{ticker}_Accuracy"] = torch.mean((preds_stock.sign() == actuals_stock.sign()).float()).item()
+
+    #     elif args.prediction_type == "classification":
+    #         pred_classes = preds_stock.argmax(dim=-1)
+    #         actual_classes = torch.ones_like(actuals_stock, dtype=torch.long)
+    #         actual_classes[actuals_stock < -args.classification_threshold] = 0
+    #         actual_classes[actuals_stock > args.classification_threshold] = 2
+
+    #         individual_metrics[f"{ticker}_Accuracy"] = torch.mean((pred_classes == actual_classes).float()).item()
+            
+    #         if (pred_classes == 2).sum().item() > 0:
+    #             individual_metrics[f"{ticker}_Conf_Up"] = ((preds_stock[:, 2] * (pred_classes == 2)).sum() / (pred_classes == 2).sum()).item()
+    #         if (pred_classes == 0).sum().item() > 0:
+    #              individual_metrics[f"{ticker}_Conf_Down"] = ((preds_stock[:, 0] * (pred_classes == 0)).sum() / (pred_classes == 0).sum()).item()
+
+    # return portfolio_metrics, individual_metrics
+
+
+# def trading_metrics(actuals, predictions, args, ticker_names: list):
+    # """
+    # Calculates trading strategy metrics.
+    # Returns two dictionaries: one for the portfolio and one for individual stocks.
+    # """
+    # portfolio_metrics = {}
+    # individual_metrics = {}
+    
+    # # --- 1. Run Backtest on the Full Portfolio ---
+    # _, portfolio_stats = run_strategy_with_flexible_allocation(
+    #     predictions_1day_ahead=predictions,
+    #     actual_1d_returns=actuals,
+    #     trade_threshold_up=0.5 if args.prediction_type == "classification" else 0.0,
+    #     trade_threshold_down=0.5 if args.prediction_type == "classification" else 0.0,
+    #     initial_capital=1000,
+    #     transaction_cost_pct=0.0,
+    #     allocation_strategy="equal",
+    #     signal_horizon_name="validation_portfolio",
+    #     prediction_type=args.prediction_type,
+    #     decision_type="argmax"
+    # )
+
+    # # Populate the portfolio metrics dictionary
+    # for stat_name, stat_value in portfolio_stats.items():
+    #     if not any(x in stat_name for x in ["Threshold", "Signal Horizon", "Final", "Total"]):
+    #         portfolio_metrics[stat_name] = stat_value
+
+    # # --- 2. Run Individual Backtest for Each Stock ---
+    # num_tickers = predictions.shape[1]
+    # for i in range(num_tickers):
+    #     ticker = ticker_names[i]
+        
+    #     preds_stock = predictions[:, i].unsqueeze(1)
+    #     actuals_stock = actuals[:, i].unsqueeze(1)
+
+    #     _, stock_stats = run_strategy_with_flexible_allocation(
+    #         predictions_1day_ahead=preds_stock,
+    #         actual_1d_returns=actuals_stock,
+    #         trade_threshold_up=0.5 if args.prediction_type == "classification" else 0.0,
+    #         trade_threshold_down=0.5 if args.prediction_type == "classification" else 0.0,
+    #         initial_capital=1000,
+    #         transaction_cost_pct=0.0,
+    #         allocation_strategy="equal",
+    #         signal_horizon_name=f"validation_{ticker}",
+    #         prediction_type=args.prediction_type,
+    #         decision_type="argmax"
+    #     )
+        
+    #     # Populate the individual metrics dictionary with prefixed keys
+    #     for stat_name, stat_value in stock_stats.items():
+    #         if not any(x in stat_name for x in ["Threshold", "Signal Horizon", "Final", "Total"]):
+    #             individual_metrics[f"{ticker}_{stat_name}"] = stat_value
+
+    # return portfolio_metrics, individual_metrics
+
+
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description="Make predictions with a trained MTP stock model.")

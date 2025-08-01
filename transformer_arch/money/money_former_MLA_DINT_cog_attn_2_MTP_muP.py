@@ -1,11 +1,8 @@
-# tries to predict movements in the stock market
-"""
-further version TODO list:
-embeddings for sequence category (stock price/return, general market, etc.)
+# same as non muP version, but should be better with scale up
+# needs to be based on some baseline model, then
+# scale var of lin layer by 1/delta_d (delta_d = d_base/d_model)
 
-try better architectures
 
-"""
 
 import torch
 import torch.nn as nn
@@ -13,11 +10,13 @@ import math
 import torch.nn.functional as F
 from ..components import get_causal_mask
 
+from mup import MuReadout
+
 # for debug/visualization
 import matplotlib.pyplot as plt
 
 
-class Money_former_MLA_DINT_cog_attn_MTP(nn.Module): # TODO MTP blocks
+class Money_former_MLA_DINT_cog_attn_MTP(nn.Module):
     def __init__(self, args):  # , dtype=torch.float32):
         super().__init__()
         # args.dtype = dtype
@@ -29,95 +28,126 @@ class Money_former_MLA_DINT_cog_attn_MTP(nn.Module): # TODO MTP blocks
         self.layers = nn.ModuleList(
             [Money_former_block(args, depth) for depth in range(self.num_layers)]
         )
-        # self.input_features = (args.input_features - 15) * 3 + 15 # because time (15) and means, stds (3)
         self.input_features = args.input_features
+        # self.scaling = self.d_model ** -0.5
 
-        self.ticker_embedding = nn.Embedding(len(args.tickers), self.d_model)
+        self.ticker_dim = self.d_model
+        self.ticker_embedding = nn.Embedding(len(args.tickers), self.ticker_dim)
+
         self.shared_value_input_dim = (self.d_model // sum(args.unique_inputs_ratio) * args.unique_inputs_ratio[1])
         self.shared_value_input = nn.Linear(
             self.input_features, self.shared_value_input_dim, bias=args.bias
         )
 
-        self.unique_value_input_dim = (self.d_model // sum(args.unique_inputs_ratio) * args.unique_inputs_ratio[0])
-        self.unique_value_input = nn.ModuleList(
-            [
-                nn.Linear(self.input_features, self.unique_value_input_dim, bias=args.bias)
-                for _ in range(len(args.tickers))
-            ]
-        )
+        self.unique_inputs = args.unique_inputs_ratio[0] > 0
+        if self.unique_inputs:
+            self.unique_value_input_dim = (self.d_model // sum(args.unique_inputs_ratio) * args.unique_inputs_ratio[0])
+            self.unique_value_input = nn.ModuleList(
+                [
+                    nn.Linear(self.input_features, self.unique_value_input_dim, bias=args.bias)
+                    for _ in range(len(args.tickers))
+                ]
+            )
         self.norm = nn.RMSNorm(self.d_model) # TODO maybe one per MTP block?
 
-        self.predict_distribution = args.predict_gaussian
-        if self.predict_distribution:
-            self.out = nn.Linear(
-                self.d_model, len(args.indices_to_predict) * 2, bias=args.bias
-            )  # decodes to mean and std
-        else:
-            self.out = nn.Linear(
-                self.d_model, 5, bias=args.bias
-            )  # decodes to target(s) features
+        match args.prediction_type:
+            case "gaussian":
+                self.out = MuReadout(
+                    self.d_model, 5 * 2, bias=args.bias
+                )  # decodes to mean and std
+            case "regression":
+                self.out = MuReadout(
+                    self.d_model, 5, bias=args.bias
+                )  # decodes to target(s) features
+            case "classification":
+                self.out = MuReadout(
+                    self.d_model, 5 * args.num_classes, bias=args.bias
+                )  # decodes to target(s) features
 
         self.register_buffer("freqs_cis", precompute_freqs_cis(args), persistent=False)
 
         # seperator/attention sink token
-        # self.seperator = nn.Embedding(1, self.d_model)
-        self.seperator = nn.Parameter(torch.zeros(self.d_model, dtype=torch.float32).normal_(mean=0.0, std=1.0))
+        # self.seperator = nn.Parameter(torch.zeros(self.d_model, dtype=torch.float32))
+        self.seperator_embedding = nn.Embedding(1, self.d_model)
+        self.use_global_seperator = args.use_global_seperator
 
         self.MTP_blocks = nn.ModuleList(
             [MTP_money_former_block(args, depth + self.num_layers) for depth in range(max(args.indices_to_predict)-1)]
         )
 
-        self.ticker_projection = nn.Linear(self.d_model*2, self.d_model, bias=args.bias)
+
 
     def forward(
         self, x, tickers=None
     ):  # seperator (batch_size, targets, 1); tickers (batch_size, targets, num_sequences)
         batch_size, targets, seq_len, num_sequences, _ = x.size()
 
-        # seperator = self.seperator(seperator).unsqueeze(2)
-        # seperator = seperator.repeat(1, 1, 1, num_sequences, 1)
-        seperator = self.seperator.view(1, 1, 1, 1, self.d_model)
-        seperator = seperator.expand(batch_size, targets, 1, num_sequences, -1)
-
-        tickers = self.ticker_embedding(tickers).unsqueeze(2)
-        tickers = tickers.repeat(1, 1, seq_len + 1, 1, 1)
-
         x = self.encode_inputs(x)
 
-        x = torch.cat([seperator, x], dim=2)
-        # x = x + tickers
-        x = self.ticker_projection(torch.cat([x, tickers], dim=-1))
+        if self.use_global_seperator:
+            x = x.permute(0, 1, 3, 2, 4).contiguous()
+            x = x.view(batch_size, targets, num_sequences * seq_len, self.d_model)
+            seperator_idx = torch.tensor([0], device=x.device) 
+            seperator = self.seperator_embedding(seperator_idx).view(1, 1, 1, self.d_model)
+            seperator = seperator.expand(batch_size, targets, 1, -1)
+            x = torch.cat([seperator, x], dim=2)
+            
+            ticker_embs = self.ticker_embedding(tickers).unsqueeze(3)
+            ticker_embs = ticker_embs.expand(-1, -1, -1, seq_len, -1)
+            ticker_embs = ticker_embs.contiguous().view(batch_size, targets, num_sequences * seq_len, self.ticker_dim)
 
-        x = x / math.sqrt(self.d_model)
+            sep_ticker_emb = torch.zeros(batch_size, targets, 1, self.ticker_dim, dtype=torch.float32, device=x.device)
+            ticker_embs = torch.cat([sep_ticker_emb, ticker_embs], dim=2)
+
+            x = x + ticker_embs
+        else:
+            seperator_idx = torch.tensor([0], device=x.device) 
+            seperator = self.seperator_embedding(seperator_idx).view(1, 1, 1, self.d_model)
+            seperator = seperator.expand(batch_size, targets, 1, num_sequences, -1)
+
+            tickers = self.ticker_embedding(tickers).unsqueeze(2)
+            tickers = tickers.repeat(1, 1, seq_len + 1, 1, 1)
+
+
+            x = torch.cat([seperator, x], dim=2)
+            x = x + tickers
+
+            x = x.permute(0, 1, 3, 2, 4).contiguous() # fix to prevent data mixing
+
+            x = x.view(
+                batch_size, targets, -1, self.d_model
+            )  # (batch_size, targets, (seq_len+1)*num_sequences, d_model)
+
         x = self.dropout(x)
 
-        x = x.view(
-            batch_size, targets, -1, self.d_model
-        )  # (batch_size, (seq_len+1)*num_sequences, d_model)
-
-        x_end = torch.empty_like(x)
+        x_end = []
         x_main = x[:, 0, :, :]
         freqs_cis = self.freqs_cis[0 : 0 + seq_len].to(x.device)
         for layer in self.layers:
             x_main = layer(x_main, freqs_cis)
         x_main = self.norm(x_main)  # (batch_size, seq_len, d_model)
-        x_end[:, 0, :, :] = x_main
-        for i in range(1, targets):
-            x_end[:, i, :, :] = self.norm(self.MTP_blocks[i-1](x[:, i, :, :], x_end[:, i-1, :, :], freqs_cis))
 
-        # TODO MTP part
+        x_as_list = [t.squeeze(1) for t in torch.split(x[:,1:], 1, dim=1)]
+        x_end.append(x_main)
+        for MTP_block in self.MTP_blocks:
+            x_end.append(self.norm(MTP_block(x_as_list.pop(0), x_end[-1], freqs_cis)))
+        x_end = torch.stack(x_end, dim=1)
+
         x_end = self.out(x_end)
         return x_end  # (batch_size, targets, seq_len, features) logits
     
     def encode_inputs(self, x):
-        batch_size, targets, seq_len, num_sequences, _ = x.size()
+        # batch_size, targets, seq_len, num_sequences, _ = x.size()
         shared_temp_x = self.shared_value_input(x)
-        unique_temp_x = torch.empty(
-            batch_size, targets, seq_len, num_sequences, self.unique_value_input_dim
-        ).to(x.device)
-        for i in range(num_sequences):
-            unique_temp_x[:, :, :, i, :] = self.unique_value_input[i](x[:, :, :, i, :])
-        x = torch.cat([shared_temp_x, unique_temp_x], dim=-1)
+        if self.unique_inputs:
+            unique_temp_x = []
+            x_as_list = [t.squeeze(3) for t in torch.split(x, 1, dim=3)]
+            for unique_input in self.unique_value_input:
+                unique_temp_x.append(unique_input(x_as_list.pop(0)))
+            unique_temp_x = torch.stack(unique_temp_x, dim=3)
+            x = torch.cat([shared_temp_x, unique_temp_x], dim=-1)
+        else:
+            x = shared_temp_x
         return x
 
 
@@ -131,14 +161,21 @@ class Money_former_block(nn.Module):
         self.norm2 = nn.RMSNorm(args.d_model)
         self.ff = SwiGLU_feed_forward(args)
         self.num_sequences = len(args.tickers)
+        if args.use_global_seperator:
+            # self.mask = torch.zeros(1, 1, args.seq_len*self.num_sequences+1, args.seq_len*self.num_sequences+1)
+            temp_mask = get_causal_mask(args.seq_len)
+            temp_mask = temp_mask.repeat(1, 1, self.num_sequences, self.num_sequences)
+            self.mask = torch.ones(1, 1, args.seq_len*self.num_sequences+1, args.seq_len*self.num_sequences+1)
+            self.mask[:,:,:,0] = 0
+            self.mask[:,:,1:,1:] = 0
+            # self.mask[:,:,1:,1:] = temp_mask
+        else:
+            self.mask = get_causal_mask(args.seq_len+1)
+            self.mask = self.mask.repeat(1, 1, self.num_sequences, self.num_sequences)
 
     def forward(self, x, freqs_cis):
         batch_size, seq_len, _ = x.size()
-        seq_len = seq_len // self.num_sequences
-        mask = get_causal_mask(seq_len).to(x.device)
-        mask = mask.repeat(
-            1, 1, self.num_sequences, self.num_sequences
-        ).expand(batch_size, 2 * self.nhead, -1, -1)
+        mask = self.mask.expand(batch_size, 2 * self.nhead, -1, -1)
         x = x + self.mha(
             self.norm1(x), mask, freqs_cis
         )  # (batch_size, seq_len, d_model)
@@ -184,7 +221,7 @@ class custom_MHA(nn.Module): # a mix of MLA and DINT
         self.o = nn.Linear(self.nhead * self.head_dim, self.d_model, bias=args.bias)
         self.dropout = nn.Dropout(args.dropout)
 
-        self.scaling = ((self.head_dim + self.rope_dim) // 2) ** -0.5
+        self.scaling = 1./((self.head_dim + self.rope_dim) // 2)
 
         # DINT part
         self.lambda_init = lambda_init_fn(depth)
@@ -218,10 +255,11 @@ class custom_MHA(nn.Module): # a mix of MLA and DINT
         # )
 
         self.num_sequences = len(args.tickers)
+        self.use_global_seperator = args.use_global_seperator
 
-    def forward(self, x, mask=None, freqs_cis=None): # TODO rewrite to be simpler/more efficient
+    def forward(self, x, mask=None, freqs_cis=None):
         batch_size, seq_len, _ = x.shape
-        seq_per_stock = seq_len // self.num_sequences
+
 
         c_kv = self.kv_down(x)
         c_kv, k_rope = c_kv.split([self.kv_compression_dim, self.rope_dim], dim=-1)
@@ -249,21 +287,40 @@ class custom_MHA(nn.Module): # a mix of MLA and DINT
 
         q_rope = q_rope.reshape(batch_size, seq_len, self.nhead*2, self.rope_dim//2)
         k_rope = k_rope.reshape(batch_size, seq_len, self.nhead*2, self.rope_dim//2)
-        q_rope = q_rope.view(batch_size, seq_per_stock, self.num_sequences, self.nhead*2, self.rope_dim//2).permute(0, 1, 3, 4, 2)
-        k_rope = k_rope.view(batch_size, seq_per_stock, self.num_sequences, self.nhead*2, self.rope_dim//2).permute(0, 1, 3, 4, 2)
 
-        # --- RoPE (decoupled) ---
-        for i in range(self.num_sequences):
-            q_temp, k_temp = q_rope[:, :, :, :, i], k_rope[:, :, :, :, i]
-            q_sep, q_temp = q_temp.split([1, seq_per_stock - 1], dim=1)
-            k_sep, k_temp = k_temp.split([1, seq_per_stock - 1], dim=1)
-            q_temp = apply_rotary_emb(q_temp, freqs_cis=freqs_cis)
-            k_temp = apply_rotary_emb(k_temp, freqs_cis=freqs_cis)
-            q_rope[:, :, :, :, i] = torch.cat([q_sep, q_temp], dim=1)
-            k_rope[:, :, :, :, i] = torch.cat([k_sep, k_temp], dim=1)
-        
-        q_rope = q_rope.permute(0, 1, 4, 2, 3).view(batch_size, seq_len, self.nhead*2, self.rope_dim//2)
-        k_rope = k_rope.permute(0, 1, 4, 2, 3).view(batch_size, seq_len, self.nhead*2, self.rope_dim//2)
+        # # --- RoPE (decoupled) ---
+        if self.use_global_seperator:
+            seq_per_stock = (seq_len - 1) // self.num_sequences
+
+            q_sep, q_to_rotate = q_rope.split([1, seq_len-1], dim=1)
+            k_sep, k_to_rotate = k_rope.split([1, seq_len-1], dim=1)
+
+            q_to_rotate = q_to_rotate.view(batch_size, self.num_sequences, seq_per_stock, self.nhead*2, self.rope_dim//2)
+            k_to_rotate = k_to_rotate.view(batch_size, self.num_sequences, seq_per_stock, self.nhead*2, self.rope_dim//2)
+
+            q_to_rotate = apply_rotary_emb_multiple_sequences(q_to_rotate, freqs_cis=freqs_cis)
+            k_to_rotate = apply_rotary_emb_multiple_sequences(k_to_rotate, freqs_cis=freqs_cis)
+
+            q_rope = torch.cat([q_sep, q_to_rotate.reshape(batch_size, seq_len-1, self.nhead*2, self.rope_dim//2)], dim=1)
+            k_rope = torch.cat([k_sep, k_to_rotate.reshape(batch_size, seq_len-1, self.nhead*2, self.rope_dim//2)], dim=1)
+
+        else:
+            seq_per_stock = seq_len // self.num_sequences
+
+            q_rope = q_rope.view(batch_size, self.num_sequences, seq_per_stock, self.nhead*2, self.rope_dim//2)
+            k_rope = k_rope.view(batch_size, self.num_sequences, seq_per_stock, self.nhead*2, self.rope_dim//2)
+            # #q/k_rope (batch_size, num_sequences, seq_per_stock, nhead*2, rope_dim//2)
+            q_sep, q_to_rotate = q_rope.split([1, seq_per_stock - 1], dim=2)
+            k_sep, k_to_rotate = k_rope.split([1, seq_per_stock - 1], dim=2)
+
+            q_to_rotate = apply_rotary_emb_multiple_sequences(q_to_rotate, freqs_cis=freqs_cis)
+            k_to_rotate = apply_rotary_emb_multiple_sequences(k_to_rotate, freqs_cis=freqs_cis)
+
+            q_rope = torch.cat([q_sep, q_to_rotate], dim=2)
+            k_rope = torch.cat([k_sep, k_to_rotate], dim=2)
+
+            q_rope = q_rope.view(batch_size, seq_len, self.nhead*2, self.rope_dim//2)
+            k_rope = k_rope.view(batch_size, seq_len, self.nhead*2, self.rope_dim//2)
 
         q = torch.cat([q, q_rope], dim=-1).transpose(1, 2)  # (batch_size, 2*nhead, seq_len, (head_dim+rope_dim)//2)
         k = torch.cat([k, k_rope], dim=-1).transpose(1, 2)  # (batch_size, 2*nhead, seq_len, (head_dim+rope_dim)//2)
@@ -290,7 +347,6 @@ class custom_MHA(nn.Module): # a mix of MLA and DINT
         # assert torch.isclose((lambda_full * a[:, :, 1, :, :]).sum(dim=-1),(a3 * lambda_full).sum(dim=-1),rtol=1e-3,atol=1e-5).all() == True
         a = a[:, :, 0, :, :] - lambda_full * a[:, :, 1, :, :] + G_vec * lambda_full
         # a = a * (1/ (1 - lambda_full)) 
-        # assert (a[0,0].sum(dim=-1) == 1.0).all() == True
         a = a.masked_fill(mask[:, : self.nhead, :, :] == 1, 0)
         a = self.dropout(a)
 
@@ -302,10 +358,10 @@ class custom_MHA(nn.Module): # a mix of MLA and DINT
         #     normed_heads.append(head)
         # attn_output = torch.stack(normed_heads, dim=2)  # (batch_size, seq_len, nhead, head_dim)
         attn_output = self.norm(attn_output.transpose(1,2))  # (batch_size, seq_len, nhead, head_dim)
-        attn_output = attn_output.transpose(1, 2)  # (batch_size, nhead, seq_len, head_dim)
-        attn_output = attn_output.reshape( # TODO keep in mind sus amogus
-            batch_size, seq_len, self.nhead, self.head_dim
-        )
+        # attn_output = attn_output.transpose(1, 2)  # (batch_size, nhead, seq_len, head_dim)
+        # attn_output = attn_output.reshape( # TODO keep in mind sus amogus
+        #     batch_size, seq_len, self.nhead, self.head_dim
+        # )
         # --- Concatenate and Output Projection ---
         attn_output = (
             attn_output.contiguous()
@@ -381,13 +437,19 @@ def precompute_freqs_cis(args) -> torch.Tensor:
     return freqs_cis
 
 
-def apply_rotary_emb(x: torch.Tensor, freqs_cis: torch.Tensor) -> torch.Tensor:
+def apply_rotary_emb(x: torch.Tensor, freqs_cis: torch.Tensor) -> torch.Tensor: # expects x to be of shape (bs, seq_len, head, rope_dim)
     dtype = x.dtype
     x = torch.view_as_complex(x.float().view(*x.shape[:-1], -1, 2))
     freqs_cis = freqs_cis.view(1, x.size(1), 1, x.size(-1))
     y = torch.view_as_real(x * freqs_cis).flatten(3)
     return y.to(dtype)
 
+def apply_rotary_emb_multiple_sequences(x: torch.Tensor, freqs_cis: torch.Tensor) -> torch.Tensor: # expects x to be of shape (bs, num_sequences, seq_len, head, rope_dim)
+    dtype = x.dtype
+    x = torch.view_as_complex(x.float().view(*x.shape[:-1], -1, 2))
+    freqs_cis = freqs_cis.view(1, 1, x.size(2), 1, x.size(-1))
+    y = torch.view_as_real(x * freqs_cis).flatten(4)
+    return y.to(dtype)
 
 def lambda_init_fn(depth):
     return 0.8 - 0.6 * math.exp(-0.3 * depth)

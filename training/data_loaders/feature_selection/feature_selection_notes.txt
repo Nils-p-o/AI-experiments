@@ -22,3 +22,74 @@ some random for volume
 time feats:
 is_ feats might be useless (is_quarter_..., is_month_..., is_leap_year)
 day of year is technically redundant, because of month and day of month
+
+
+
+
+
+
+######################################################################################################################################################################################
+
+1. Numerical Measures: The Hard Numbers
+For any given feature, you can calculate specific coefficients that quantify its deviation from a normal distribution. You should perform these calculations on your training data after normalization.
+
+Skewness
+This measures the asymmetry of the distribution.
+
+Interpretation:
+
+Skewness = 0: Perfectly symmetric (like a normal distribution).
+
+Skewness > 0: Positive (Right) Skew. The tail on the right side is longer or fatter than the left side. The mass of the distribution is concentrated on the left.
+
+Skewness < 0: Negative (Left) Skew. The tail on the left side is longer or fatter. The mass is concentrated on the right.
+
+Rule of Thumb:
+
+If -0.5 < skew < 0.5, the distribution is fairly symmetrical.
+
+If -1 < skew < -0.5 or 0.5 < skew < 1, the distribution is moderately skewed.
+
+If skew < -1 or skew > 1, the distribution is highly skewed.
+
+How to Calculate: Use scipy.stats.skew.
+
+Kurtosis
+This measures the "tailedness" of the distribution. It tells you how much of the data's variance is due to infrequent, extreme outliers.
+
+Interpretation (using Fisher's definition, which is standard):
+
+Kurtosis = 0: Has the same tailedness as a normal distribution.
+
+Kurtosis > 0: Leptokurtic (Heavy/Fat Tails). The distribution is pointier in the middle and has heavier tails. This means outliers are more frequent than in a normal distribution. This is extremely common in financial returns.
+
+Kurtosis < 0: Platykurtic (Light/Thin Tails). The distribution is flatter and has fewer outliers.
+
+How to Calculate: Use scipy.stats.kurtosis.
+
+2. Visual Methods: Seeing is Believing
+Numerical coefficients are great, but visualizations give you a much more intuitive understanding.
+
+Histograms and Density Plots (KDE)
+This is the most direct way to see the shape of your data.
+
+What to look for:
+
+Skew: Is the plot lopsided?
+
+Kurtosis: Is the central peak very sharp and pointy, with long, low tails extending far out? (Leptokurtic). Or is it flat and boxy? (Platykurtic).
+
+Multimodality: Does the plot have more than one "hump"? Z-score normalization won't fix this, and it's important to know.
+
+Q-Q Plots (Quantile-Quantile Plot)
+This is the gold standard for comparing a distribution to a normal distribution.
+
+How it works: It plots the quantiles of your data against the theoretical quantiles of a perfect normal distribution.
+
+Interpretation:
+
+If your data is normally distributed, the points on the Q-Q plot will lie perfectly on the 45-degree reference line.
+
+Heavy Tails (High Kurtosis): The points will form an "S" shape, where the ends curve away from the reference line.
+
+Skew: The points will form a "banana" shape, curving off the line in one consistent direction.

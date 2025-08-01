@@ -1,9 +1,6 @@
 # TODO add more features, add more indicators (quarterly reports, EPS, etc.)
 # TODO test putting all input features as part of sequence?
 
-# TODO add r squared to loss metrics
-
-
 # TODO bayesian optimization (inference + training)
 # TODO add more things as part of config (weights for loss, features, etc.)
 # TODO rewrite dataloader to take in a list of features
@@ -15,22 +12,7 @@
 
 # TODO set up old pc for training
 
-
-# Once you have multiple performance scores for each option (e.g., 3 validation MASE scores for Option A, 3 for Option B), you can use statistical tests to compare their means.
-# Common Tests:
-# Independent two-sample t-test: If you assume the scores are approximately normally distributed and have roughly equal variances. Given only 3 samples per group, checking these assumptions is hard, but it's a common starting point.
-# Mann-Whitney U test (Wilcoxon rank-sum test): A non-parametric alternative to the t-test, which doesn't assume normality. Often safer for ML metrics with small sample sizes.
-# Paired t-test (or Wilcoxon signed-rank test): If there's a natural pairing between the runs (e.g., you use the exact same set of 3 random seeds for Option A and Option B). This can be more powerful as it controls for variance due to specific seeds.
-# What to Test: You'd apply this to your key metrics:
-# Final validation loss (e.g., scaled L1 loss)
-# Directional accuracy
-# Information Ratio (IR) or Mean IC
-# MSSE/MASE
-# Interpretation: The p-value from the test will tell you the probability of observing the difference in means (or a larger difference) if there were actually no true difference between the options. A small p-value (e.g., < 0.05) suggests the difference is statistically significant.
-
 # TODO test nGPT
-
-# TODO check stat for noise
 
 # different scaling in attn
 # TODO redo some tests (global vs local, etc. groupnorm)
@@ -41,7 +23,6 @@ import os
 import argparse
 import pytorch_lightning as pl
 from pytorch_lightning.callbacks import ModelCheckpoint, EarlyStopping
-from training.money_experiment_2_MTP import MoneyExperiment
 
 from training.utils import (
     count_parameters,
@@ -50,10 +31,6 @@ from training.utils import (
 #     FinancialNumericalDataModule,
 #     download_numerical_financial_data,
 # )
-from training.data_loaders.test_feats_stocks_time_series_2_MTP_new import (
-    FinancialNumericalDataModule,
-    download_numerical_financial_data,
-)
 
 from pytorch_lightning.loggers import TensorBoardLogger
 import torch
@@ -67,11 +44,81 @@ from transformer_arch.money.money_former_MLA_2 import Money_former_MLA
 from transformer_arch.money.money_former_nGPT_2 import Money_former_nGPT, normalize_weights_and_enforce_positive_eigenvalues
 from transformer_arch.money.money_former_MLA_DINT_cog_attn_2 import Money_former_MLA_DINT_cog_attn
 # from transformer_arch.money.money_former_MLA_DINT_cog_attn_2_MTP_diff_attn_dims import Money_former_MLA_DINT_cog_attn_MTP
-# from transformer_arch.money.money_former_MLA_DINT_cog_attn_2_MTP_embed_proj import Money_former_MLA_DINT_cog_attn_MTP
+
+# from transformer_arch.money.money_former_MLA_DINT_cog_attn_2_MTP_muP import Money_former_MLA_DINT_cog_attn_MTP
 from transformer_arch.money.money_former_MLA_DINT_cog_attn_2_MTP import Money_former_MLA_DINT_cog_attn_MTP
+from training.data_loaders.test_feats_stocks_time_series_2_MTP_new import (
+    FinancialNumericalDataModule,
+    download_numerical_financial_data,
+)
+from training.money_experiment_2_MTP import MoneyExperiment
+
+import torch.distributed as dist
+from functools import wraps
+
+def apply_distributed_patch():
+    """
+    Applies a comprehensive monkey-patch to torch.distributed functions to prevent
+    crashes in single-device environments. This patches get_world_size, get_rank,
+    and all_gather.
+    """
+    # --- Patch get_world_size ---
+    if not hasattr(dist, '_original_get_world_size'):
+        dist._original_get_world_size = dist.get_world_size
+
+        @wraps(dist._original_get_world_size)
+        def patched_get_world_size(*args, **kwargs):
+            if not dist.is_available() or not dist.is_initialized():
+                return 1
+            return dist._original_get_world_size(*args, **kwargs)
+
+        dist.get_world_size = patched_get_world_size
+
+    # --- Patch get_rank ---
+    if not hasattr(dist, '_original_get_rank'):
+        dist._original_get_rank = dist.get_rank
+
+        @wraps(dist._original_get_rank)
+        def patched_get_rank(*args, **kwargs):
+            if not dist.is_available() or not dist.is_initialized():
+                return 0
+            return dist._original_get_rank(*args, **kwargs)
+
+        dist.get_rank = patched_get_rank
+
+    # --- Patch all_gather ---
+    if not hasattr(dist, '_original_all_gather'):
+        dist._original_all_gather = dist.all_gather
+
+        @wraps(dist._original_all_gather)
+        def patched_all_gather(tensor_list, tensor, *args, **kwargs):
+            """Patched version that performs a local copy if distributed is not initialized."""
+            if not dist.is_available() or not dist.is_initialized():
+                # In a single-process world, all_gather is a no-op
+                # The tensor_list (output) should be filled with the tensor (input).
+                # With a world size of 1, the list has 1 element.
+                if len(tensor_list) != 1:
+                     # This should not happen with our world_size patch, but as a safeguard:
+                     raise ValueError("Patched all_gather expects a tensor_list of length 1.")
+                tensor_list[0].copy_(tensor)
+                return None
+            return dist._original_all_gather(tensor_list, tensor, *args, **kwargs)
+
+        dist.all_gather = patched_all_gather
+
+    print("--- Applied comprehensive torch.distributed patches for get_world_size, get_rank, and all_gather ---")
+
+# from transformer_arch.money.money_former_MLA_DINT_cog_attn_2_MTP_c_only import Money_former_MLA_DINT_cog_attn_MTP
+# from training.data_loaders.test_feats_stocks_time_series_2_MTP_new_c_only import (
+#     FinancialNumericalDataModule,
+#     download_numerical_financial_data,
+# )
+# from training.money_experiment_2_MTP_c_only import MoneyExperiment
 
 
 def proceed(args: argparse.Namespace):
+    apply_distributed_patch()
+
     architecture = args.architecture
     seq_len = args.seq_len
     batch_size = args.batch_size
@@ -86,10 +133,10 @@ def proceed(args: argparse.Namespace):
     t_0 = args.t_0 + warmup_steps
     t_mult = args.t_mult
     lr_mult = args.lr_mult
-    # TODO add loss functions
     pred_indices = (
         args.indices_to_predict
     )  # how many datapoints in the future to predict (workdays, not regular days, because market no work weekend)
+    args.tickers = sorted(args.tickers)
 
     match args.dtype:
         case "fp32":
@@ -102,8 +149,9 @@ def proceed(args: argparse.Namespace):
             args.dtype = "fp32"
             trainer_precision = "32-true"
     seed = torch.seed()
+    seed = seed % (2**32)
     args.seed = seed
-    # pl.seed_everything(seed)
+    pl.seed_everything(seed)
     print(
         f"LLaMa seq_len:{seq_len} d_model:{d_model} d_ff:{d_ff} num_layers:{num_layers} nhead:{nhead} dropout:{dropout} lr:{lr} t_total:{t_total} warmup_steps:{warmup_steps} t_0:{t_0} t_mult:{t_mult} lr_mult:{lr_mult} batch_size:{batch_size}"
     )

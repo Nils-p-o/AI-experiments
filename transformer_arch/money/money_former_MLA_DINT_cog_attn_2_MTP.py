@@ -1,11 +1,4 @@
 # tries to predict movements in the stock market
-"""
-further version TODO list:
-embeddings for sequence category (stock price/return, general market, etc.)
-
-try better architectures
-
-"""
 
 import torch
 import torch.nn as nn
@@ -32,7 +25,9 @@ class Money_former_MLA_DINT_cog_attn_MTP(nn.Module):
         self.input_features = args.input_features
         self.scaling = self.d_model ** -0.5
 
-        self.ticker_embedding = nn.Embedding(len(args.tickers), self.d_model)
+        self.ticker_dim = self.d_model
+        self.ticker_embedding = nn.Embedding(len(args.tickers), self.ticker_dim)
+
         self.shared_value_input_dim = (self.d_model // sum(args.unique_inputs_ratio) * args.unique_inputs_ratio[1])
         self.shared_value_input = nn.Linear(
             self.input_features, self.shared_value_input_dim, bias=args.bias
@@ -67,12 +62,14 @@ class Money_former_MLA_DINT_cog_attn_MTP(nn.Module):
 
         # seperator/attention sink token
         # self.seperator = nn.Embedding(1, self.d_model)
-        self.seperator = nn.Parameter(torch.zeros(self.d_model, dtype=torch.float32).normal_(mean=0.0, std=1.0))
+        self.seperator = nn.Parameter(torch.zeros(self.d_model, dtype=torch.float32))
         self.use_global_seperator = args.use_global_seperator
 
         self.MTP_blocks = nn.ModuleList(
             [MTP_money_former_block(args, depth + self.num_layers) for depth in range(max(args.indices_to_predict)-1)]
         )
+
+
 
     def forward(
         self, x, tickers=None
@@ -90,11 +87,12 @@ class Money_former_MLA_DINT_cog_attn_MTP(nn.Module):
             
             ticker_embs = self.ticker_embedding(tickers).unsqueeze(3)
             ticker_embs = ticker_embs.expand(-1, -1, -1, seq_len, -1)
-            ticker_embs = ticker_embs.contiguous().view(batch_size, targets, num_sequences * seq_len, self.d_model)
+            ticker_embs = ticker_embs.contiguous().view(batch_size, targets, num_sequences * seq_len, self.ticker_dim)
 
-            sep_ticker_emb = torch.zeros(batch_size, targets, 1, self.d_model, dtype=torch.float32, device=x.device)
+            sep_ticker_emb = torch.zeros(batch_size, targets, 1, self.ticker_dim, dtype=torch.float32, device=x.device)
             ticker_embs = torch.cat([sep_ticker_emb, ticker_embs], dim=2)
 
+            # x = self.ticker_projection(torch.cat((x,ticker_embs), dim=-1))
             x = (x + ticker_embs) * self.scaling
         else:
             seperator = self.seperator.view(1, 1, 1, 1, self.d_model)
@@ -157,12 +155,13 @@ class Money_former_block(nn.Module):
         self.ff = SwiGLU_feed_forward(args)
         self.num_sequences = len(args.tickers)
         if args.use_global_seperator:
+            # self.mask = torch.zeros(1, 1, args.seq_len*self.num_sequences+1, args.seq_len*self.num_sequences+1)
             temp_mask = get_causal_mask(args.seq_len)
-            temp_mask = temp_mask.repeat(1, 1, self.num_sequences, self.num_sequences)# TODO make first column zero, not one, 1 = masked
-            self.mask = torch.zeros(1, 1, args.seq_len*self.num_sequences+1, args.seq_len*self.num_sequences+1)
-            self.mask[:,:,:,0] = 1.0
-            self.mask[:,:,1:,1:] = temp_mask
-
+            temp_mask = temp_mask.repeat(1, 1, self.num_sequences, self.num_sequences)
+            self.mask = torch.ones(1, 1, args.seq_len*self.num_sequences+1, args.seq_len*self.num_sequences+1)
+            self.mask[:,:,:,0] = 0
+            self.mask[:,:,1:,1:] = 0
+            # self.mask[:,:,1:,1:] = temp_mask
         else:
             self.mask = get_causal_mask(args.seq_len+1)
             self.mask = self.mask.repeat(1, 1, self.num_sequences, self.num_sequences)
