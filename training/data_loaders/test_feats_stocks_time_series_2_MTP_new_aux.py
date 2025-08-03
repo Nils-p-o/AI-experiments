@@ -256,6 +256,7 @@ def download_with_retry(tickers, max_retries=5, delay_seconds=3, **kwargs):
 
 def download_numerical_financial_data(
     tickers: List[str],
+    aux_tickers: List[str],
     seq_len: int = 64,
     target_dates: List[str] = [1],
     output_dir: str = "time_series_data",
@@ -322,6 +323,9 @@ def download_numerical_financial_data(
     unique_tickers = sorted(list(set(tickers)))
     ticker_to_id = {ticker: i for i, ticker in enumerate(unique_tickers)}
 
+    unique_aux_tickers = sorted(list(set(aux_tickers)))
+    aux_ticker_to_id = {ticker: i for i, ticker in enumerate(unique_aux_tickers)}
+
     indexes = raw_data.index
     columns = list(raw_data.columns.levels[0])
 
@@ -346,6 +350,61 @@ def download_numerical_financial_data(
     columns.extend(local_columns)
     columns.extend(time_columns)
 
+
+    # aux data
+    raw_aux_data = download_with_retry(
+        aux_tickers,
+        start=start_date,
+        end=end_date,
+        progress=True,
+        auto_adjust=False,
+        back_adjust=False,
+    )
+    aligned_raw_data = pd.DataFrame(columns=raw_aux_data.columns)
+    for i in range(len(aux_tickers)):
+        for j in range(len(raw_aux_data.columns.levels[0])):
+            aligned_raw_data[raw_aux_data.columns.levels[0][j], aux_tickers[i]] = (
+                align_financial_dataframes(
+                    {aux_tickers[i]: raw_aux_data[raw_aux_data.columns.levels[0][j]]},
+                    target_column=aux_tickers[i],
+                    fill_method="ffill",
+                    min_date=start_date,
+                    max_date=end_date,
+                )
+            )
+    raw_aux_data = aligned_raw_data
+    if raw_aux_data.empty:
+        print("No data downloaded.")
+        return
+
+    raw_aux_data = torch.tensor(raw_aux_data.values, dtype=torch.float32).reshape(
+        -1, len(raw_aux_data.columns.levels[0]), len(aux_tickers)
+    )  # (Time, Features, tickers)
+    raw_aux_data = raw_aux_data.transpose(0, 1)  # (Features, Time series, tickers)
+    raw_aux_data = raw_aux_data[1:, :, :]
+    raw_aux_data = data_fix_ffill(raw_aux_data)
+    aux_columns = ["aux_"+col for col in columns[:5]]
+
+    aux_returns = (raw_aux_data[:, 1:, :] - raw_aux_data[:, :-1, :]) / raw_aux_data[:, :-1, :]
+    aux_returns = torch.cat((torch.zeros_like(aux_returns[:, :1, :]), aux_returns), dim=1)
+    aux_returns = data_fix_ffill(aux_returns)
+    aux_data = torch.cat((aux_returns, raw_aux_data), dim=0)
+    aux_columns = [col+"_returns" for col in aux_columns] + aux_columns
+
+    padded_aux_data = torch.zeros(
+        full_data.shape[0],
+        full_data.shape[1],
+        aux_data.shape[2],
+        dtype=torch.float32,
+    )
+    padded_aux_data[:aux_data.shape[0]] = aux_data
+    padded_aux_data[-len(time_columns):] = full_data[-len(time_columns):, :, 0:1].repeat(1,1,aux_data.shape[2])
+
+    full_data = torch.cat((full_data, padded_aux_data), dim=-1)
+    # end of aux data
+
+            
+
     data = torch.empty(
         full_data.shape[0],
         max(target_dates),
@@ -359,13 +418,14 @@ def download_numerical_financial_data(
 
     if config_args.include_sep_in_loss:
         MTP_targets = torch.empty(
-            (5, max(target_dates), data.shape[2] + 21, len(tickers)), dtype=torch.float32
+            (5, max(target_dates), data.shape[2] + 21, data.shape[3]), dtype=torch.float32
         )
     else:
         MTP_targets = torch.empty(
-            (5, max(target_dates), data.shape[2] + 20, len(tickers)), dtype=torch.float32
+            (5, max(target_dates), data.shape[2] + 20, data.shape[3]), dtype=torch.float32
         )  # (chlov, target_dates, time series, tickers)
     MTP_full = (raw_data[:, 1:, :] - raw_data[:, :-1, :]) / raw_data[:, :-1, :]
+    MTP_full = torch.cat((MTP_full, (raw_aux_data[:, 1:, :] - raw_aux_data[:, :-1, :]) / raw_aux_data[:, :-1, :]), dim=-1)
     if config_args.include_sep_in_loss:
         MTP_full = torch.cat((torch.zeros_like(MTP_full[:, :1, :]), MTP_full), dim=1)
     MTP_full = data_fix_ffill(MTP_full)
@@ -411,7 +471,10 @@ def download_numerical_financial_data(
     # global z-normalization
 
     num_of_non_global_norm_feats = len(local_columns) + len(time_columns)
-    data, fitted_processors = auto_correct_feature_skew_pre_znorm(data, column_to_id, train_data_length+seq_len-1, num_of_non_global_norm_feats, len(time_columns), seq_len)
+    data[:,:,:,:len(tickers)], fitted_processors = auto_correct_feature_skew_pre_znorm(data[:,:,:,:len(tickers)], column_to_id, train_data_length+seq_len-1, num_of_non_global_norm_feats, len(time_columns), seq_len)
+
+    # aux data manipulation
+    data[:len(aux_columns),:,:,len(tickers):], fitted_processors = auto_correct_feature_skew_pre_znorm(data[:len(aux_columns),:,:,len(tickers):], column_to_id, train_data_length+seq_len-1, num_of_non_global_norm_feats, 0, seq_len)
 
     means = data[:-num_of_non_global_norm_feats, :, :train_data_length, :].mean(
         dim=2, keepdim=True
@@ -422,6 +485,9 @@ def download_numerical_financial_data(
     data[:-num_of_non_global_norm_feats] = (
         data[:-num_of_non_global_norm_feats] - means
     ) / (stds + 1e-8)
+
+    # aux data
+    data[:-num_of_non_global_norm_feats] = tensor_fill(data[:-num_of_non_global_norm_feats], dim=2)
 
     if config_args.prediction_type != "classification":
         MTP_targets = (MTP_targets - means[:5]) / stds[:5]
@@ -454,7 +520,11 @@ def download_numerical_financial_data(
         data[-num_of_non_global_norm_feats : -len(time_columns)] = (
             data[-num_of_non_global_norm_feats : -len(time_columns)] - local_means
         ) / (local_stds + 1e-8)
-    
+
+        # aux data
+        data[-num_of_non_global_norm_feats : -len(time_columns)] = tensor_fill(data[-num_of_non_global_norm_feats : -len(time_columns)], dim=3)
+
+
     data = auto_correct_feature_kurtosis_post_znorm(data, column_to_id, train_data_length)
     
     train_data, val_data, test_data = torch.split(
@@ -512,12 +582,15 @@ def download_numerical_financial_data(
 
     metadata = {
         "tickers": unique_tickers,
+        "aux_tickers": unique_aux_tickers,
         "ticker_to_id": ticker_to_id,
+        "aux_ticker_to_id": aux_ticker_to_id,
         "start_date": collected_data_start_date,
         "end_date": collected_data_end_date,
         "val_split_ratio": val_split_ratio,
         "test_split_ratio": test_split_ratio,
         "columns": columns,
+        "aux_columns": aux_columns,
         "column_to_id": column_to_id,
         "indexes": data_length,
         "target_dates": target_dates,
@@ -1021,21 +1094,66 @@ def data_fix_ffill(data: torch.Tensor) -> torch.Tensor:
 
     return filled_data
 
-    # flipped_data = torch.flip(good_values, dims=[1])
-    # flipped_is_bad = torch.flip(is_bad, dims=[1])
+def tensor_fill(
+    data: torch.Tensor,
+    dim: int,
+    method: str = 'ffill'
+) -> torch.Tensor:
+    """
+    Fills NaN and Inf values in a tensor using forward or backward fill
+    along a specified dimension. This function works for tensors of any rank.
 
-    # last_good_idx = torch.cummax(torch.logical_not(flipped_is_bad).int() * torch.arange(data.shape[1], device=data.device).view(1, -1, 1), dim=1)[0]
-    # filled_indices = torch.gather(last_good_idx, 1, torch.arange(data.shape[1], device=data.device).view(1, -1, 1).expand_as(last_good_idx))
-    # bfilled_data = torch.gather(flipped_data, 1, filled_indices)
+    Args:
+        data (torch.Tensor): Input tensor with potential NaN or Inf values.
+        dim (int): The dimension along which to perform the fill operation.
+        method (str): The fill method, either 'ffill' (forward fill)
+                      or 'bfill' (backward fill). Defaults to 'ffill'.
 
-    # # Forward fill
-    # bfilled_data = torch.flip(bfilled_data, dims=[1])
+    Returns:
+        torch.Tensor: A new tensor with NaN/Inf values filled.
+    """
+    if method not in ['ffill', 'bfill']:
+        raise ValueError("Method must be either 'ffill' or 'bfill'.")
 
-    # is_bad = torch.isnan(bfilled_data) | torch.isinf(bfilled_data)
-    # last_good_idx = torch.cummax(torch.logical_not(is_bad).int() * torch.arange(bfilled_data.shape[1], device=bfilled_data.device).view(1, -1, 1), dim=1)[0]
-    # filled_indices = torch.gather(last_good_idx, 1, torch.arange(bfilled_data.shape[1], device=bfilled_data.device).view(1, -1, 1).expand_as(last_good_idx))
+    # For backward fill, we flip the tensor along the specified dimension,
+    # apply a forward fill, and then flip it back.
+    if method == 'bfill':
+        data = torch.flip(data, dims=(dim,))
 
-    # return torch.gather(bfilled_data, 1, filled_indices)
+    # 1. Identify bad values (NaN or Inf)
+    is_bad = torch.isnan(data) | torch.isinf(data)
+
+    # If there are no bad values, return a copy of the data (flipping back if necessary)
+    if not torch.any(is_bad):
+        if method == 'bfill':
+            return torch.flip(data, dims=(dim,))
+        return data.clone()
+
+    # 2. Create a tensor of good values, with bad values temporarily set to 0
+    good_values = data.clone()
+    good_values[is_bad] = 0
+
+    # 3. Create indices for gathering
+    # This creates an arange tensor [0, 1, 2, ...] and reshapes it to
+    # align with the specified dimension for broadcasting.
+    shape = [1] * data.ndim
+    shape[dim] = data.shape[dim]
+    indices = torch.arange(data.shape[dim], device=data.device, dtype=torch.long)
+    reshaped_indices = indices.view(shape)
+
+    # 4. Compute the index of the last valid value
+    mask = torch.logical_not(is_bad)
+    masked_indices = reshaped_indices.expand_as(data) * mask
+    last_good_idx, _ = torch.cummax(masked_indices, dim=dim)
+
+    # 5. Gather the data from good_values using the computed indices
+    filled_data = torch.gather(good_values, dim, last_good_idx)
+
+    # 6. Flip the data back if we performed a backward fill
+    if method == 'bfill':
+        filled_data = torch.flip(filled_data, dims=(dim,))
+
+    return filled_data
 
 
 def generate_noisy_copies(raw_prices: torch.Tensor, tickers: List[str], target_dates: List[int], indexes, data_length: int, cutoff: int, n_copies: int, noise_factor: float) -> List[torch.Tensor]:

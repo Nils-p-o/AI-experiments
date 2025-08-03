@@ -30,6 +30,7 @@ import time
 
 cummulative_times = {"preprocessing": 0, "model": 0, "loss": 0, "metrics": 0}
 
+# TODO maybe add comparisons to losses and other metrics 
 # TODO re-add IC?
 
 def get_spearmanr_correlations_pytorch( # TODO adapt for MTP
@@ -158,85 +159,6 @@ def calculate_expected_accuracy(targets_classes, num_classes):
         accuracy = max(accuracy, (targets_classes == i).sum() / targets_classes.numel())
     return accuracy
 
-class WeightedCCE(nn.Module):
-    def __init__(self, weight_matrix, reduction='mean'):
-        """
-        Initializes a weighted categorical cross-entropy loss function.
-
-        This loss function is compatible with multi-dimensional targets, such as
-        those in semantic segmentation (e.g., shape [N, C, H, W]).
-
-        Args:
-            weight_matrix (torch.Tensor or np.ndarray): A CxC matrix where C is the
-                number of classes. weight_matrix[i, j] is the weight for
-                predicting class j when the true class is i.
-            reduction (str): Specifies the reduction to apply to the output:
-                             'none' | 'mean' | 'sum'.
-                             'none': no reduction will be applied.
-                             'mean': the sum of the output will be divided by the
-                                     number of elements in the output.
-                             'sum': the output will be summed.
-                             Default: 'mean'.
-        """
-        super(WeightedCCE, self).__init__()
-        if not isinstance(weight_matrix, torch.Tensor):
-            weight_matrix = torch.tensor(weight_matrix, dtype=torch.float32)
-        self.weight_matrix = weight_matrix
-        
-        if reduction not in ['mean', 'sum', 'none']:
-            raise ValueError(f"Reduction must be one of 'mean', 'sum', or 'none', but got {reduction}")
-        self.reduction = reduction
-
-    def forward(self, y_pred, y_true):
-        """
-        Calculates the weighted categorical cross-entropy.
-
-        Args:
-            y_pred (torch.Tensor): The predicted probabilities (output of softmax).
-                                   Shape: (N, C, *) where * means any number of
-                                   additional dimensions.
-            y_true (torch.Tensor): The one-hot encoded true labels. Must have the
-                                   same shape as y_pred.
-
-        Returns:
-            torch.Tensor: The calculated loss, with reduction applied.
-        """
-        # Ensure weight matrix is on the same device as predictions
-        self.weight_matrix = self.weight_matrix.to(y_pred.device)
-
-        # 1. Get true class indices from the one-hot y_true tensor.
-        # The shape will be (N, *)
-        true_class_indices = torch.argmax(y_true, dim=1)
-
-        # 2. Gather the appropriate weight vectors.
-        # For each element in the batch and spatial dims, we get its C-element weight vector.
-        # The resulting shape will be (N, *, C).
-        weights_for_batch = self.weight_matrix[true_class_indices]
-
-        # 3. Align the tensor shapes for multiplication.
-        # We need to permute the weights tensor from (N, *, C) to (N, C, *).
-        # This is a general way to move the last dimension to the second position.
-        dims = list(range(weights_for_batch.dim()))
-        # e.g., for 4D tensor (N,H,W,C) -> (0,1,2,3) -> (0,3,1,2) -> (N,C,H,W)
-        weights_for_batch = weights_for_batch.permute(dims[0], dims[-1], *dims[1:-1])
-
-        # 4. Apply the weights to the predictions.
-        # The shapes of y_pred and weights_for_batch are now broadcast-compatible.
-        weighted_predictions = y_pred * weights_for_batch
-
-        # 5. Calculate the cross-entropy loss for each element.
-        # We sum over the class dimension (dim=1). The result is a tensor of per-element
-        # losses with shape (N, *).
-        loss = -torch.sum(y_true * torch.log(weighted_predictions + 1e-9), dim=1)
-
-        # 6. Apply the specified reduction.
-        if self.reduction == 'mean':
-            return loss.mean()
-        elif self.reduction == 'sum':
-            return loss.sum()
-        else:  # 'none'
-            return loss
-
 
 class MoneyExperiment(pl.LightningModule):
     def __init__(
@@ -274,8 +196,9 @@ class MoneyExperiment(pl.LightningModule):
         self.pred_indices = args.indices_to_predict
         self.save_hyperparameters(ignore=["model"])
         self.args = args
-        self.num_sequences = len(args.tickers)
-        self.tickers = args.tickers
+        self.num_sequences = len(args.tickers) + len(args.aux_tickers)
+        self.tickers = args.tickers + args.aux_tickers
+        self.num_normal_tickers = len(args.tickers)
 
         self.cli_args = argparse.Namespace()
         self.cli_args.start_date_data = "2020-01-01"
@@ -289,8 +212,8 @@ class MoneyExperiment(pl.LightningModule):
         self.validation_step_outputs = []
 
 
-        feature_weights = [1, 1, 1, 1, 1]
-        ticker_weights = [1 for _ in range(len(args.tickers))]
+        feature_weights = [10, 1, 1, 1, 1]
+        ticker_weights = [1 for _ in range(len(args.tickers))] + [0.2 for _ in range(len(args.aux_tickers))]
         seen_unseen_weights = [1 for _ in range(args.seq_len)]
 
         feature_weights = torch.tensor([w*len(feature_weights)/sum(feature_weights) for w in feature_weights])
@@ -299,7 +222,7 @@ class MoneyExperiment(pl.LightningModule):
 
         loss_weights = feature_weights.unsqueeze(-1) * ticker_weights.unsqueeze(0)
         loss_weights = seen_unseen_weights.unsqueeze(-1).unsqueeze(-1) * loss_weights.unsqueeze(0)
-        self.loss_weights = loss_weights.unsqueeze(0).unsqueeze(3).to("cuda" if torch.cuda.is_available() else "cpu")
+        self.loss_weights = loss_weights.unsqueeze(0).unsqueeze(3)
 
 
     def forward(self, *args, **kwargs):
@@ -593,11 +516,11 @@ class MoneyExperiment(pl.LightningModule):
                 for i in range(max(self.pred_indices)):
                     self.log(
                         f"Close_Target/{stage}_unseen_{self.pred_indices[i]}_accuracy",
-                        (preds_classes == targets_classes)[:, -1:, 0, i, :].sum() / targets_classes[:, -1:, 0, i, :].numel(),
+                        (preds_classes == targets_classes)[:, -1:, 0, i, :self.num_normal_tickers].sum() / targets_classes[:, -1:, 0, i, :self.num_normal_tickers].numel(),
                         **current_log_opts,
                     )
 
-                for i in range(self.num_sequences):
+                for i in range(self.num_normal_tickers):
                     self.log(
                         f"Close_Sequence/{stage}_unseen_{self.tickers[i]}_accuracy",
                         (preds_classes == targets_classes)[:, -1:, 0, :, i].sum() / targets_classes[:, -1:, 0, :, i].numel(),
@@ -605,9 +528,9 @@ class MoneyExperiment(pl.LightningModule):
                     )
                 
                 
-                unseen_logits_close = preds[:, :, -1:, 0, :, :]
-                unseen_class_close = preds_classes[:, -1:, 0, :, :]
-                unseen_targets_close = targets_classes[:, -1:, 0, :, :]
+                unseen_logits_close = preds[:, :, -1:, 0, :, :self.num_normal_tickers]
+                unseen_class_close = preds_classes[:, -1:, 0, :, :self.num_normal_tickers]
+                unseen_targets_close = targets_classes[:, -1:, 0, :, :self.num_normal_tickers]
 
                 # Calculate confusion matrix
                 confusion_matrix = torch.zeros(
@@ -731,11 +654,16 @@ class MoneyExperiment(pl.LightningModule):
                 )
 
         if stage == 'val':
-
-            self.validation_step_outputs.append({
-                'preds': preds.detach().cpu(),
-                'targets': targets.detach().cpu()
-            })
+            if self.args.prediction_type == 'classification':
+                self.validation_step_outputs.append({
+                    'preds': preds[:,:,:,:,:,:self.num_normal_tickers].detach().cpu(),
+                    'targets': targets[:,:,:,:,:self.num_normal_tickers].detach().cpu()
+                })
+            else:
+                self.validation_step_outputs.append({
+                    'preds': preds[:,:,:,:,:self.num_normal_tickers].detach().cpu(),
+                    'targets': targets[:,:,:,:,:self.num_normal_tickers].detach().cpu()
+                })
 
         return loss
 
@@ -778,14 +706,14 @@ class MoneyExperiment(pl.LightningModule):
             
             # 2. Define the parameter groups for the built-in optimizer
             param_groups = [
-                dict(params=muon_params, use_muon=True, lr=self.args.muon_lr, weight_decay=weight_decay),
+                dict(params=muon_params, use_muon=True, lr=self.args.muon_lr),
                 # NOTE: MuonWithAuxAdam hardcodes the aux optimizer to Adam.
                 # It will use the lr from this group.
-                dict(params=aux_params, use_muon=False, lr=self.learning_rate, weight_decay=weight_decay),
+                dict(params=aux_params, use_muon=False, lr=self.learning_rate),
             ]
 
             # 3. Instantiate the built-in optimizer directly
-            optimizer = MuonWithAuxAdam(param_groups)
+            optimizer = MuonWithAuxAdam(param_groups, weight_decay=weight_decay)
 
         elif self.args.optimizer == 'orthograd':
             optimizer = OrthoGrad(
@@ -925,15 +853,6 @@ class MoneyExperiment(pl.LightningModule):
                     **log_opts_epoch,
                 )
             
-            for i in range(targets.shape[-1]):
-                trading_strategy_metrics = trading_metrics(targets[:, i], backtest_predictions[:, i], self.args)
-                for metric_name, metric_value in trading_strategy_metrics.items():
-                    self.log(
-                        f"Trading_strategy_metrics_individual/val_{metric_name}_{self.tickers[i]}",
-                        metric_value,
-                        **log_opts_epoch,
-                )
-            
             cummulative_times["metrics"] += (
                 time.time_ns() - time_metrics_start
             ) / 1e6
@@ -958,11 +877,6 @@ class MoneyExperiment(pl.LightningModule):
                 cummulative_times["metrics"] / (self.global_step + 1),
                 logger=True,
             )
-
-            cummulative_times["preprocessing"] = 0
-            cummulative_times["model"] = 0
-            cummulative_times["loss"] = 0
-            cummulative_times["metrics"] = 0
 
     def on_train_batch_end(self, outputs, batch, batch_idx):
         if self.model.__class__.__name__ == "Money_former_nGPT":
