@@ -1,5 +1,31 @@
 similar to notes, but just for money former concenpt
 
+################################################
+current notes:
+
+to be implemented in new best model:
+muon + muP (kinda already done)
+cce weighing --- needs stat and analysis of what is best
+feats loss weighing --- currently running stat test for that
+more reguralization - dont know how, but currently the limiting factor, as bigger =/= better (i think, needs stat test)
+
+maybes:
+LoRA ff - even if the same performance, should be a bit faster when scaling up - needs stat
+bigger batches? - dunno, kinda a dead end, i think
+aux seqs --- will be more data + i can already see it helps with reguralization, needs stat test
+more data, somehow?
+noise -- stat test
+
+global data, or local simple? -- stat test
+investigate hpo for linear decay and constant lr -- might be better
+
+needs a bit of work:
+bert Inclusion
+diffusion lm
+nGPT - again?
+
+
+
 Money former
 V2:
 2 signifies using multiple time series sequences (the vision), might be merged into normal file, if performs better
