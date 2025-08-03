@@ -1,8 +1,4 @@
 # same as non muP version, but should be better with scale up
-# needs to be based on some baseline model, then
-# scale var of lin layer by 1/delta_d (delta_d = d_base/d_model)
-
-
 
 import torch
 import torch.nn as nn
@@ -172,6 +168,8 @@ class Money_former_block(nn.Module):
         else:
             self.mask = get_causal_mask(args.seq_len+1)
             self.mask = self.mask.repeat(1, 1, self.num_sequences, self.num_sequences)
+        
+        self.mask = self.mask.to("cuda" if torch.cuda.is_available() else "cpu")
 
     def forward(self, x, freqs_cis):
         batch_size, seq_len, _ = x.size()

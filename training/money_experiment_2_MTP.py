@@ -299,7 +299,7 @@ class MoneyExperiment(pl.LightningModule):
 
         loss_weights = feature_weights.unsqueeze(-1) * ticker_weights.unsqueeze(0)
         loss_weights = seen_unseen_weights.unsqueeze(-1).unsqueeze(-1) * loss_weights.unsqueeze(0)
-        self.loss_weights = loss_weights.unsqueeze(0).unsqueeze(3)
+        self.loss_weights = loss_weights.unsqueeze(0).unsqueeze(3).to("cuda" if torch.cuda.is_available() else "cpu")
 
 
     def forward(self, *args, **kwargs):
@@ -958,6 +958,11 @@ class MoneyExperiment(pl.LightningModule):
                 cummulative_times["metrics"] / (self.global_step + 1),
                 logger=True,
             )
+
+            cummulative_times["preprocessing"] = 0
+            cummulative_times["model"] = 0
+            cummulative_times["loss"] = 0
+            cummulative_times["metrics"] = 0
 
     def on_train_batch_end(self, outputs, batch, batch_idx):
         if self.model.__class__.__name__ == "Money_former_nGPT":
