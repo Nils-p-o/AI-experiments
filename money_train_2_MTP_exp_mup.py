@@ -56,6 +56,8 @@ from training.money_experiment_2_MTP import MoneyExperiment
 import torch.distributed as dist
 from functools import wraps
 
+from mup import set_base_shapes 
+
 def apply_distributed_patch():
     """
     Applies a comprehensive monkey-patch to torch.distributed functions to prevent
@@ -107,13 +109,6 @@ def apply_distributed_patch():
         dist.all_gather = patched_all_gather
 
     print("--- Applied comprehensive torch.distributed patches for get_world_size, get_rank, and all_gather ---")
-
-# from transformer_arch.money.money_former_MLA_DINT_cog_attn_2_MTP_c_only import Money_former_MLA_DINT_cog_attn_MTP
-# from training.data_loaders.test_feats_stocks_time_series_2_MTP_new_c_only import (
-#     FinancialNumericalDataModule,
-#     download_numerical_financial_data,
-# )
-# from training.money_experiment_2_MTP_c_only import MoneyExperiment
 
 
 def proceed(args: argparse.Namespace):
@@ -189,6 +184,11 @@ def proceed(args: argparse.Namespace):
     data_module.setup()  # Very important to setup the data
     # vocab_size = data_module.get_vocab_size()
     args.input_features = len(data_module._metadata["columns"])
+
+    with open("experiment_configs/hpo_classification_base.json", "r") as f:
+        base_args = argparse.Namespace(**json.load(f))
+    base_args.input_features = args.input_features
+
     # --- Model Definition ---
     match architecture:  # TODO auto format qk_rope_dim for non MLA (currently all of them)
         case "Money_former":
@@ -206,6 +206,7 @@ def proceed(args: argparse.Namespace):
         case "Money_former_MLA_DINT_cog_attn":
             model = Money_former_MLA_DINT_cog_attn(args=args)
         case "Money_former_MLA_DINT_cog_attn_MTP":
+            base_model = Money_former_MLA_DINT_cog_attn_MTP(args=base_args)
             model = Money_former_MLA_DINT_cog_attn_MTP(args=args)
         case _:
             raise ValueError(f"Architecture {architecture} not supported")
@@ -215,6 +216,8 @@ def proceed(args: argparse.Namespace):
         f"The model has {num_params:,} trainable parameters. Parameter dtype: {args.dtype}"
     )
     args.num_params = num_params
+
+    set_base_shapes(model, base_model)
 
     # torch compile
     # model = torch.compile(model)
@@ -309,7 +312,7 @@ if __name__ == "__main__":
         # default="./experiment_configs/profile.json",
         # default="./experiment_configs/MTP_experiment_trip.json",
         # default="./experiment_configs/MTP_classification_exp.json",
-        default="./experiment_configs/hpo_classification_base.json",
+        default="./experiment_configs/hpo_scaled_up.json",
         help="Path to config file.",
     )
     if parser.parse_known_args()[0].config != "":

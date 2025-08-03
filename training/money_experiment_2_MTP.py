@@ -292,7 +292,7 @@ class MoneyExperiment(pl.LightningModule):
 
         loss_weights = feature_weights.unsqueeze(-1) * ticker_weights.unsqueeze(0)
         loss_weights = seen_unseen_weights.unsqueeze(-1).unsqueeze(-1) * loss_weights.unsqueeze(0)
-        self.loss_weights = loss_weights.unsqueeze(0).unsqueeze(3)
+        self.loss_weights = loss_weights.unsqueeze(0).unsqueeze(3).to("cuda" if torch.cuda.is_available() else "cpu")
 
 
     def forward(self, *args, **kwargs):
@@ -1058,14 +1058,14 @@ class MoneyExperiment(pl.LightningModule):
             
             # 2. Define the parameter groups for the built-in optimizer
             param_groups = [
-                dict(params=muon_params, use_muon=True, lr=self.args.muon_lr),
+                dict(params=muon_params, use_muon=True, lr=self.args.muon_lr, weight_decay=weight_decay),
                 # NOTE: MuonWithAuxAdam hardcodes the aux optimizer to Adam.
                 # It will use the lr from this group.
-                dict(params=aux_params, use_muon=False, lr=self.learning_rate),
+                dict(params=aux_params, use_muon=False, lr=self.learning_rate, weight_decay=weight_decay),
             ]
 
             # 3. Instantiate the built-in optimizer directly
-            optimizer = MuonWithAuxAdam(param_groups, weight_decay=weight_decay)
+            optimizer = MuonWithAuxAdam(param_groups)
 
         elif self.args.optimizer == 'orthograd':
             optimizer = OrthoGrad(
@@ -1135,7 +1135,6 @@ class MoneyExperiment(pl.LightningModule):
 
     def on_validation_epoch_end(self):
         outputs = self.validation_step_outputs
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
         all_preds = torch.cat([x['preds'] for x in outputs], dim=0) # (batch/time, seq_len, features, targets, num_sequences) or
         # (batch_size, num_classes, seq_len, features, targets, num_sequences)
@@ -1146,7 +1145,7 @@ class MoneyExperiment(pl.LightningModule):
                 norm_means_for_close = self.args.normalization_means[0, :]
                 norm_stds_for_close = self.args.normalization_stds[0, :]
 
-                aligned_predictions = torch.empty((preds.shape[0]-(preds.shape[1]-1), preds.shape[1], preds.shape[2]), device=device)
+                aligned_predictions = torch.empty((preds.shape[0]-(preds.shape[1]-1), preds.shape[1], preds.shape[2]))
                 for i in range(preds.shape[1]):
                     start_day = preds.shape[1] - i - 1
                     aligned_predictions[:, i, :] = preds[start_day:preds.shape[0]-i, i, :]
@@ -1155,7 +1154,7 @@ class MoneyExperiment(pl.LightningModule):
             elif self.args.prediction_type == 'classification':
                 preds = all_preds[:, :, -1, 0, :, :] # time, classes, targets, num_sequences
                 preds = preds.permute(0, 2, 3, 1) # time, targets, num_sequences, classes
-                aligned_predictions = torch.empty((preds.shape[0]-(preds.shape[1]-1), preds.shape[1], preds.shape[2], preds.shape[3]), device=device)
+                aligned_predictions = torch.empty((preds.shape[0]-(preds.shape[1]-1), preds.shape[1], preds.shape[2], preds.shape[3]))
                 for i in range(preds.shape[1]):
                     start_day = preds.shape[1] - i - 1
                     aligned_predictions[:, i, :, :] = preds[start_day:preds.shape[0]-i, i, :, :]
@@ -1230,6 +1229,11 @@ class MoneyExperiment(pl.LightningModule):
                 cummulative_times["metrics"] / (self.global_step + 1),
                 logger=True,
             )
+
+            cummulative_times["preprocessing"] = 0
+            cummulative_times["model"] = 0
+            cummulative_times["loss"] = 0
+            cummulative_times["metrics"] = 0
 
     def on_train_batch_end(self, outputs, batch, batch_idx):
         if self.model.__class__.__name__ == "Money_former_nGPT":
