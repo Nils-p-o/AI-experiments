@@ -26,7 +26,7 @@ class Money_former_MLA_DINT_cog_attn_MTP(nn.Module):
         self.scaling = self.d_model ** -0.5
 
         self.ticker_dim = self.d_model
-        self.ticker_embedding = nn.Embedding(len(args.tickers), self.ticker_dim)
+        self.ticker_embedding = nn.Embedding(len(args.tickers)+len(args.aux_tickers), self.ticker_dim)
 
         self.shared_value_input_dim = (self.d_model // sum(args.unique_inputs_ratio) * args.unique_inputs_ratio[1])
         self.shared_value_input = nn.Linear(
@@ -69,6 +69,9 @@ class Money_former_MLA_DINT_cog_attn_MTP(nn.Module):
             [MTP_money_former_block(args, depth + self.num_layers) for depth in range(max(args.indices_to_predict)-1)]
         )
 
+        # auxiliary inputs
+        self.aux_inputs = nn.Linear(20, self.d_model, bias=args.bias)
+        self.num_normal_tickers = len(args.tickers)
 
 
     def forward(
@@ -131,7 +134,9 @@ class Money_former_MLA_DINT_cog_attn_MTP(nn.Module):
     
     def encode_inputs(self, x):
         # batch_size, targets, seq_len, num_sequences, _ = x.size()
-        shared_temp_x = self.shared_value_input(x)
+        shared_temp_x_normal = self.shared_value_input(x[:,:,:,:self.num_normal_tickers,:])
+        shared_temp_x_aux = self.aux_inputs(torch.cat((x[:,:,:,self.num_normal_tickers:,:10],x[:,:,:,self.num_normal_tickers:,-10:]), dim=-1))
+        shared_temp_x = torch.cat([shared_temp_x_normal, shared_temp_x_aux], dim=-2)
         if self.unique_inputs:
             unique_temp_x = []
             x_as_list = [t.squeeze(3) for t in torch.split(x, 1, dim=3)]
@@ -153,7 +158,7 @@ class Money_former_block(nn.Module):
         self.norm1 = nn.RMSNorm(args.d_model)
         self.norm2 = nn.RMSNorm(args.d_model)
         self.ff = SwiGLU_feed_forward(args)
-        self.num_sequences = len(args.tickers)
+        self.num_sequences = len(args.tickers) + len(args.aux_tickers)
         if args.use_global_seperator:
             # self.mask = torch.zeros(1, 1, args.seq_len*self.num_sequences+1, args.seq_len*self.num_sequences+1)
             temp_mask = get_causal_mask(args.seq_len)
@@ -247,7 +252,7 @@ class custom_MHA(nn.Module): # a mix of MLA and DINT
         #     ]
         # )
 
-        self.num_sequences = len(args.tickers)
+        self.num_sequences = len(args.tickers) + len(args.aux_tickers)
         self.use_global_seperator = args.use_global_seperator
 
     def forward(self, x, mask=None, freqs_cis=None):

@@ -6,22 +6,52 @@ from tensorboard.backend.event_processing.event_accumulator import EventAccumula
 
 def welch_t_test(a, b):
     t_value, p_value = stats.ttest_ind(a, b, equal_var=False)
-    print(f"Welch's T statistic: {t_value}")
-    print(f"Welch's T statistic p-value: {p_value}")
+    print(f"Welch's T statistic: {t_value:.6f}")
+    print(f"Welch's T statistic p-value: {p_value:.6f}")
+    return
+
+
+def paired_t_test(a, b):
+    t_value, p_value = stats.ttest_rel(a, b)
+    print(f"Paired T statistic: {t_value:.6f}")
+    print(f"Paired T statistic p-value: {p_value:.6f}")
     return
 
 
 shorthand_to_full = {
     "unseen_loss": "Losses_seen_unseen/val_loss_unseen",
-    "backtest_loss": "Backtest_metrics/val_CE_loss",
-    "calmar_ratio": "Trading_strategy_metrics/val_Calmar Ratio",
+    "backtest_loss": "Backtest_metrics/val_CE_Loss",
+    "backtest_acc": "Backtest_metrics/val_Total_Accuracy",
     "f1": "Backtest_metrics/val_Total_F1",
+    "calmar_ratio": "Trading_strategy_metrics/val_Calmar Ratio",
+    "max_drawdown": "Trading_strategy_metrics/val_Max Drawdown",
+    "annualized_return": "Trading_strategy_metrics/val_Annualized Return",
+    "win_loss_ratio": "Trading_strategy_metrics/val_Win/Loss Day Ratio",
+    "days_traded": "Trading_strategy_metrics/val_Days Traded",
     "aapl_acc": "Close_Sequence/val_unseen_AAPL_accuracy",
     "amzn_acc": "Close_Sequence/val_unseen_AMZN_accuracy",
     "intc_acc": "Close_Sequence/val_unseen_INTC_accuracy",
     "msft_acc": "Close_Sequence/val_unseen_MSFT_accuracy",
     "nvda_acc": "Close_Sequence/val_unseen_NVDA_accuracy",
     "gspc_acc": "Close_Sequence/val_unseen_^GSPC_accuracy",
+}
+
+higher_better = {
+    "unseen_loss": 0,
+    "backtest_loss": 0,
+    "backtest_acc": 1,
+    "f1": 1,
+    "calmar_ratio": 1,
+    "max_drawdown": 1,
+    "annualized_return": 1,
+    "win_loss_ratio": 1,
+    "days_traded": 1,
+    "aapl_acc": 1,
+    "amzn_acc": 1,
+    "intc_acc": 1,
+    "msft_acc": 1,
+    "nvda_acc": 1,
+    "gspc_acc": 1,
 }
 
 
@@ -130,24 +160,51 @@ def print_metrics(run_name: str, min_ver: int, max_ver: int):
     print(full_results)
 
 
+def compare(base_model, compare_model):
+    for metric, results in base_model.items():
+        if metric not in compare_model:
+            continue
+        print(f"{metric}:")
+        if higher_better[metric]:
+            welch_t_test(compare_model[metric], results)
+        else:
+            welch_t_test(results, compare_model[metric])
+        print(f"diff: {np.mean(compare_model[metric]) - np.mean(results):.6f}")
+
+def paired_compare(base_model, compare_model):
+    for metric, results in base_model.items():
+        if metric not in compare_model:
+            continue
+        print(f"{metric}:")
+        if higher_better[metric]:
+            paired_t_test(compare_model[metric], results)
+        else:
+            paired_t_test(results, compare_model[metric])
+        print(f"diff: {np.mean(compare_model[metric]) - np.mean(results):.6f}")
+
 # TODO paired by seeds for paired tests
 # TODO mann-whitney u and wilcoxon signed rank tests
 
 list_of_losses = [
-    "unseen_loss",
-    "calmar_ratio",
+    "backtest_loss",
+    "backtest_acc",
     "f1",
-    "aapl_acc",
-    "amzn_acc",
-    "intc_acc",
-    "msft_acc",
-    "nvda_acc",
-    "gspc_acc",
+    "calmar_ratio",
+    "max_drawdown",
+    "annualized_return",
+    "win_loss_ratio",
+    "days_traded",
+    # "aapl_acc",
+    # "amzn_acc",
+    # "intc_acc",
+    # "msft_acc",
+    # "nvda_acc",
+    # "gspc_acc",
 ]
 
-lowest_ver = 3
-max_ver = 5
-current_name = "Money/testing/fixed_mixing/class_seq_3_2_opt_feats_02_no_bias_weighted_loss_10_muon_adamw/Money_former_MLA_DINT_cog_attn_MTP_3_64_64_4_4_32"
+lowest_ver = 0
+max_ver = 4
+current_name = "Money/testing/fixed_mixing/testing_normal_weighted_5/Money_former_MLA_DINT_cog_attn_MTP_3_64_64_4_2_32"
 print_metrics(current_name, lowest_ver, max_ver)
 
 # diff models and their achieved metrics (max, or min depending on the metric)
@@ -187,21 +244,6 @@ seq_2_hor_2 = {  # seems like the best one? because the other extra horizons don
 #     "unseen_loss": np.array([0.8779, 0.8689, 0.8748, 0.8583]),
 #     "calmar_ratio": np.array([1.459, 1.316, 0.782, 1.067]),
 # }
-# # print(f"seq_2_hor_1 unseen_loss: {np.mean(seq_2_hor_1['unseen_loss'])}")
-# # print(f"seq_2_hor_1 calmar_ratio: {np.mean(seq_2_hor_1['calmar_ratio'])}")
-
-# print(f"seq_2_hor_2 unseen_loss: {np.mean(seq_2_hor_2['unseen_loss'])}")
-# print(f"seq_2_hor_2 calmar_ratio: {np.mean(seq_2_hor_2['calmar_ratio'])}")
-# # print("\n--- seq_2_hor_1 vs seq_2_hor_2 ---")
-# # welch_t_test(seq_2_hor_1['unseen_loss'], seq_2_hor_2['unseen_loss']) # maybe on this? (0.08 better)
-# # welch_t_test(seq_2_hor_1['calmar_ratio'], seq_2_hor_2['calmar_ratio'])
-
-# print(f"no_mix_seq_2_hor_5 unseen_loss: {np.mean(no_mix_seq_2_hor_5['unseen_loss'])}")
-# print(f"no_mix_seq_2_hor_5 calmar_ratio: {np.mean(no_mix_seq_2_hor_5['calmar_ratio'])}") # the same
-# print("\n--- seq_2_hor_2 vs no_mix_seq_2_hor_5 ---")
-# welch_t_test(seq_2_hor_2['unseen_loss'], no_mix_seq_2_hor_5['unseen_loss'])
-# welch_t_test(seq_2_hor_2['calmar_ratio'], no_mix_seq_2_hor_5['calmar_ratio'])
-
 
 # current working baseline (6 tickers)
 # dim 64 (model ff), 4 layers, g sep, "full" attn, no noise, 0.25 dropout, normed inputs, 0.8 opt feats, no gsa
@@ -371,6 +413,33 @@ opt_feats_02_no_b_weighted_feats_loss_muon = {
 # }
 
 
+##########################################################################
+# normal baseline
+# handpicked feats, no weights for loss
+#
+hand_feats_nb_weight_loss_1 = {
+    "backtest_loss": [0.9884, 0.9899, 0.9929],
+    "backtest_acc": [0.5103, 0.5092, 0.5109],
+    "f1": [0.3579, 0.356, 0.3579],
+    "calmar_ratio": [1.1611, 1.1646, 1.2098],
+    "max_drawdown": [-0.2857, -0.2288, -0.2487],
+    "annualized_return": [0.3318, 0.2695, 0.509],
+    "win_loss_ratio": [0.7021, 0.7684, 0.8535],
+    "days_traded": [634.0, 630.0, 758.0],
+}
+
+hand_feats_nb_weight_loss_5 = {
+    "backtest_loss": [0.9895, 0.9872, 0.9915, 0.9904, 0.991],
+    "backtest_acc": [0.5103, 0.5103, 0.5113, 0.5107, 0.512],
+    "f1": [0.3373, 0.3387, 0.3519, 0.3577, 0.3507],
+    "calmar_ratio": [1.3194, 1.0223, 1.5986, 0.9386, 1.4063],
+    "max_drawdown": [-0.2867, -0.2945, -0.2975, -0.2896, -0.1992],
+    "annualized_return": [0.4063, 0.3322, 0.5338, 0.376, 0.343],
+    "win_loss_ratio": [0.7872, 0.8547, 0.8034, 0.8381, 0.8302],
+    "days_traded": [661.0, 667.0, 662.0, 733.0, 641.0],
+}
+
+
 opt_feats_02_placeholder = {
     "unseen_loss": np.array([]),
     "calmar_ratio": np.array([]),
@@ -380,14 +449,6 @@ opt_feats_02_placeholder = {
 print(f"baseline unseen_loss: {np.mean(baseline['unseen_loss'])}")
 print(f"baseline calmar_ratio: {np.mean(baseline['calmar_ratio'])}")
 print(f"baseline f1: {np.mean(baseline['f1'])}")
-
-# print("\n--- opt_feats_02 vs opt_feats_02_no_bias ---") # nothing
-# welch_t_test(opt_feats_02['unseen_loss'], opt_feats_02_no_bias['unseen_loss'])
-# welch_t_test(opt_feats_02_no_bias['calmar_ratio'], opt_feats_02['calmar_ratio'])
-# welch_t_test(opt_feats_02_no_bias['f1'], opt_feats_02['f1'])
-# print(f"difference in unseen_loss: {np.mean(opt_feats_02_no_bias['unseen_loss']) - np.mean(opt_feats_02['unseen_loss'])}")
-# print(f"difference in calmar_ratio: {np.mean(opt_feats_02_no_bias['calmar_ratio']) - np.mean(opt_feats_02['calmar_ratio'])}")
-# print(f"difference in f1: {np.mean(opt_feats_02_no_bias['f1']) - np.mean(opt_feats_02['f1'])}")
 
 
 print("\n--- opt_feats_02_no_bias vs opt_feats_02_no_bias_4_h_32_hdim ---")  #
@@ -499,7 +560,9 @@ print(
 #     f"difference in f1: {np.mean(opt_feats_02_no_b_weighted_feats_loss_adamw['f1']) - np.mean(opt_feats_02_no_b_weighted_feats_loss['f1'])}"
 # )
 
-print("\n--- opt_feats_02_no_b_weighted_feats_loss vs opt_feats_02_no_b_weighted_feats_loss_muon  ---")
+print(
+    "\n--- opt_feats_02_no_b_weighted_feats_loss vs opt_feats_02_no_b_weighted_feats_loss_muon  ---"
+)
 welch_t_test(
     opt_feats_02_no_b_weighted_feats_loss["unseen_loss"],
     opt_feats_02_no_b_weighted_feats_loss_muon["unseen_loss"],
@@ -521,3 +584,6 @@ print(
 print(
     f"difference in f1: {np.mean(opt_feats_02_no_b_weighted_feats_loss_muon['f1']) - np.mean(opt_feats_02_no_b_weighted_feats_loss['f1'])}"
 )
+
+print(f"\n--- hand_feats_nb_weight_loss_1 vs hand_feats_nb_weight_loss_5  ---")
+compare(hand_feats_nb_weight_loss_1, hand_feats_nb_weight_loss_5)

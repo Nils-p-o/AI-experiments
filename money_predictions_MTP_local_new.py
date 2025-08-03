@@ -936,6 +936,7 @@ def trading_metrics(actuals, predictions, args):
     metrics["Calmar Ratio"] = stats["Calmar Ratio"]
     metrics["Max Drawdown"] = stats["Max Drawdown"]
     metrics["Win/Loss Day Ratio"] = stats["Win/Loss Day Ratio"]
+    metrics["Days Traded"] = stats["Number of Winning Days"] + stats["Number of Losing Days"]
 
     return metrics
 

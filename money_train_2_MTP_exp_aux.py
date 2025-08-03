@@ -46,12 +46,20 @@ from transformer_arch.money.money_former_MLA_DINT_cog_attn_2 import Money_former
 # from transformer_arch.money.money_former_MLA_DINT_cog_attn_2_MTP_diff_attn_dims import Money_former_MLA_DINT_cog_attn_MTP
 
 # from transformer_arch.money.money_former_MLA_DINT_cog_attn_2_MTP_muP import Money_former_MLA_DINT_cog_attn_MTP
-from transformer_arch.money.money_former_MLA_DINT_cog_attn_2_MTP import Money_former_MLA_DINT_cog_attn_MTP
-from training.data_loaders.test_feats_stocks_time_series_2_MTP_new import (
+# from transformer_arch.money.money_former_MLA_DINT_cog_attn_2_MTP import Money_former_MLA_DINT_cog_attn_MTP
+# from training.data_loaders.test_feats_stocks_time_series_2_MTP_new import (
+#     FinancialNumericalDataModule,
+#     download_numerical_financial_data,
+# )
+# from training.money_experiment_2_MTP import MoneyExperiment
+
+from transformer_arch.money.money_former_MLA_DINT_cog_attn_2_MTP_aux import Money_former_MLA_DINT_cog_attn_MTP
+from training.data_loaders.test_feats_stocks_time_series_2_MTP_new_aux import (
     FinancialNumericalDataModule,
     download_numerical_financial_data,
 )
-from training.money_experiment_2_MTP import MoneyExperiment
+from training.money_experiment_2_MTP_aux import MoneyExperiment
+
 
 import torch.distributed as dist
 from functools import wraps
@@ -137,6 +145,7 @@ def proceed(args: argparse.Namespace):
         args.indices_to_predict
     )  # how many datapoints in the future to predict (workdays, not regular days, because market no work weekend)
     args.tickers = sorted(args.tickers)
+    args.aux_tickers = sorted(args.aux_tickers)
 
     match args.dtype:
         case "fp32":
@@ -148,13 +157,10 @@ def proceed(args: argparse.Namespace):
         case _:
             args.dtype = "fp32"
             trainer_precision = "32-true"
-    
-    if not args.seed:
-        seed = torch.seed()
-        seed = seed % (2**32)
-        args.seed = seed
-
-    pl.seed_everything(args.seed)
+    seed = torch.seed()
+    seed = seed % (2**32)
+    args.seed = seed
+    pl.seed_everything(seed)
     print(
         f"LLaMa seq_len:{seq_len} d_model:{d_model} d_ff:{d_ff} num_layers:{num_layers} nhead:{nhead} dropout:{dropout} lr:{lr} t_total:{t_total} warmup_steps:{warmup_steps} t_0:{t_0} t_mult:{t_mult} lr_mult:{lr_mult} batch_size:{batch_size}"
     )
@@ -172,6 +178,7 @@ def proceed(args: argparse.Namespace):
 
         args.normalization_means, args.normalization_stds = download_numerical_financial_data(
             tickers=args.tickers,
+            aux_tickers=args.aux_tickers,
             seq_len=seq_len,
             check_if_already_downloaded=False,  # TODO make this better/check which features are missing
             target_dates=pred_indices,
@@ -307,31 +314,86 @@ if __name__ == "__main__":
     parser.add_argument(
         "--config",
         type=str,
-        default="./experiment_configs/MTP_classification_exp.json",
+        # default="./experiment_configs/MTP_triplicate.json",
+        # default="./experiment_configs/diff_head_dims_MTP.json",
+        # default="./experiment_configs/profile.json",
+        # default="./experiment_configs/MTP_experiment_trip.json",
+        # default="./experiment_configs/MTP_classification_exp.json",
+        default="./experiment_configs/MTP_classification_exp_aux.json",
         help="Path to config file.",
     )
-
-    config_args, remaining_argv = parser.parse_known_args()
-
-    config_dict = {}
-    if config_args.config and config_args.config != "":
-        try:
-            with open(config_args.config, "r") as f:
-                config_dict = json.load(f)
-        except Exception as e:
-            raise ValueError(f"Error loading config file: {e}")
-
-    for key, value in config_dict.items():
-        # A nice-to-have: handle boolean flags properly
-        # argparse.BooleanOptionalAction creates both --feature and --no-feature flags
+    if parser.parse_known_args()[0].config != "":
+        with open(parser.parse_known_args()[0].config, "r") as f:
+            args = json.load(f)
+        for k, v in args.items():
+            parser.set_defaults(**{k: v})
+            # parser.add_argument(f"--{k}", type=type(v), default=v)
+    else:
+        # Model architecture arguments (same as before)
         parser.add_argument(
-            f"--{key}",
-            type=type(value), # The type is inferred from the JSON value
-            default=value,
-            help=f"Set the value for {key}. Default: {value}"
+            "--architecture",
+            type=str,
+            default="Money_former",  # "DINT",
+            help="Model architecture (LLaMa, ...)",
         )
-    
-    args = parser.parse_args(remaining_argv, namespace=config_args)
+        parser.add_argument(
+            "--d_model", type=int, default=128, help="Embedding dimension."
+        )
+        parser.add_argument(
+            "--nhead", type=int, default=8, help="Number of attention heads."
+        )
+        parser.add_argument(
+            "--num_layers", type=int, default=4, help="Number of layers."
+        )
+        parser.add_argument("--d_ff", type=int, default=512, help="dimension in d_ff")
+
+        parser.add_argument(
+            "--dropout", type=float, default=0.1, help="Dropout probability."
+        )
+        parser.add_argument(
+            "--type",
+            type=str,
+            default="baseline",
+            help="Experiment type (for logging).",
+        )
+
+        # Training arguments (same as before)
+        parser.add_argument("--lr", type=float, default=1e-3, help="Learning rate.")
+        parser.add_argument(
+            "--warmup_steps", type=int, default=2000, help="Warmup steps."
+        )
+        parser.add_argument(
+            "--t_total", type=int, default=100000, help="Total training steps."
+        )
+        parser.add_argument(
+            "--t_0", type=int, default=5000, help="Initial period for cosine annealing."
+        )
+        parser.add_argument(
+            "--t_mult", type=float, default=1.5, help="Multiplier for period."
+        )
+        parser.add_argument(
+            "--lr_mult", type=float, default=0.6, help="Multiplier for peak LR."
+        )
+        parser.add_argument("--seq_len", type=int, default=128, help="Sequence length.")
+        parser.add_argument("--batch_size", type=int, default=16, help="Batch size.")
+
+        # parser.add_argument(
+        #     "--seed", type=int, default=42, help="Seed for reproducibility."
+        # )
+        parser.add_argument(
+            "--extra_descriptor",
+            type=str,
+            default="",
+            help="Extra descriptor for logging.",
+        )
+        parser.add_argument(
+            "--orthograd", type=bool, default=True, help="Use OrthoGrad."
+        )
+        parser.add_argument(
+            "--dataset", type=str, default="Money", help="Dataset to use."
+        )
+
+    args = parser.parse_args()
     run_experiment(args)
 
 
