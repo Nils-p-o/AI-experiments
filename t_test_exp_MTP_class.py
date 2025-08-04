@@ -34,6 +34,11 @@ shorthand_to_full = {
     "msft_acc": "Close_Sequence/val_unseen_MSFT_accuracy",
     "nvda_acc": "Close_Sequence/val_unseen_NVDA_accuracy",
     "gspc_acc": "Close_Sequence/val_unseen_^GSPC_accuracy",
+    "calmar_ratio_costs": "Trading_strategy_metrics_with_costs/val_Calmar Ratio",
+    "max_drawdown_costs": "Trading_strategy_metrics_with_costs/val_Max Drawdown",
+    "annualized_return_costs": "Trading_strategy_metrics_with_costs/val_Annualized Return",
+    "win_loss_ratio_costs": "Trading_strategy_metrics_with_costs/val_Win/Loss Day Ratio",
+    "days_traded_costs": "Trading_strategy_metrics_with_costs/val_Days Traded",
 }
 
 higher_better = {
@@ -52,6 +57,11 @@ higher_better = {
     "msft_acc": 1,
     "nvda_acc": 1,
     "gspc_acc": 1,
+    "calmar_ratio_costs": 1,
+    "max_drawdown_costs": 1,
+    "annualized_return_costs": 1,
+    "win_loss_ratio_costs": 1,
+    "days_traded_costs": 1,
 }
 
 
@@ -171,6 +181,7 @@ def compare(base_model, compare_model):
             welch_t_test(results, compare_model[metric])
         print(f"diff: {np.mean(compare_model[metric]) - np.mean(results):.6f}")
 
+
 def paired_compare(base_model, compare_model):
     for metric, results in base_model.items():
         if metric not in compare_model:
@@ -182,29 +193,40 @@ def paired_compare(base_model, compare_model):
             paired_t_test(results, compare_model[metric])
         print(f"diff: {np.mean(compare_model[metric]) - np.mean(results):.6f}")
 
-# TODO paired by seeds for paired tests
+
 # TODO mann-whitney u and wilcoxon signed rank tests
+
+# list_of_losses = [
+#     "backtest_loss",
+#     "backtest_acc",
+#     "f1",
+#     "calmar_ratio",
+#     "max_drawdown",
+#     "annualized_return",
+#     "win_loss_ratio",
+#     "days_traded",
+#     # "aapl_acc",
+#     # "amzn_acc",
+#     # "intc_acc",
+#     # "msft_acc",
+#     # "nvda_acc",
+#     # "gspc_acc",
+# ]
 
 list_of_losses = [
     "backtest_loss",
     "backtest_acc",
     "f1",
-    "calmar_ratio",
-    "max_drawdown",
-    "annualized_return",
-    "win_loss_ratio",
-    "days_traded",
-    # "aapl_acc",
-    # "amzn_acc",
-    # "intc_acc",
-    # "msft_acc",
-    # "nvda_acc",
-    # "gspc_acc",
+    "calmar_ratio_costs",
+    "max_drawdown_costs",
+    "annualized_return_costs",
+    "win_loss_ratio_costs",
+    "days_traded_costs",
 ]
 
 lowest_ver = 0
 max_ver = 4
-current_name = "Money/testing/fixed_mixing/testing_normal_weighted_5/Money_former_MLA_DINT_cog_attn_MTP_3_64_64_4_2_32"
+current_name = "Money/testing/fixed_mixing/testing_weighted_cce_15_costs_paired/Money_former_MLA_DINT_cog_attn_MTP_3_64_64_4_2_32"
 print_metrics(current_name, lowest_ver, max_ver)
 
 # diff models and their achieved metrics (max, or min depending on the metric)
@@ -439,6 +461,192 @@ hand_feats_nb_weight_loss_5 = {
     "days_traded": [661.0, 667.0, 662.0, 733.0, 641.0],
 }
 
+hand_feats_nb_normal_paired = {
+    "backtest_loss": [0.9875, 0.9896, 0.9904, 0.9895, 0.9888],
+    "backtest_acc": [0.5106, 0.5103, 0.5127, 0.5121, 0.5132],
+    "f1": [0.3642, 0.3504, 0.3498, 0.3643, 0.3648],
+    "calmar_ratio": [0.6723, 0.7954, 1.1027, 0.842, 0.9468],
+    "max_drawdown": [-0.1852, -0.329, -0.2041, -0.3098, -0.3506],
+    "annualized_return": [0.414, 0.4118, 0.3984, 0.2888, 0.3319],
+    "win_loss_ratio": [0.8784, 0.8496, 0.9298, 0.9286, 0.8433],
+    "days_traded": [974.0, 661.0, 783.0, 634.0, 677.0],
+}
+
+# statistically worse acc, f1, days_traded
+hand_feats_nb_weight_loss_5_paired = {
+    "backtest_loss": [0.9882, 0.9911, 0.9889, 0.9929, 0.9898],
+    "backtest_acc": [0.5083, 0.5085, 0.5123, 0.5099, 0.5088],
+    "f1": [0.3587, 0.3396, 0.3481, 0.3458, 0.3573],
+    "calmar_ratio": [0.9439, 1.0223, 1.3234, 2.1736, 0.3883],
+    "max_drawdown": [-0.2716, -0.2906, -0.207, -0.2075, -0.4053],
+    "annualized_return": [0.2753, 0.297, 0.6081, 0.4509, 0.1642],
+    "win_loss_ratio": [0.8114, 0.792, 0.8991, 0.8462, 0.8956],
+    "days_traded": [810.0, 569.0, 664.0, 526.0, 714.0],
+}
+
+# lower win_loss_ratio 0.0007, but all else is ~the same
+# considering the potential benefits, i will keep it for bigger model consideration
+hand_feats_nb_lora_ff = {
+    "backtest_loss": [0.9894, 0.9872, 0.9887, 0.9911, 0.9873],
+    "backtest_acc": [0.51, 0.5121, 0.5089, 0.5121, 0.5107],
+    "f1": [0.3531, 0.3804, 0.3731, 0.3606, 0.3533],
+    "calmar_ratio": [1.3683, 1.5083, 0.9266, 1.1275, 1.0291],
+    "max_drawdown": [-0.272, -0.2834, -0.3567, -0.3187, -0.2957],
+    "annualized_return": [0.4424, 0.4653, 0.379, 0.4263, 0.3142],
+    "win_loss_ratio": [0.8182, 0.7642, 0.8245, 0.8261, 0.7746],
+    "days_traded": [664.0, 714.0, 835.0, 646.0, 651.0],
+}
+
+# higher loss, lower win_loss ratio, maybe higher drawdown
+# idk man
+hand_feats_nb_local_simple = {
+    "backtest_loss": [0.9954, 0.9921, 0.9909, 0.9912, 0.9947],
+    "backtest_acc": [0.5108, 0.5125, 0.512, 0.5117, 0.5076],
+    "f1": [0.3547, 0.3452, 0.355, 0.3651, 0.3469],
+    "calmar_ratio": [0.6043, 1.6189, 0.8691, 1.5839, 0.6145],
+    "max_drawdown": [-0.4443, -0.3426, -0.3639, -0.345, -0.3186],
+    "annualized_return": [0.272, 0.5547, 0.416, 0.5469, 0.2862],
+    "win_loss_ratio": [0.7353, 0.8073, 0.8356, 0.8241, 0.8017],
+    "days_traded": [711.0, 627.0, 763.0, 816.0, 611.0],
+}
+
+# maybe higher loss, lower win_loss ratio
+# i guess i stick w this?
+hand_feats_nb_global = {
+    "backtest_loss": [0.9909, 0.9948, 0.9892, 0.9929, 0.9927],
+    "backtest_acc": [0.5092, 0.5121, 0.5128, 0.51, 0.5094],
+    "f1": [0.3581, 0.3499, 0.3603, 0.3561, 0.3625],
+    "calmar_ratio": [0.9572, 1.4625, 0.9253, 0.8334, 0.6655],
+    "max_drawdown": [-0.3355, -0.3272, -0.322, -0.3137, -0.3159],
+    "annualized_return": [0.3419, 0.62, 0.3798, 0.4015, 0.3002],
+    "win_loss_ratio": [0.8652, 0.7579, 0.7941, 0.8121, 0.78],
+    "days_traded": [755.0, 686.0, 650.0, 738.0, 808.0],
+}
+
+# loss higher, acc lower, f1 higher, calmar higher, drawdown lower, return higher, wlr higher, higher traded days
+# 2x weights
+hand_feats_nb_weighted_cce = {
+    "backtest_loss": [1.0032, 1.0037, 1.0008, 1.013, 1.0095],
+    "backtest_acc": [0.4793, 0.4839, 0.4882, 0.4739, 0.4808],
+    "f1": [0.4261, 0.4285, 0.4224, 0.4309, 0.4289],
+    "calmar_ratio": [1.5693, 1.7939, 2.061, 1.6628, 1.5736],
+    "max_drawdown": [-0.3084, -0.199, -0.2715, -0.2654, -0.301],
+    "annualized_return": [0.5584, 0.5022, 0.64, 0.5382, 0.5487],
+    "win_loss_ratio": [0.8843, 0.9372, 0.9245, 1.0366, 0.9732],
+    "days_traded": [1261.0, 1253.0, 1260.0, 1234.0, 1241.0],
+}
+
+# 1.5 weights
+# comparing to 2x weight:
+# better loss, acc, worse f1, fewer traded days
+# somewhat worse wlr, lower drawdown, higher return
+hand_feats_nb_weighted_cce_15 = {
+    "backtest_loss": [0.988, 0.9878, 0.9916, 0.9918, 0.9889],
+    "backtest_acc": [0.5085, 0.5041, 0.5111, 0.5022, 0.5038],
+    "f1": [0.407, 0.4184, 0.4145, 0.4122, 0.4184],
+    "calmar_ratio": [1.0318, 1.6044, 2.2066, 2.2995, 1.1897],
+    "max_drawdown": [-0.3786, -0.2485, -0.2618, -0.3016, -0.2702],
+    "annualized_return": [0.5565, 0.526, 0.83, 0.8373, 0.422],
+    "win_loss_ratio": [0.8776, 0.9323, 0.8988, 0.9369, 0.9358],
+    "days_traded": [1182.0, 1094.0, 1232.0, 1089.0, 1112.0],
+}
+
+# 2.5 weights
+# comparing to 2x weight:
+# worse loss, acc, f1, return, better drawdown, higher traded days
+# betterish wlr
+hand_feats_nb_weighted_cce_25 = {
+    "backtest_loss": [1.0351, 1.0274, 1.0347, 1.0363, 1.0313],
+    "backtest_acc": [0.4568, 0.4566, 0.4448, 0.4474, 0.4517],
+    "f1": [0.4282, 0.4228, 0.4175, 0.423, 0.4251],
+    "calmar_ratio": [1.3678, 1.2912, 1.6128, 2.6314, 1.9084],
+    "max_drawdown": [-0.2276, -0.2264, -0.1939, -0.2054, -0.2121],
+    "annualized_return": [0.4702, 0.4232, 0.4041, 0.5404, 0.4245],
+    "win_loss_ratio": [0.9589, 1.0032, 0.9811, 1.0282, 0.9706],
+    "days_traded": [1264.0, 1263.0, 1264.0, 1260.0, 1255.0],
+}
+
+# weight 3.0
+# worse loss, acc, f1, return
+
+hand_feats_nb_weighted_cce_30 = {
+    "backtest_loss": [1.051, 1.0628, 1.0493, 1.062, 1.0613],
+    "backtest_acc": [0.4357, 0.4223, 0.4336, 0.4217, 0.4251],
+    "f1": [0.416, 0.4056, 0.4074, 0.405, 0.4067],
+    "calmar_ratio": [2.0055, 1.9342, 2.0923, 1.4961, 1.8603],
+    "max_drawdown": [-0.1762, -0.215, -0.1937, -0.2728, -0.1493],
+    "annualized_return": [0.4321, 0.4302, 0.4851, 0.433, 0.4619],
+    "win_loss_ratio": [0.9825, 0.9984, 0.9865, 0.9763, 0.9729],
+    "days_traded": [1264.0, 1264.0, 1263.0, 1264.0, 1262.0],
+}
+
+# calmar higher, return higher, wlr lower, higher traded days
+hand_feats_nb_aux_8 = {
+    "backtest_loss": [0.9898, 0.991, 0.999, 0.9876, 0.9887],
+    "backtest_acc": [0.5135, 0.5156, 0.5116, 0.5121, 0.5137],
+    "f1": [0.3714, 0.3527, 0.3456, 0.37, 0.362],
+    "calmar_ratio": [1.1511, 1.3998, 1.6962, 1.2433, 2.1664],
+    "max_drawdown": [-0.3316, -0.1954, -0.277, -0.3883, -0.2853],
+    "annualized_return": [0.4949, 0.7165, 0.5184, 0.5258, 0.767],
+    "win_loss_ratio": [0.7442, 0.7706, 0.7576, 0.8401, 0.7686],
+    "days_traded": [967.0, 811.0, 894.0, 828.0, 933.0],
+}
+
+# just no, horrible
+# hand_feats_nb_anti_weighted_cce = {
+#     "backtest_loss": [1.05, 1.0775, 1.0737, 1.0767, 1.0547],
+#     "backtest_acc": [0.4936, 0.49, 0.4926, 0.4922, 0.4957],
+#     "f1": [0.2509, 0.2541, 0.2394, 0.2464, 0.2578],
+#     "calmar_ratio": [0.153, 0.1942, 1.0453, 0.5591, 0.6985],
+#     "max_drawdown": [-0.1993, -0.1633, -0.1365, -0.1547, -0.1484],
+#     "annualized_return": [0.0426, 0.0423, 0.1599, 0.1229, 0.1122],
+#     "win_loss_ratio": [0.4324, 0.2, 0.619, 0.7143, 0.375],
+#     "days_traded": [209.0, 121.0, 69.0, 119.0, 101.0],
+# }
+
+# lower loss, higher calmar
+hand_feats_nb_custom_loss = {
+    "backtest_loss": [0.987, 0.9866, 0.9844, 0.9873, 0.9878],
+    "backtest_acc": [0.5078, 0.5127, 0.5127, 0.5122, 0.513],
+    "f1": [0.3418, 0.3475, 0.3587, 0.358, 0.3639],
+    "calmar_ratio": [0.8854, 1.1817, 1.4024, 1.2814, 1.2773],
+    "max_drawdown": [-0.3279, -0.2768, -0.2237, -0.1752, -0.3358],
+    "annualized_return": [0.3716, 0.4719, 0.3725, 0.4719, 0.4289],
+    "win_loss_ratio": [0.7869, 0.8895, 0.9771, 0.9348, 0.7063],
+    "days_traded": [682.0, 584.0, 681.0, 597.0, 723.0],
+}
+
+################################################################
+# tests with costs
+################################################################
+
+hand_feats_baseline_costs = {
+    "backtest_loss": [0.9875, 0.9896, 0.9904, 0.9895, 0.9888],
+    "backtest_acc": [0.5106, 0.5103, 0.5127, 0.5121, 0.5132],
+    "f1": [0.3642, 0.3504, 0.3498, 0.3643, 0.3648],
+    "calmar_ratio_costs": [0.4842, 0.6172, 0.6609, 0.5128, 0.686],
+    "max_drawdown_costs": [-0.2146, -0.3926, -0.242, -0.335, -0.3902],
+    "annualized_return_costs": [0.3172, 0.3399, 0.3157, 0.2057, 0.2677],
+    "win_loss_ratio_costs": [0.5361, 0.5625, 0.5581, 0.6, 0.5495],
+    "days_traded_costs": [1095.0, 772.0, 926.0, 754.0, 836.0],
+}
+
+
+# weight 1.5
+# better f1, calmar, return, wlr
+# worse acc
+# higher traded days
+hand_feats_weighted_cce_15_costs = { # def keep
+    "backtest_loss": [0.988, 0.9878, 0.9916, 0.9918, 0.9889],
+    "backtest_acc": [0.5085, 0.5041, 0.5111, 0.5022, 0.5038],
+    "f1": [0.407, 0.4184, 0.4145, 0.4122, 0.4184],
+    "calmar_ratio_costs": [0.7022, 1.1433, 1.7142, 1.582, 0.6935],
+    "max_drawdown_costs": [-0.4633, -0.3039, -0.3541, -0.3279, -0.3415],
+    "annualized_return_costs": [0.4132, 0.3906, 0.6857, 0.6778, 0.2991],
+    "win_loss_ratio_costs": [0.6706, 0.6723, 0.6537, 0.6559, 0.6706],
+    "days_traded_costs": [1259.0, 1191.0, 1291.0, 1182.0, 1200.0],
+}
+
 
 opt_feats_02_placeholder = {
     "unseen_loss": np.array([]),
@@ -450,140 +658,54 @@ print(f"baseline unseen_loss: {np.mean(baseline['unseen_loss'])}")
 print(f"baseline calmar_ratio: {np.mean(baseline['calmar_ratio'])}")
 print(f"baseline f1: {np.mean(baseline['f1'])}")
 
+# print(f"\n--- hand_feats_nb_weight_loss_1 vs hand_feats_nb_weight_loss_5  ---")
+# compare(hand_feats_nb_weight_loss_1, hand_feats_nb_weight_loss_5)
 
-print("\n--- opt_feats_02_no_bias vs opt_feats_02_no_bias_4_h_32_hdim ---")  #
-welch_t_test(
-    opt_feats_02_no_bias["unseen_loss"], opt_feats_02_no_bias_4_h_32_hdim["unseen_loss"]
-)
-welch_t_test(
-    opt_feats_02_no_bias_4_h_32_hdim["calmar_ratio"],
-    opt_feats_02_no_bias["calmar_ratio"],
-)
-welch_t_test(opt_feats_02_no_bias_4_h_32_hdim["f1"], opt_feats_02_no_bias["f1"])
-print(
-    f"difference in unseen_loss: {np.mean(opt_feats_02_no_bias_4_h_32_hdim['unseen_loss']) - np.mean(opt_feats_02_no_bias['unseen_loss'])}"
-)
-print(
-    f"difference in calmar_ratio: {np.mean(opt_feats_02_no_bias_4_h_32_hdim['calmar_ratio']) - np.mean(opt_feats_02_no_bias['calmar_ratio'])}"
-)
-print(
-    f"difference in f1: {np.mean(opt_feats_02_no_bias_4_h_32_hdim['f1']) - np.mean(opt_feats_02_no_bias['f1'])}"
-)
+# print(f"\n--- hand_feats_nb_weight_normal vs hand_feats_nb_weight_loss_5 (paired)  ---")
+# paired_compare(hand_feats_nb_normal_paired, hand_feats_nb_weight_loss_5_paired)
 
+# print(f"\n--- hand_feats_nb_weight_normal vs hand_feats_nb_lora_ff (paired)  ---") # maybe
+# paired_compare(hand_feats_nb_normal_paired, hand_feats_nb_lora_ff)
 
-print("\n--- opt_feats_02_no_bias vs opt_feats_02_no_b_weighted_feats_loss ---")  #
-welch_t_test(
-    opt_feats_02_no_bias["unseen_loss"],
-    opt_feats_02_no_b_weighted_feats_loss["unseen_loss"],
-)
-welch_t_test(
-    opt_feats_02_no_b_weighted_feats_loss["calmar_ratio"],
-    opt_feats_02_no_bias["calmar_ratio"],
-)
-welch_t_test(opt_feats_02_no_b_weighted_feats_loss["f1"], opt_feats_02_no_bias["f1"])
-print(
-    f"difference in unseen_loss: {np.mean(opt_feats_02_no_b_weighted_feats_loss['unseen_loss']) - np.mean(opt_feats_02_no_bias['unseen_loss'])}"
-)
-print(
-    f"difference in calmar_ratio: {np.mean(opt_feats_02_no_b_weighted_feats_loss['calmar_ratio']) - np.mean(opt_feats_02_no_bias['calmar_ratio'])}"
-)
-print(
-    f"difference in f1: {np.mean(opt_feats_02_no_b_weighted_feats_loss['f1']) - np.mean(opt_feats_02_no_bias['f1'])}"
-)
+# print(f"\n--- hand_feats_nb_weight_normal vs hand_feats_nb_local_simple (paired)  ---")
+# paired_compare(hand_feats_nb_normal_paired, hand_feats_nb_local_simple)
 
-welch_t_test(
-    opt_feats_02_no_b_weighted_feats_loss["aapl_acc"],
-    opt_feats_02_no_bias["aapl_acc"],
-)
-welch_t_test(
-    opt_feats_02_no_b_weighted_feats_loss["amzn_acc"],
-    opt_feats_02_no_bias["amzn_acc"],
-)
-welch_t_test(
-    opt_feats_02_no_b_weighted_feats_loss["intc_acc"],
-    opt_feats_02_no_bias["intc_acc"],
-)
-welch_t_test(
-    opt_feats_02_no_b_weighted_feats_loss["msft_acc"],
-    opt_feats_02_no_bias["msft_acc"],
-)
-welch_t_test(
-    opt_feats_02_no_b_weighted_feats_loss["nvda_acc"],
-    opt_feats_02_no_bias["nvda_acc"],
-)
-welch_t_test(
-    opt_feats_02_no_b_weighted_feats_loss["gspc_acc"],
-    opt_feats_02_no_bias["gspc_acc"],
-)
-print(
-    f"difference in aapl_acc: {np.mean(opt_feats_02_no_b_weighted_feats_loss['aapl_acc']) - np.mean(opt_feats_02_no_bias['aapl_acc'])}"
-)
-print(
-    f"difference in amzn_acc: {np.mean(opt_feats_02_no_b_weighted_feats_loss['amzn_acc']) - np.mean(opt_feats_02_no_bias['amzn_acc'])}"
-)
-print(
-    f"difference in intc_acc: {np.mean(opt_feats_02_no_b_weighted_feats_loss['intc_acc']) - np.mean(opt_feats_02_no_bias['intc_acc'])}"
-)
-print(
-    f"difference in msft_acc: {np.mean(opt_feats_02_no_b_weighted_feats_loss['msft_acc']) - np.mean(opt_feats_02_no_bias['msft_acc'])}"
-)
-print(
-    f"difference in nvda_acc: {np.mean(opt_feats_02_no_b_weighted_feats_loss['nvda_acc']) - np.mean(opt_feats_02_no_bias['nvda_acc'])}"
-)
-print(
-    f"difference in gspc_acc: {np.mean(opt_feats_02_no_b_weighted_feats_loss['gspc_acc']) - np.mean(opt_feats_02_no_bias['gspc_acc'])}"
-)
+# print(f"\n--- hand_feats_nb_weight_normal vs hand_feats_nb_global (paired)  ---") # maybe
+# paired_compare(hand_feats_nb_normal_paired, hand_feats_nb_global)
 
+# print(f"\n--- hand_feats_nb_weight_normal vs hand_feats_nb_weighted_cce (paired)  ---") # yes
+# paired_compare(hand_feats_nb_normal_paired, hand_feats_nb_weighted_cce)
+
+# print(f"\n--- hand_feats_nb_weight_normal vs hand_feats_nb_aux_8 (paired)  ---") # yes
+# paired_compare(hand_feats_nb_normal_paired, hand_feats_nb_aux_8)
+
+# print(f"\n--- hand_feats_nb_weight_normal vs hand_feats_nb_anti_weighted_cce (paired)  ---")
+# paired_compare(hand_feats_nb_normal_paired, hand_feats_nb_anti_weighted_cce)
+
+print(
+    f"\n--- hand_feats_nb_weight_normal vs hand_feats_nb_custom_loss (paired)  ---"
+)  # kinda yes, if it works together with cce weighing
+paired_compare(hand_feats_nb_normal_paired, hand_feats_nb_custom_loss)
 
 # print(
-#     "\n--- opt_feats_02_no_b_weighted_feats_loss vs opt_feats_02_no_b_weighted_feats_loss_AdamW  ---"
-# )  #
-# welch_t_test(
-#     opt_feats_02_no_b_weighted_feats_loss["unseen_loss"],
-#     opt_feats_02_no_b_weighted_feats_loss_adamw["unseen_loss"],
+#     f"\n--- hand_feats_nb_weighted_cce (20) vs hand_feats_nb_weighted_cce_15 (paired)  ---"
 # )
-# welch_t_test(
-#     opt_feats_02_no_b_weighted_feats_loss_adamw["calmar_ratio"],
-#     opt_feats_02_no_b_weighted_feats_loss["calmar_ratio"],
-# )
-# welch_t_test(
-#     opt_feats_02_no_b_weighted_feats_loss_adamw["f1"],
-#     opt_feats_02_no_b_weighted_feats_loss["f1"],
-# )
-# print(
-#     f"difference in unseen_loss: {np.mean(opt_feats_02_no_b_weighted_feats_loss_adamw['unseen_loss']) - np.mean(opt_feats_02_no_b_weighted_feats_loss['unseen_loss'])}"
-# )
-# print(
-#     f"difference in calmar_ratio: {np.mean(opt_feats_02_no_b_weighted_feats_loss_adamw['calmar_ratio']) - np.mean(opt_feats_02_no_b_weighted_feats_loss['calmar_ratio'])}"
-# )
-# print(
-#     f"difference in f1: {np.mean(opt_feats_02_no_b_weighted_feats_loss_adamw['f1']) - np.mean(opt_feats_02_no_b_weighted_feats_loss['f1'])}"
-# )
+# paired_compare(hand_feats_nb_weighted_cce, hand_feats_nb_weighted_cce_15)
 
-print(
-    "\n--- opt_feats_02_no_b_weighted_feats_loss vs opt_feats_02_no_b_weighted_feats_loss_muon  ---"
-)
-welch_t_test(
-    opt_feats_02_no_b_weighted_feats_loss["unseen_loss"],
-    opt_feats_02_no_b_weighted_feats_loss_muon["unseen_loss"],
-)
-welch_t_test(
-    opt_feats_02_no_b_weighted_feats_loss_muon["calmar_ratio"],
-    opt_feats_02_no_b_weighted_feats_loss["calmar_ratio"],
-)
-welch_t_test(
-    opt_feats_02_no_b_weighted_feats_loss_muon["f1"],
-    opt_feats_02_no_b_weighted_feats_loss["f1"],
-)
-print(
-    f"difference in unseen_loss: {np.mean(opt_feats_02_no_b_weighted_feats_loss_muon['unseen_loss']) - np.mean(opt_feats_02_no_b_weighted_feats_loss['unseen_loss'])}"
-)
-print(
-    f"difference in calmar_ratio: {np.mean(opt_feats_02_no_b_weighted_feats_loss_muon['calmar_ratio']) - np.mean(opt_feats_02_no_b_weighted_feats_loss['calmar_ratio'])}"
-)
-print(
-    f"difference in f1: {np.mean(opt_feats_02_no_b_weighted_feats_loss_muon['f1']) - np.mean(opt_feats_02_no_b_weighted_feats_loss['f1'])}"
-)
+# print(
+#     f"\n--- hand_feats_nb_weighted_cce (20) vs hand_feats_nb_weighted_cce_25 (paired)  ---"
+# )
+# paired_compare(hand_feats_nb_weighted_cce, hand_feats_nb_weighted_cce_25)
 
-print(f"\n--- hand_feats_nb_weight_loss_1 vs hand_feats_nb_weight_loss_5  ---")
-compare(hand_feats_nb_weight_loss_1, hand_feats_nb_weight_loss_5)
+# print(
+#     f"\n--- hand_feats_nb_weighted_cce (20) vs hand_feats_nb_weighted_cce_30 (paired)  ---"
+# )
+# paired_compare(hand_feats_nb_weighted_cce, hand_feats_nb_weighted_cce_30)
+
+
+#################################################################
+# comparisons with costs
+#################################################################
+
+print(f"\n--- hand_feats_nb_weight_normal vs hand_feats_nb_weighted_cce (paired)  ---")
+paired_compare(hand_feats_baseline_costs, hand_feats_weighted_cce_15_costs)

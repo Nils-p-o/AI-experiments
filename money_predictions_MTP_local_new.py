@@ -940,6 +940,29 @@ def trading_metrics(actuals, predictions, args):
 
     return metrics
 
+def trading_metrics_with_costs(actuals, predictions, args):
+    metrics = {}
+    portfolio_df, stats = run_strategy_with_flexible_allocation(
+        predictions_1day_ahead=predictions,
+        actual_1d_returns=actuals,
+        trade_threshold_up=0.5,
+        trade_threshold_down=0.5,
+        initial_capital=1000,
+        transaction_cost_pct=0.0005, # assuming high enough capital and US stocks
+        allocation_strategy="equal",
+        signal_horizon_name="training",
+        prediction_type=args.prediction_type,
+        decision_type="argmax"
+    )
+    metrics["Annualized Return"] = stats["Annualized Return"]
+    metrics["Sharpe Ratio"] = stats["Sharpe Ratio"]
+    metrics["Sortino Ratio"] = stats["Sortino Ratio"]
+    metrics["Calmar Ratio"] = stats["Calmar Ratio"]
+    metrics["Max Drawdown"] = stats["Max Drawdown"]
+    metrics["Win/Loss Day Ratio"] = stats["Win/Loss Day Ratio"]
+    metrics["Days Traded"] = stats["Number of Winning Days"] + stats["Number of Losing Days"]
+
+    return metrics
 
 
 # def calculate_metrics(actuals, predictions, args, ticker_names: list):

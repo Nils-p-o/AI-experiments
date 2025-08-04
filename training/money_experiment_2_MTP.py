@@ -13,7 +13,8 @@ from transformer_arch.money.money_former_nGPT_2 import (
 )
 from money_predictions_MTP_local_new import (
     calculate_metrics,
-    trading_metrics
+    trading_metrics,
+    trading_metrics_with_costs
 )
 
 from muon import MuonWithAuxAdam
@@ -204,30 +205,14 @@ class WeightedCCE(nn.Module):
         # Ensure weight matrix is on the same device as predictions
         self.weight_matrix = self.weight_matrix.to(y_pred.device)
 
-        # 1. Get true class indices from the one-hot y_true tensor.
-        # The shape will be (N, *)
-        true_class_indices = torch.argmax(y_true, dim=1)
+        log_probs = torch.log_softmax(y_pred+1e-9, dim=1)
 
-        # 2. Gather the appropriate weight vectors.
-        # For each element in the batch and spatial dims, we get its C-element weight vector.
-        # The resulting shape will be (N, *, C).
-        weights_for_batch = self.weight_matrix[true_class_indices]
-
-        # 3. Align the tensor shapes for multiplication.
-        # We need to permute the weights tensor from (N, *, C) to (N, C, *).
-        # This is a general way to move the last dimension to the second position.
+        weights_for_batch = self.weight_matrix[y_true]
         dims = list(range(weights_for_batch.dim()))
-        # e.g., for 4D tensor (N,H,W,C) -> (0,1,2,3) -> (0,3,1,2) -> (N,C,H,W)
         weights_for_batch = weights_for_batch.permute(dims[0], dims[-1], *dims[1:-1])
 
-        # 4. Apply the weights to the predictions.
-        # The shapes of y_pred and weights_for_batch are now broadcast-compatible.
         weighted_predictions = y_pred * weights_for_batch
-
-        # 5. Calculate the cross-entropy loss for each element.
-        # We sum over the class dimension (dim=1). The result is a tensor of per-element
-        # losses with shape (N, *).
-        loss = -torch.sum(y_true * torch.log(weighted_predictions + 1e-9), dim=1)
+        loss = -torch.sum(weights_for_batch*log_probs, dim=1)
 
         # 6. Apply the specified reduction.
         if self.reduction == 'mean':
@@ -237,6 +222,38 @@ class WeightedCCE(nn.Module):
         else:  # 'none'
             return loss
 
+class WeightedCustomLoss(nn.Module): # TODO try linear version (+ rewrite)
+    def __init__(self, weight_matrix, reduction='mean'):
+        super(WeightedCustomLoss, self).__init__()
+        if not isinstance(weight_matrix, torch.Tensor):
+            weight_matrix = torch.tensor(weight_matrix, dtype=torch.float32)
+        self.weight_matrix = weight_matrix
+
+        if reduction not in ['mean', 'sum', 'none']:
+            raise ValueError(f"Reduction must be one of 'mean', 'sum', or 'none', but got {reduction}")
+        self.reduction = reduction
+
+    def forward(self, y_pred, y_true):
+        self.weight_matrix = self.weight_matrix.to(y_pred.device)
+
+        log_probs = torch.log_softmax(y_pred+1e-9, dim=1)
+
+        one_hot_encoded = torch.nn.functional.one_hot(y_true, num_classes=log_probs.shape[1])
+        dims = list(range(one_hot_encoded.dim()))
+        one_hot_encoded = one_hot_encoded.permute(dims[0], dims[-1], *dims[1:-1])
+
+        weights_for_batch = self.weight_matrix[y_true]
+        dims = list(range(weights_for_batch.dim()))
+        weights_for_batch = weights_for_batch.permute(dims[0], dims[-1], *dims[1:-1])
+
+        loss = -torch.sum(one_hot_encoded*log_probs, dim=1) * torch.exp((torch.softmax(y_pred, dim=1)*weights_for_batch).sum(dim=1))
+
+        if self.reduction == 'mean':
+            return loss.mean()
+        elif self.reduction == 'sum':
+            return loss.sum()
+        else:  # 'none'
+            return loss
 
 class MoneyExperiment(pl.LightningModule):
     def __init__(
@@ -260,8 +277,9 @@ class MoneyExperiment(pl.LightningModule):
         self.lr_mult = lr_mult
         self.batch_size = batch_size
 
-        class_weights = [1.0, 1.0, 1.0]
+        class_weights = [args.down_up_loss_weight, 1.0, args.down_up_loss_weight]
         class_weights = [w*len(class_weights)/sum(class_weights) for w in class_weights]
+        # cost_weights = torch.tensor([[0.0, 1.0, 2.0], [1.0, 0.0, 1.0], [2.0, 1.0, 0.0]])
 
         match args.prediction_type:
             case "gaussian":
@@ -270,6 +288,8 @@ class MoneyExperiment(pl.LightningModule):
                 self.loss_fn = nn.L1Loss(reduction="none")
             case "classification":
                 self.loss_fn = nn.CrossEntropyLoss(weight=torch.tensor(class_weights), reduction="none")
+                # self.loss_fn = WeightedCustomLoss(weight_matrix=torch.tensor(cost_weights), reduction="none")
+        
         self.MAE = nn.L1Loss(reduction="none")
         self.pred_indices = args.indices_to_predict
         self.save_hyperparameters(ignore=["model"])
@@ -934,28 +954,45 @@ class MoneyExperiment(pl.LightningModule):
                         **log_opts_epoch,
                 )
             
+            trading_strategy_metrics = trading_metrics_with_costs(targets, backtest_predictions, self.args)
+            for metric_name, metric_value in trading_strategy_metrics.items():
+                self.log(
+                    f"Trading_strategy_metrics_with_costs/val_{metric_name}",
+                    metric_value,
+                    **log_opts_epoch,
+                )
+            
+            for i in range(targets.shape[-1]):
+                trading_strategy_metrics = trading_metrics_with_costs(targets[:, i], backtest_predictions[:, i], self.args)
+                for metric_name, metric_value in trading_strategy_metrics.items():
+                    self.log(
+                        f"Trading_strategy_metrics_with_costs_individual/val_{metric_name}_{self.tickers[i]}",
+                        metric_value,
+                        **log_opts_epoch,
+                )
+            
             cummulative_times["metrics"] += (
                 time.time_ns() - time_metrics_start
             ) / 1e6
 
             self.log(
                 f"Times/preprocessing",
-                cummulative_times["preprocessing"] / (self.global_step + 1),
+                cummulative_times["preprocessing"] / (self.trainer.val_check_interval),
                 logger=True,
             )
             self.log(
                 f"Times/forward_pass",
-                cummulative_times["model"] / (self.global_step + 1),
+                cummulative_times["model"] / (self.trainer.val_check_interval),
                 logger=True,
             )
             self.log(
                 f"Times/loss",
-                cummulative_times["loss"] / (self.global_step + 1),
+                cummulative_times["loss"] / (self.trainer.val_check_interval),
                 logger=True,
             )
             self.log(
                 f"Times/metrics",
-                cummulative_times["metrics"] / (self.global_step + 1),
+                cummulative_times["metrics"] / (self.trainer.val_check_interval),
                 logger=True,
             )
 

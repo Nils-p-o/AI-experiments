@@ -5,24 +5,46 @@ current notes:
 
 to be implemented in new best model:
 muon + muP (kinda already done)
-cce weighing --- needs stat and analysis of what is best
-feats loss weighing --- currently running stat test for that
+cce weighing  -- (weighing up/down by 1.5x as much)
+aux seqs -- just need to find how much helps
+more stocks? - would help with data, and thus regularization, + higher theoretical profit ceiling/lower risk?
+
 more reguralization - dont know how, but currently the limiting factor, as bigger =/= better (i think, needs stat test)
 
 maybes:
-LoRA ff - even if the same performance, should be a bit faster when scaling up - needs stat
 bigger batches? - dunno, kinda a dead end, i think
-aux seqs --- will be more data + i can already see it helps with reguralization, needs stat test
 more data, somehow?
 noise -- stat test
 
-global data, or local simple? -- stat test
 investigate hpo for linear decay and constant lr -- might be better
 
 needs a bit of work:
 bert Inclusion
 diffusion lm
 nGPT - again?
+
+do stats for causal, diff seqs
+maybe causal scales better???
+
+
+cce weighing - maybe 1.5 is best (makes sense, thats ~ class imbalance)
+
+find optimum for cce weighing (value + loss ver)
+find optimum for aux seqs (value + which help)
+
+deffo improvements:
+aux seqs --- will be more data + i can already see it helps with reguralization,
+--better calmar, return, --worse wlr, --higher trading days
+cce weighing --- downweighing flat loss (still need to find optimal value, + test cost matrix loss function (both ver))
+--better calmar, return, f1, drawdown, wlr, --worse loss, acc, --higher trading days
+custom loss function (exp) -- need to check linear, to see if works together with cce weights
+--better loss, calmar
+
+maybe (inconclusive):
+LoRA ff ~ the same performance? but should scale better for speed, so proposal for big model ver
+global data, or local simple? -- idk, win/loss is def worse, but everything else is ~the same
+feats loss weighing --- not really great rn
+
 
 
 
