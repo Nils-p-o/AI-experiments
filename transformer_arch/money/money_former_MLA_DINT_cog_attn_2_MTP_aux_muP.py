@@ -1,10 +1,12 @@
-# tries to predict movements in the stock market
+# same as non muP version, but should be better with scale up
 
 import torch
 import torch.nn as nn
 import math
 import torch.nn.functional as F
 from ..components import get_causal_mask
+
+from mup import MuReadout
 
 # for debug/visualization
 import matplotlib.pyplot as plt
@@ -23,7 +25,7 @@ class Money_former_MLA_DINT_cog_attn_MTP(nn.Module):
             [Money_former_block(args, depth) for depth in range(self.num_layers)]
         )
         self.input_features = args.input_features
-        self.scaling = self.d_model ** -0.5
+        # self.scaling = self.d_model ** -0.5
 
         self.ticker_dim = self.d_model
         self.ticker_embedding = nn.Embedding(len(args.tickers)+len(args.aux_tickers), self.ticker_dim)
@@ -46,23 +48,23 @@ class Money_former_MLA_DINT_cog_attn_MTP(nn.Module):
 
         match args.prediction_type:
             case "gaussian":
-                self.out = nn.Linear(
+                self.out = MuReadout(
                     self.d_model, 5 * 2, bias=args.bias
                 )  # decodes to mean and std
             case "regression":
-                self.out = nn.Linear(
+                self.out = MuReadout(
                     self.d_model, 5, bias=args.bias
                 )  # decodes to target(s) features
             case "classification":
-                self.out = nn.Linear(
+                self.out = MuReadout(
                     self.d_model, 5 * args.num_classes, bias=args.bias
                 )  # decodes to target(s) features
 
         self.register_buffer("freqs_cis", precompute_freqs_cis(args), persistent=False)
 
         # seperator/attention sink token
-        # self.seperator = nn.Embedding(1, self.d_model)
-        self.seperator = nn.Parameter(torch.zeros(self.d_model, dtype=torch.float32))
+        # self.seperator = nn.Parameter(torch.zeros(self.d_model, dtype=torch.float32))
+        self.seperator_embedding = nn.Embedding(1, self.d_model)
         self.use_global_seperator = args.use_global_seperator
 
         self.MTP_blocks = nn.ModuleList(
@@ -70,8 +72,11 @@ class Money_former_MLA_DINT_cog_attn_MTP(nn.Module):
         )
 
         # auxiliary inputs
-        self.aux_inputs = nn.Linear(20, self.d_model, bias=args.bias)
+        self.aux_inputs = nn.Linear(args.aux_input_features+args.time_features, self.d_model, bias=args.bias)
         self.num_normal_tickers = len(args.tickers)
+
+        self.aux_input_features = args.aux_input_features
+        self.time_features = args.time_features
 
 
     def forward(
@@ -84,7 +89,8 @@ class Money_former_MLA_DINT_cog_attn_MTP(nn.Module):
         if self.use_global_seperator:
             x = x.permute(0, 1, 3, 2, 4).contiguous()
             x = x.view(batch_size, targets, num_sequences * seq_len, self.d_model)
-            seperator = self.seperator.view(1, 1, 1, self.d_model)
+            seperator_idx = torch.tensor([0], device=x.device) 
+            seperator = self.seperator_embedding(seperator_idx).view(1, 1, 1, self.d_model)
             seperator = seperator.expand(batch_size, targets, 1, -1)
             x = torch.cat([seperator, x], dim=2)
             
@@ -95,10 +101,10 @@ class Money_former_MLA_DINT_cog_attn_MTP(nn.Module):
             sep_ticker_emb = torch.zeros(batch_size, targets, 1, self.ticker_dim, dtype=torch.float32, device=x.device)
             ticker_embs = torch.cat([sep_ticker_emb, ticker_embs], dim=2)
 
-            # x = self.ticker_projection(torch.cat((x,ticker_embs), dim=-1))
-            x = (x + ticker_embs) * self.scaling
+            x = x + ticker_embs
         else:
-            seperator = self.seperator.view(1, 1, 1, 1, self.d_model)
+            seperator_idx = torch.tensor([0], device=x.device) 
+            seperator = self.seperator_embedding(seperator_idx).view(1, 1, 1, self.d_model)
             seperator = seperator.expand(batch_size, targets, 1, num_sequences, -1)
 
             tickers = self.ticker_embedding(tickers).unsqueeze(2)
@@ -106,7 +112,7 @@ class Money_former_MLA_DINT_cog_attn_MTP(nn.Module):
 
 
             x = torch.cat([seperator, x], dim=2)
-            x = (x + tickers) * self.scaling
+            x = x + tickers
 
             x = x.permute(0, 1, 3, 2, 4).contiguous() # fix to prevent data mixing
 
@@ -135,7 +141,7 @@ class Money_former_MLA_DINT_cog_attn_MTP(nn.Module):
     def encode_inputs(self, x):
         # batch_size, targets, seq_len, num_sequences, _ = x.size()
         shared_temp_x_normal = self.shared_value_input(x[:,:,:,:self.num_normal_tickers,:])
-        shared_temp_x_aux = self.aux_inputs(torch.cat((x[:,:,:,self.num_normal_tickers:,:10],x[:,:,:,self.num_normal_tickers:,-10:]), dim=-1))
+        shared_temp_x_aux = self.aux_inputs(torch.cat((x[:,:,:,self.num_normal_tickers:,:self.aux_input_features],x[:,:,:,self.num_normal_tickers:,-self.time_features:]), dim=-1))
         shared_temp_x = torch.cat([shared_temp_x_normal, shared_temp_x_aux], dim=-2)
         if self.unique_inputs:
             unique_temp_x = []
@@ -163,13 +169,15 @@ class Money_former_block(nn.Module):
             # self.mask = torch.zeros(1, 1, args.seq_len*self.num_sequences+1, args.seq_len*self.num_sequences+1)
             temp_mask = get_causal_mask(args.seq_len)
             temp_mask = temp_mask.repeat(1, 1, self.num_sequences, self.num_sequences)
-            self.mask = torch.ones(1, 1, args.seq_len*self.num_sequences+1, args.seq_len*self.num_sequences+1).to("cuda" if torch.cuda.is_available() else "cpu")
+            self.mask = torch.ones(1, 1, args.seq_len*self.num_sequences+1, args.seq_len*self.num_sequences+1)
             self.mask[:,:,:,0] = 0
             self.mask[:,:,1:,1:] = 0
             # self.mask[:,:,1:,1:] = temp_mask
         else:
             self.mask = get_causal_mask(args.seq_len+1)
             self.mask = self.mask.repeat(1, 1, self.num_sequences, self.num_sequences)
+        
+        self.mask = self.mask.to("cuda" if torch.cuda.is_available() else "cpu")
 
     def forward(self, x, freqs_cis):
         batch_size, seq_len, _ = x.size()
@@ -219,7 +227,7 @@ class custom_MHA(nn.Module): # a mix of MLA and DINT
         self.o = nn.Linear(self.nhead * self.head_dim, self.d_model, bias=args.bias)
         self.dropout = nn.Dropout(args.dropout)
 
-        self.scaling = ((self.head_dim + self.rope_dim) // 2) ** -0.5
+        self.scaling = 1./((self.head_dim + self.rope_dim) // 2)
 
         # DINT part
         self.lambda_init = lambda_init_fn(depth)
@@ -374,18 +382,12 @@ class SwiGLU_feed_forward(nn.Module):
     def __init__(self, args):
         super().__init__()
         self.linear_in_gate = nn.Linear(args.d_model, args.d_ff * 2, bias=args.bias)
-        # self.linear_in_gate_down = nn.Linear(args.d_model, 16 * 2, bias=args.bias)
-        # self.linear_in_up = nn.Linear(16, args.d_ff, bias=args.bias)
-        # self.linear_gate_up = nn.Linear(16, args.d_ff, bias=args.bias)
         self.linear_out = nn.Linear(args.d_ff, args.d_model, bias=args.bias)
         self.dropout = nn.Dropout(args.dropout)
         self.d_model = args.d_model
 
     def forward(self, x):
         u, v = self.linear_in_gate(x).chunk(2, dim=-1)
-        # u, v = self.linear_in_gate_down(x).chunk(2, dim=-1)
-        # u = self.linear_in_up(u)
-        # v = self.linear_gate_up(v)
         x = u * F.silu(v)  # * self.d_model ** 0.5) # Apply SwiGLU with scaling
         x = self.linear_out(x)
         x = self.dropout(x)  # Apply dropout *after* the output projection

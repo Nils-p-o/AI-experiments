@@ -669,84 +669,84 @@ def calculate_features(
     full_data = torch.cat((full_data, clv_data), dim=0)
     columns.extend(["clv"])
 
-    prices = raw_data
-    full_data = torch.cat((full_data, prices), dim=0)
-    local_price_columns = ["local_" + s for s in price_columns]
-    local_returns_columns = ["local_" + s for s in returns_columns]
+    # prices = raw_data
+    # full_data = torch.cat((full_data, prices), dim=0)
+    # local_price_columns = ["local_" + s for s in price_columns]
+    # local_returns_columns = ["local_" + s for s in returns_columns]
     local_columns = []
-    local_columns.extend(local_price_columns)
+    # local_columns.extend(local_price_columns)
 
-    full_ema = []
-    full_ema_columns = []
-    for i in range(len(local_price_columns)):
-        temp_ema = []
-        for j in range(len(tickers)):
-            ema_data, ema_columns = feature_ema(prices[i, :, j], prefix=local_price_columns[i] + "_")
-            temp_ema.append(ema_data.unsqueeze(-1))
-        full_ema.append(torch.cat(temp_ema, dim=-1))
-        full_ema_columns.extend(ema_columns)
-    full_data = torch.cat((full_data, torch.cat(full_ema, dim=0)), dim=0)
-    local_columns.extend(full_ema_columns)
+    # full_ema = []
+    # full_ema_columns = []
+    # for i in range(len(local_price_columns)):
+    #     temp_ema = []
+    #     for j in range(len(tickers)):
+    #         ema_data, ema_columns = feature_ema(prices[i, :, j], prefix=local_price_columns[i] + "_")
+    #         temp_ema.append(ema_data.unsqueeze(-1))
+    #     full_ema.append(torch.cat(temp_ema, dim=-1))
+    #     full_ema_columns.extend(ema_columns)
+    # full_data = torch.cat((full_data, torch.cat(full_ema, dim=0)), dim=0)
+    # local_columns.extend(full_ema_columns)
 
-    full_price_vol = []
-    full_price_vol_columns = []
-    for i in range(len(local_price_columns)):
-        price_vol, vol_columns = feature_volatility_ret(prices[i:i+1], prefix=local_price_columns[i] + "_")
-        full_price_vol.append(price_vol)
-        full_price_vol_columns.extend(vol_columns)
-    full_data = torch.cat((full_data, torch.cat(full_price_vol, dim=0)), dim=0)
-    local_columns.extend(full_price_vol_columns)
+    # full_price_vol = []
+    # full_price_vol_columns = []
+    # for i in range(len(local_price_columns)):
+    #     price_vol, vol_columns = feature_volatility_ret(prices[i:i+1], prefix=local_price_columns[i] + "_")
+    #     full_price_vol.append(price_vol)
+    #     full_price_vol_columns.extend(vol_columns)
+    # full_data = torch.cat((full_data, torch.cat(full_price_vol, dim=0)), dim=0)
+    # local_columns.extend(full_price_vol_columns)
 
-    full_data = torch.cat((full_data, torch.cat(full_vpt, dim=0)), dim=0)
-    local_columns.extend(["local_vpt_close", "local_vpt_high", "local_vpt_low", "local_vpt_open"])
+    # full_data = torch.cat((full_data, torch.cat(full_vpt, dim=0)), dim=0)
+    # local_columns.extend(["local_vpt_close", "local_vpt_high", "local_vpt_low", "local_vpt_open"])
 
-    full_data = torch.cat((full_data, clv_data), dim=0)
-    local_columns.extend(["local_clv"])
+    # full_data = torch.cat((full_data, clv_data), dim=0)
+    # local_columns.extend(["local_clv"])
 
-    full_ppo = []
-    full_ppo_columns = []
-    for i in range(len(local_price_columns)):
-        temp_ppo = []
-        for j in range(len(tickers)):
-            ppo_data, ppo_columns = feature_ppo(prices[i, :, j], prefix=local_price_columns[i] + "_")
-            temp_ppo.append(ppo_data.unsqueeze(-1))
-        full_ppo.append(torch.cat(temp_ppo, dim=-1))
-        full_ppo_columns.extend(ppo_columns)
-    full_data = torch.cat((full_data, torch.cat(full_ppo, dim=0)), dim=0)
-    local_columns.extend(full_ppo_columns)
+    # full_ppo = []
+    # full_ppo_columns = []
+    # for i in range(len(local_price_columns)):
+    #     temp_ppo = []
+    #     for j in range(len(tickers)):
+    #         ppo_data, ppo_columns = feature_ppo(prices[i, :, j], prefix=local_price_columns[i] + "_")
+    #         temp_ppo.append(ppo_data.unsqueeze(-1))
+    #     full_ppo.append(torch.cat(temp_ppo, dim=-1))
+    #     full_ppo_columns.extend(ppo_columns)
+    # full_data = torch.cat((full_data, torch.cat(full_ppo, dim=0)), dim=0)
+    # local_columns.extend(full_ppo_columns)
 
-    returns = full_data[:5, :, :]
-    full_data = torch.cat((full_data, returns), dim=0)
-    local_columns.extend(local_returns_columns)
+    # returns = full_data[:5, :, :]
+    # full_data = torch.cat((full_data, returns), dim=0)
+    # local_columns.extend(local_returns_columns)
 
-    full_ema = []
-    full_ema_columns = []
-    for i in range(len(local_returns_columns)):
-        temp_ema = []
-        for j in range(len(tickers)):
-            ema_data, ema_columns = feature_ema(returns[i, :, j], prefix=local_returns_columns[i] + "_")
-            temp_ema.append(ema_data.unsqueeze(-1))
-        full_ema.append(torch.cat(temp_ema, dim=-1))
-        full_ema_columns.extend(ema_columns)
-    full_data = torch.cat((full_data, torch.cat(full_ema, dim=0)), dim=0)
-    local_columns.extend(full_ema_columns)
+    # full_ema = []
+    # full_ema_columns = []
+    # for i in range(len(local_returns_columns)):
+    #     temp_ema = []
+    #     for j in range(len(tickers)):
+    #         ema_data, ema_columns = feature_ema(returns[i, :, j], prefix=local_returns_columns[i] + "_")
+    #         temp_ema.append(ema_data.unsqueeze(-1))
+    #     full_ema.append(torch.cat(temp_ema, dim=-1))
+    #     full_ema_columns.extend(ema_columns)
+    # full_data = torch.cat((full_data, torch.cat(full_ema, dim=0)), dim=0)
+    # local_columns.extend(full_ema_columns)
 
-    full_ret_vol = []
-    full_ret_vol_columns = []
-    for i in range(len(local_returns_columns)):
-        ret_vol, vol_columns = feature_volatility_ret(returns[i:i+1], prefix=local_returns_columns[i] + "_")
-        full_ret_vol.append(ret_vol)
-        full_ret_vol_columns.extend(vol_columns)
-    full_data = torch.cat((full_data, torch.cat(full_ret_vol, dim=0)), dim=0)
-    local_columns.extend(full_ret_vol_columns)
+    # full_ret_vol = []
+    # full_ret_vol_columns = []
+    # for i in range(len(local_returns_columns)):
+    #     ret_vol, vol_columns = feature_volatility_ret(returns[i:i+1], prefix=local_returns_columns[i] + "_")
+    #     full_ret_vol.append(ret_vol)
+    #     full_ret_vol_columns.extend(vol_columns)
+    # full_data = torch.cat((full_data, torch.cat(full_ret_vol, dim=0)), dim=0)
+    # local_columns.extend(full_ret_vol_columns)
 
-    bb_data, bb_columns = feature_bollinger_bands_price_histogram(prices[0:1], prefix=local_price_columns[0] + "_")
-    full_data = torch.cat((full_data, bb_data), dim=0)
-    local_columns.extend(bb_columns)
+    # bb_data, bb_columns = feature_bollinger_bands_price_histogram(prices[0:1], prefix=local_price_columns[0] + "_")
+    # full_data = torch.cat((full_data, bb_data), dim=0)
+    # local_columns.extend(bb_columns)
 
-    bb_data, bb_columns = feature_bollinger_bands_price_histogram(returns[0:1], prefix=local_returns_columns[0] + "_")
-    full_data = torch.cat((full_data, bb_data), dim=0)
-    local_columns.extend(bb_columns)
+    # bb_data, bb_columns = feature_bollinger_bands_price_histogram(returns[0:1], prefix=local_returns_columns[0] + "_")
+    # full_data = torch.cat((full_data, bb_data), dim=0)
+    # local_columns.extend(bb_columns)
 
     time_data, time_columns = feature_time_data(indexes, tickers)
     full_data = torch.cat((full_data, time_data), dim=0)

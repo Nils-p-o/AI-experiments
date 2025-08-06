@@ -45,13 +45,13 @@ from transformer_arch.money.money_former_nGPT_2 import Money_former_nGPT, normal
 from transformer_arch.money.money_former_MLA_DINT_cog_attn_2 import Money_former_MLA_DINT_cog_attn
 # from transformer_arch.money.money_former_MLA_DINT_cog_attn_2_MTP_diff_attn_dims import Money_former_MLA_DINT_cog_attn_MTP
 
-from transformer_arch.money.money_former_MLA_DINT_cog_attn_2_MTP_muP import Money_former_MLA_DINT_cog_attn_MTP
+from transformer_arch.money.money_former_MLA_DINT_cog_attn_2_MTP_aux_muP import Money_former_MLA_DINT_cog_attn_MTP
 # from transformer_arch.money.money_former_MLA_DINT_cog_attn_2_MTP import Money_former_MLA_DINT_cog_attn_MTP
-from training.data_loaders.test_feats_stocks_time_series_2_MTP_new import (
+from training.data_loaders.test_feats_stocks_time_series_2_MTP_new_aux import (
     FinancialNumericalDataModule,
     download_numerical_financial_data,
 )
-from training.money_experiment_2_MTP import MoneyExperiment
+from training.money_experiment_2_MTP_aux import MoneyExperiment
 
 import torch.distributed as dist
 from functools import wraps
@@ -132,6 +132,7 @@ def proceed(args: argparse.Namespace):
         args.indices_to_predict
     )  # how many datapoints in the future to predict (workdays, not regular days, because market no work weekend)
     args.tickers = sorted(args.tickers)
+    args.aux_tickers = sorted(args.aux_tickers)
 
     match args.dtype:
         case "fp32":
@@ -167,6 +168,7 @@ def proceed(args: argparse.Namespace):
 
         args.normalization_means, args.normalization_stds = download_numerical_financial_data(
             tickers=args.tickers,
+            aux_tickers=args.aux_tickers,
             seq_len=seq_len,
             check_if_already_downloaded=False,  # TODO make this better/check which features are missing
             target_dates=pred_indices,
@@ -187,8 +189,10 @@ def proceed(args: argparse.Namespace):
     data_module.setup()  # Very important to setup the data
     # vocab_size = data_module.get_vocab_size()
     args.input_features = len(data_module._metadata["columns"])
+    args.aux_input_features = len(data_module._metadata["aux_columns"])
+    args.time_features = len(data_module._metadata["time_features"])
 
-    with open("experiment_configs/hpo_classification_base.json", "r") as f:
+    with open("experiment_configs/hpo_classification_base_aux.json", "r") as f:
         base_args = argparse.Namespace(**json.load(f))
     base_args.input_features = args.input_features
 
@@ -302,7 +306,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--config",
         type=str,
-        default="./experiment_configs/hpo_scaled_up.json",
+        default="./experiment_configs/hpo_scaled_up_aux.json",
         help="Path to config file.",
     )
 

@@ -13,7 +13,8 @@ from transformer_arch.money.money_former_nGPT_2 import (
 )
 from money_predictions_MTP_local_new import (
     calculate_metrics,
-    trading_metrics
+    trading_metrics,
+    trading_metrics_with_costs
 )
 
 from muon import MuonWithAuxAdam
@@ -30,7 +31,6 @@ import time
 
 cummulative_times = {"preprocessing": 0, "model": 0, "loss": 0, "metrics": 0}
 
-# TODO maybe add comparisons to losses and other metrics 
 # TODO re-add IC?
 
 def get_spearmanr_correlations_pytorch( # TODO adapt for MTP
@@ -159,6 +159,38 @@ def calculate_expected_accuracy(targets_classes, num_classes):
         accuracy = max(accuracy, (targets_classes == i).sum() / targets_classes.numel())
     return accuracy
 
+class WeightedCustomLoss(nn.Module): # TODO try linear version (+ rewrite)
+    def __init__(self, weight_matrix, reduction='mean'):
+        super(WeightedCustomLoss, self).__init__()
+        if not isinstance(weight_matrix, torch.Tensor):
+            weight_matrix = torch.tensor(weight_matrix, dtype=torch.float32)
+        self.weight_matrix = weight_matrix
+
+        if reduction not in ['mean', 'sum', 'none']:
+            raise ValueError(f"Reduction must be one of 'mean', 'sum', or 'none', but got {reduction}")
+        self.reduction = reduction
+
+    def forward(self, y_pred, y_true):
+        self.weight_matrix = self.weight_matrix.to(y_pred.device)
+
+        log_probs = torch.log_softmax(y_pred+1e-9, dim=1)
+
+        one_hot_encoded = torch.nn.functional.one_hot(y_true, num_classes=log_probs.shape[1])
+        dims = list(range(one_hot_encoded.dim()))
+        one_hot_encoded = one_hot_encoded.permute(dims[0], dims[-1], *dims[1:-1])
+
+        weights_for_batch = self.weight_matrix[y_true]
+        dims = list(range(weights_for_batch.dim()))
+        weights_for_batch = weights_for_batch.permute(dims[0], dims[-1], *dims[1:-1])
+
+        loss = -torch.sum(one_hot_encoded*log_probs, dim=1) * torch.exp((torch.softmax(y_pred, dim=1)*weights_for_batch).sum(dim=1))
+
+        if self.reduction == 'mean':
+            return loss.mean()
+        elif self.reduction == 'sum':
+            return loss.sum()
+        else:  # 'none'
+            return loss
 
 class MoneyExperiment(pl.LightningModule):
     def __init__(
@@ -182,7 +214,7 @@ class MoneyExperiment(pl.LightningModule):
         self.lr_mult = lr_mult
         self.batch_size = batch_size
 
-        class_weights = [1.0, 1.0, 1.0]
+        class_weights = [args.down_up_loss_weight, 1.0, args.down_up_loss_weight]
         class_weights = [w*len(class_weights)/sum(class_weights) for w in class_weights]
 
         match args.prediction_type:
@@ -212,7 +244,7 @@ class MoneyExperiment(pl.LightningModule):
         self.validation_step_outputs = []
 
 
-        feature_weights = [10, 1, 1, 1, 1]
+        feature_weights = [1, 1, 1, 1, 1]
         ticker_weights = [1 for _ in range(len(args.tickers))] + [0.2 for _ in range(len(args.aux_tickers))]
         seen_unseen_weights = [1 for _ in range(args.seq_len)]
 
@@ -222,7 +254,7 @@ class MoneyExperiment(pl.LightningModule):
 
         loss_weights = feature_weights.unsqueeze(-1) * ticker_weights.unsqueeze(0)
         loss_weights = seen_unseen_weights.unsqueeze(-1).unsqueeze(-1) * loss_weights.unsqueeze(0)
-        self.loss_weights = loss_weights.unsqueeze(0).unsqueeze(3)
+        self.loss_weights = loss_weights.unsqueeze(0).unsqueeze(3).to("cuda" if torch.cuda.is_available() else "cpu")
 
 
     def forward(self, *args, **kwargs):
@@ -706,14 +738,14 @@ class MoneyExperiment(pl.LightningModule):
             
             # 2. Define the parameter groups for the built-in optimizer
             param_groups = [
-                dict(params=muon_params, use_muon=True, lr=self.args.muon_lr),
+                dict(params=muon_params, use_muon=True, lr=self.args.muon_lr, weight_decay=weight_decay),
                 # NOTE: MuonWithAuxAdam hardcodes the aux optimizer to Adam.
                 # It will use the lr from this group.
-                dict(params=aux_params, use_muon=False, lr=self.learning_rate),
+                dict(params=aux_params, use_muon=False, lr=self.learning_rate, weight_decay=weight_decay),
             ]
 
             # 3. Instantiate the built-in optimizer directly
-            optimizer = MuonWithAuxAdam(param_groups, weight_decay=weight_decay)
+            optimizer = MuonWithAuxAdam(param_groups)
 
         elif self.args.optimizer == 'orthograd':
             optimizer = OrthoGrad(
@@ -853,30 +885,61 @@ class MoneyExperiment(pl.LightningModule):
                     **log_opts_epoch,
                 )
             
+            for i in range(targets.shape[-1]):
+                trading_strategy_metrics = trading_metrics(targets[:, i], backtest_predictions[:, i], self.args)
+                for metric_name, metric_value in trading_strategy_metrics.items():
+                    self.log(
+                        f"Trading_strategy_metrics_individual/val_{metric_name}_{self.tickers[i]}",
+                        metric_value,
+                        **log_opts_epoch,
+                )
+            
+            trading_strategy_metrics = trading_metrics_with_costs(targets, backtest_predictions, self.args)
+            for metric_name, metric_value in trading_strategy_metrics.items():
+                self.log(
+                    f"Trading_strategy_metrics_with_costs/val_{metric_name}",
+                    metric_value,
+                    **log_opts_epoch,
+                )
+            
+            for i in range(targets.shape[-1]):
+                trading_strategy_metrics = trading_metrics_with_costs(targets[:, i], backtest_predictions[:, i], self.args)
+                for metric_name, metric_value in trading_strategy_metrics.items():
+                    self.log(
+                        f"Trading_strategy_metrics_with_costs_individual/val_{metric_name}_{self.tickers[i]}",
+                        metric_value,
+                        **log_opts_epoch,
+                )
+            
             cummulative_times["metrics"] += (
                 time.time_ns() - time_metrics_start
             ) / 1e6
 
             self.log(
                 f"Times/preprocessing",
-                cummulative_times["preprocessing"] / (self.global_step + 1),
+                cummulative_times["preprocessing"] / (self.trainer.val_check_interval),
                 logger=True,
             )
             self.log(
                 f"Times/forward_pass",
-                cummulative_times["model"] / (self.global_step + 1),
+                cummulative_times["model"] / (self.trainer.val_check_interval),
                 logger=True,
             )
             self.log(
                 f"Times/loss",
-                cummulative_times["loss"] / (self.global_step + 1),
+                cummulative_times["loss"] / (self.trainer.val_check_interval),
                 logger=True,
             )
             self.log(
                 f"Times/metrics",
-                cummulative_times["metrics"] / (self.global_step + 1),
+                cummulative_times["metrics"] / (self.trainer.val_check_interval),
                 logger=True,
             )
+
+            cummulative_times["preprocessing"] = 0
+            cummulative_times["model"] = 0
+            cummulative_times["loss"] = 0
+            cummulative_times["metrics"] = 0
 
     def on_train_batch_end(self, outputs, batch, batch_idx):
         if self.model.__class__.__name__ == "Money_former_nGPT":

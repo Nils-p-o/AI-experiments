@@ -157,10 +157,13 @@ def proceed(args: argparse.Namespace):
         case _:
             args.dtype = "fp32"
             trainer_precision = "32-true"
-    seed = torch.seed()
-    seed = seed % (2**32)
-    args.seed = seed
-    pl.seed_everything(seed)
+    
+    if not args.seed:
+        seed = torch.seed()
+        seed = seed % (2**32)
+        args.seed = seed
+
+    pl.seed_everything(args.seed)
     print(
         f"LLaMa seq_len:{seq_len} d_model:{d_model} d_ff:{d_ff} num_layers:{num_layers} nhead:{nhead} dropout:{dropout} lr:{lr} t_total:{t_total} warmup_steps:{warmup_steps} t_0:{t_0} t_mult:{t_mult} lr_mult:{lr_mult} batch_size:{batch_size}"
     )
@@ -314,86 +317,31 @@ if __name__ == "__main__":
     parser.add_argument(
         "--config",
         type=str,
-        # default="./experiment_configs/MTP_triplicate.json",
-        # default="./experiment_configs/diff_head_dims_MTP.json",
-        # default="./experiment_configs/profile.json",
-        # default="./experiment_configs/MTP_experiment_trip.json",
-        # default="./experiment_configs/MTP_classification_exp.json",
         default="./experiment_configs/MTP_classification_exp_aux.json",
         help="Path to config file.",
     )
-    if parser.parse_known_args()[0].config != "":
-        with open(parser.parse_known_args()[0].config, "r") as f:
-            args = json.load(f)
-        for k, v in args.items():
-            parser.set_defaults(**{k: v})
-            # parser.add_argument(f"--{k}", type=type(v), default=v)
-    else:
-        # Model architecture arguments (same as before)
-        parser.add_argument(
-            "--architecture",
-            type=str,
-            default="Money_former",  # "DINT",
-            help="Model architecture (LLaMa, ...)",
-        )
-        parser.add_argument(
-            "--d_model", type=int, default=128, help="Embedding dimension."
-        )
-        parser.add_argument(
-            "--nhead", type=int, default=8, help="Number of attention heads."
-        )
-        parser.add_argument(
-            "--num_layers", type=int, default=4, help="Number of layers."
-        )
-        parser.add_argument("--d_ff", type=int, default=512, help="dimension in d_ff")
 
-        parser.add_argument(
-            "--dropout", type=float, default=0.1, help="Dropout probability."
-        )
-        parser.add_argument(
-            "--type",
-            type=str,
-            default="baseline",
-            help="Experiment type (for logging).",
-        )
+    config_args, remaining_argv = parser.parse_known_args()
 
-        # Training arguments (same as before)
-        parser.add_argument("--lr", type=float, default=1e-3, help="Learning rate.")
-        parser.add_argument(
-            "--warmup_steps", type=int, default=2000, help="Warmup steps."
-        )
-        parser.add_argument(
-            "--t_total", type=int, default=100000, help="Total training steps."
-        )
-        parser.add_argument(
-            "--t_0", type=int, default=5000, help="Initial period for cosine annealing."
-        )
-        parser.add_argument(
-            "--t_mult", type=float, default=1.5, help="Multiplier for period."
-        )
-        parser.add_argument(
-            "--lr_mult", type=float, default=0.6, help="Multiplier for peak LR."
-        )
-        parser.add_argument("--seq_len", type=int, default=128, help="Sequence length.")
-        parser.add_argument("--batch_size", type=int, default=16, help="Batch size.")
+    config_dict = {}
+    if config_args.config and config_args.config != "":
+        try:
+            with open(config_args.config, "r") as f:
+                config_dict = json.load(f)
+        except Exception as e:
+            raise ValueError(f"Error loading config file: {e}")
 
-        # parser.add_argument(
-        #     "--seed", type=int, default=42, help="Seed for reproducibility."
-        # )
+    for key, value in config_dict.items():
+        # A nice-to-have: handle boolean flags properly
+        # argparse.BooleanOptionalAction creates both --feature and --no-feature flags
         parser.add_argument(
-            "--extra_descriptor",
-            type=str,
-            default="",
-            help="Extra descriptor for logging.",
+            f"--{key}",
+            type=type(value), # The type is inferred from the JSON value
+            default=value,
+            help=f"Set the value for {key}. Default: {value}"
         )
-        parser.add_argument(
-            "--orthograd", type=bool, default=True, help="Use OrthoGrad."
-        )
-        parser.add_argument(
-            "--dataset", type=str, default="Money", help="Dataset to use."
-        )
-
-    args = parser.parse_args()
+    
+    args = parser.parse_args(remaining_argv, namespace=config_args)
     run_experiment(args)
 
 
