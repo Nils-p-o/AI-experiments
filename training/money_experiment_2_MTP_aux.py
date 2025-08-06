@@ -720,7 +720,8 @@ class MoneyExperiment(pl.LightningModule):
             # Define the full parameter names of layers that should NOT use Muon.
             non_muon_linear_weights = {
                 'model.shared_value_input.weight',
-                'model.out.weight'
+                'model.out.weight',
+                'model.aux_inputs.weight'
             }
             if self.args.unique_inputs_ratio[0] > 0:
                 for i in range(len(self.model.unique_value_input)):

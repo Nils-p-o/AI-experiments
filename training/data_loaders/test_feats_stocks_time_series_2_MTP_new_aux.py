@@ -619,6 +619,7 @@ def download_numerical_financial_data(
         "test_split_ratio": test_split_ratio,
         "columns": columns,
         "aux_columns": aux_columns,
+        "time_columns": time_columns,
         "column_to_id": column_to_id,
         "indexes": data_length,
         "target_dates": target_dates,
