@@ -965,107 +965,344 @@ def trading_metrics_with_costs(actuals, predictions, args):
     return metrics
 
 
-# def calculate_metrics(actuals, predictions, args, ticker_names: list):
-    # """
-    # Calculates predictive quality metrics.
-    # Returns two dictionaries: one for the portfolio and one for individual stocks.
-    # """
-    # portfolio_metrics = {}
-    # individual_metrics = {}
-    # num_tickers = predictions.shape[1]
+def ground_truth_strategy_trade(
+    predictions: torch.Tensor,
+    actual_movements: torch.Tensor,
+    trade_threshold_up: float = 0.01,
+    trade_threshold_down: float = 0.01,
+    initial_capital: float = 100000.0,
+    transaction_cost_pct: float = 0.0005,
+    prediction_type: str = "regression",  # 'regression' or 'classification'
+    decision_type: str = "threshold",  # 'argmax' or 'threshold'
+    allocation_strategy: str = "equal",  # 'equal' or 'signal_strength'
+) -> tuple[torch.Tensor, torch.Tensor]:
+    # predictions: [periods, tickers, classes] or [periods, tickers]
+    # actual_movements: [periods, tickers]
 
-    # # --- Overall Portfolio Metrics ---
-    # if args.prediction_type == "regression":
-    #     portfolio_metrics["MAE_Loss"] = torch.mean(torch.abs(predictions - actuals)).item()
-    #     portfolio_metrics["Total_Accuracy"] = torch.mean((predictions.sign() == actuals.sign()).float()).item()
+    predictions = predictions.cpu().to(torch.float64)
+    actual_movements = actual_movements.cpu().to(torch.float64)
+    potential_trades = actual_movements.shape[0]
+    num_tickers = actual_movements.shape[1]
+    portfolio_values_ts = torch.zeros(potential_trades + 1, dtype=torch.float64)
+    portfolio_values_ts[0] = initial_capital
+    daily_portfolio_returns_ts = torch.zeros(potential_trades, dtype=torch.float64)
+    current_capital = initial_capital
+    current_positions = torch.zeros(num_tickers, dtype=torch.float64)
+
+    for trade in range(potential_trades):
+        # Determine the target positions for the current period based on predictions.
+        target_positions = torch.zeros(num_tickers, dtype=torch.float64)
+        daily_predictions = predictions[trade]
+
+        if prediction_type == "classification":
+            if decision_type == "argmax":
+                predicted_classes = torch.argmax(daily_predictions, dim=-1)
+                target_positions[predicted_classes == 2] = 1.0
+                target_positions[predicted_classes == 0] = -1.0
+            elif decision_type == "threshold":
+                target_positions[daily_predictions[:, 2] > trade_threshold_up] = 1.0
+                target_positions[daily_predictions[:, 0] > trade_threshold_down] = -1.0
+        elif prediction_type == "regression":
+            if decision_type == "threshold":
+                target_positions[daily_predictions > trade_threshold_up] = 1.0
+                target_positions[daily_predictions < -trade_threshold_down] = -1.0
+            else:  # A simple sign-based decision for regression
+                target_positions = torch.sign(daily_predictions)
+
+        # Allocate capital based on the chosen strategy.
+        num_trades = torch.count_nonzero(target_positions)
+        if num_trades > 0:
+            if allocation_strategy == "equal":
+                allocations = target_positions / num_trades
+            elif allocation_strategy == "signal_strength":
+                abs_predictions = torch.abs(daily_predictions)
+                total_signal_strength = torch.sum(
+                    abs_predictions[target_positions != 0]
+                )
+                if total_signal_strength > 0:
+                    allocations = (
+                        target_positions * abs_predictions
+                    ) / total_signal_strength
+                else:
+                    allocations = torch.zeros_like(target_positions)
+        else:
+            allocations = torch.zeros_like(target_positions)
+
+        # take desired position
+        desired_allocations = allocations * current_capital  # Convert to dollar amounts
+        # Calculate transaction costs only on the change in positions.
+        position_change = desired_allocations - current_positions
+        transaction_costs = torch.sum(torch.abs(position_change)) * transaction_cost_pct
+        current_capital -= transaction_costs
+        actual_allocations = (
+            allocations * current_capital
+        )  # Actual dollar allocations after costs
+
+        # update portfolio value after price movement, (# this is the value of the portfolio at the end of the trade period, right before the next trade is made)
+        # Calculate the portfolio's return for the trade.
+        change_in_positions = actual_allocations * actual_movements[trade]
+
+        current_positions = actual_allocations + change_in_positions
+        # Update the portfolio's capital.
+        current_capital += torch.sum(change_in_positions)
+        portfolio_values_ts[trade + 1] = current_capital
+
+        if portfolio_values_ts[trade] > 0:
+            daily_portfolio_returns_ts[trade] = (
+                current_capital / portfolio_values_ts[trade]
+            ) - 1
+        # end of discrete trade period/beginning of next period
     
-    # elif args.prediction_type == "classification":
-    #     pred_classes_all = predictions.argmax(dim=-1)
-    #     actual_classes_all = torch.ones_like(actuals, dtype=torch.long)
-    #     actual_classes_all[actuals < -args.classification_threshold] = 0
-    #     actual_classes_all[actuals > args.classification_threshold] = 2
-    #     portfolio_metrics["Total_Accuracy"] = torch.mean((pred_classes_all == actual_classes_all).float()).item()
+    portfolio_dict = {
+        "portfolio_values": portfolio_values_ts,
+        "daily_portfolio_returns": daily_portfolio_returns_ts,
+    }
 
-    # # --- Per-Stock Metrics ---
-    # for i in range(num_tickers):
-    #     ticker = ticker_names[i]
-    #     preds_stock = predictions[:, i]
-    #     actuals_stock = actuals[:, i]
+    # --- Calculate performance statistics ---
+    final_capital = portfolio_values_ts[-1]
+    total_return = (final_capital - initial_capital) / initial_capital
+    num_winning_days = torch.sum(daily_portfolio_returns_ts > 0)
+    num_losing_days = torch.sum(daily_portfolio_returns_ts < 0)
+    win_loss_ratio = num_winning_days / num_losing_days if num_losing_days > 0 else 0.0
+    num_days = potential_trades
 
-    #     if args.prediction_type == "regression":
-    #         individual_metrics[f"{ticker}_MAE_Loss"] = torch.mean(torch.abs(preds_stock - actuals_stock)).item()
-    #         individual_metrics[f"{ticker}_Accuracy"] = torch.mean((preds_stock.sign() == actuals_stock.sign()).float()).item()
-
-    #     elif args.prediction_type == "classification":
-    #         pred_classes = preds_stock.argmax(dim=-1)
-    #         actual_classes = torch.ones_like(actuals_stock, dtype=torch.long)
-    #         actual_classes[actuals_stock < -args.classification_threshold] = 0
-    #         actual_classes[actuals_stock > args.classification_threshold] = 2
-
-    #         individual_metrics[f"{ticker}_Accuracy"] = torch.mean((pred_classes == actual_classes).float()).item()
-            
-    #         if (pred_classes == 2).sum().item() > 0:
-    #             individual_metrics[f"{ticker}_Conf_Up"] = ((preds_stock[:, 2] * (pred_classes == 2)).sum() / (pred_classes == 2).sum()).item()
-    #         if (pred_classes == 0).sum().item() > 0:
-    #              individual_metrics[f"{ticker}_Conf_Down"] = ((preds_stock[:, 0] * (pred_classes == 0)).sum() / (pred_classes == 0).sum()).item()
-
-    # return portfolio_metrics, individual_metrics
-
-
-# def trading_metrics(actuals, predictions, args, ticker_names: list):
-    # """
-    # Calculates trading strategy metrics.
-    # Returns two dictionaries: one for the portfolio and one for individual stocks.
-    # """
-    # portfolio_metrics = {}
-    # individual_metrics = {}
+    annualized_return = ((1+ total_return) ** (252.0 / num_days)) - 1.0 if num_days > 0 else 0.0
+    annualized_volatility = torch.std(daily_portfolio_returns_ts) * torch.sqrt(torch.tensor(252.0, dtype=torch.float64)) if num_days > 0 else 0.0
+    sharpe_ratio = (annualized_return / annualized_volatility) if annualized_volatility > 1e-9 else 0.0
+    downside_returns = daily_portfolio_returns_ts[daily_portfolio_returns_ts < 0]
+    sortino_ratio = (annualized_return / torch.std(downside_returns)) if len(downside_returns) > 0 else 0.0
     
-    # # --- 1. Run Backtest on the Full Portfolio ---
-    # _, portfolio_stats = run_strategy_with_flexible_allocation(
-    #     predictions_1day_ahead=predictions,
-    #     actual_1d_returns=actuals,
-    #     trade_threshold_up=0.5 if args.prediction_type == "classification" else 0.0,
-    #     trade_threshold_down=0.5 if args.prediction_type == "classification" else 0.0,
-    #     initial_capital=1000,
-    #     transaction_cost_pct=0.0,
-    #     allocation_strategy="equal",
-    #     signal_horizon_name="validation_portfolio",
-    #     prediction_type=args.prediction_type,
-    #     decision_type="argmax"
-    # )
+    running_max = torch.cummax(portfolio_values_ts, dim=0).values
+    drawdown = (running_max - portfolio_values_ts) / running_max
+    max_drawdown = torch.max(drawdown).item()
+    calmar_ratio = (annualized_return / max_drawdown) if max_drawdown > 0.04 else (annualized_return / 0.04)
 
-    # # Populate the portfolio metrics dictionary
-    # for stat_name, stat_value in portfolio_stats.items():
-    #     if not any(x in stat_name for x in ["Threshold", "Signal Horizon", "Final", "Total"]):
-    #         portfolio_metrics[stat_name] = stat_value
+    stats_dict = {
+        "Threshold Up": trade_threshold_up,
+        "Threshold Down": trade_threshold_down,
+        "Total Return": total_return,
+        "Annualized Return": annualized_return,
+        "Annualized Volatility": annualized_volatility,
+        "Sharpe Ratio": sharpe_ratio,
+        "Sortino Ratio": sortino_ratio,
+        "Calmar Ratio": calmar_ratio,
+        "Max Drawdown": max_drawdown,
+        "Number of Trading Days": int(num_days),
+        "Number of Winning Days": int(num_winning_days),
+        "Number of Losing Days": int(num_losing_days),
+        "Win/Loss Day Ratio": win_loss_ratio,
+        "Final Capital": final_capital,
+    }
 
-    # # --- 2. Run Individual Backtest for Each Stock ---
-    # num_tickers = predictions.shape[1]
-    # for i in range(num_tickers):
-    #     ticker = ticker_names[i]
+    return portfolio_dict, stats_dict
+
+
+def vectorized_per_stock_backtest(
+    predictions: torch.Tensor,
+    actual_movements: torch.Tensor,
+    trade_threshold_up: float = 0.01,
+    trade_threshold_down: float = 0.01,
+    initial_capital: float = 100000.0,
+    transaction_cost_pct: float = 0.0005,
+    prediction_type: str = "regression",
+    decision_type: str = "threshold",
+) -> tuple[torch.Tensor, torch.Tensor]:
+    # predictions: [periods, tickers, classes] or [periods, tickers]
+    # actual_movements: [periods, tickers]
+
+    predictions = predictions.cpu().to(torch.float64)
+    actual_movements = actual_movements.cpu().to(torch.float64)
+    potential_trades, num_tickers = actual_movements.shape
+
+    # --- VECTORIZED STATE INITIALIZATION ---
+    # Each column represents an independent backtest for one stock.
+    # Shape: [periods+1, tickers]
+    portfolio_values_ts = torch.zeros((potential_trades + 1, num_tickers), dtype=torch.float64)
+    portfolio_values_ts[0] = initial_capital # PyTorch broadcasts the scalar
+
+    # Shape: [periods, tickers]
+    daily_portfolio_returns_ts = torch.zeros((potential_trades, num_tickers), dtype=torch.float64)
+    
+    # Shape: [tickers]
+    current_capital = torch.full((num_tickers,), initial_capital, dtype=torch.float64)
+    current_positions = torch.zeros(num_tickers, dtype=torch.float64)
+
+    for trade in range(potential_trades):
+        # --- VECTORIZED DECISION MAKING ---
+        # This part of the logic works on the entire [tickers] dimension already.
+        target_positions = torch.zeros(num_tickers, dtype=torch.float64)
+        daily_predictions = predictions[trade] # Shape: [tickers, classes] or [tickers]
+
+        # This logic is unchanged but now operates in parallel across all tickers
+        if prediction_type == "classification":
+            if decision_type == "argmax":
+                predicted_classes = torch.argmax(daily_predictions, dim=-1)
+                target_positions[predicted_classes == 2] = 1.0
+                target_positions[predicted_classes == 0] = -1.0
+            else: # threshold
+                target_positions[daily_predictions[:, 2] > trade_threshold_up] = 1.0
+                target_positions[daily_predictions[:, 0] > trade_threshold_down] = -1.0
+        else: # regression
+            if decision_type == "threshold":
+                target_positions[daily_predictions > trade_threshold_up] = 1.0
+                target_positions[daily_predictions < -trade_threshold_down] = -1.0
+            else: # sign
+                target_positions = torch.sign(daily_predictions)
+
+        # For per-stock backtests, allocation is always 100% or 0.
+        # The 'allocations' weights are just the target_positions themselves.
+        allocations = target_positions # Shape: [tickers]
+
+        # --- VECTORIZED ACCOUNTING ---
+        # Element-wise multiplication of allocation weight by each stock's capital
+        desired_allocations = allocations * current_capital  # Shape: [tickers]
+        position_change = desired_allocations - current_positions # Shape: [tickers]
         
-    #     preds_stock = predictions[:, i].unsqueeze(1)
-    #     actuals_stock = actuals[:, i].unsqueeze(1)
+        # CRITICAL: No sum! Calculate costs for each backtest independently.
+        transaction_costs = torch.abs(position_change) * transaction_cost_pct # Shape: [tickers]
 
-    #     _, stock_stats = run_strategy_with_flexible_allocation(
-    #         predictions_1day_ahead=preds_stock,
-    #         actual_1d_returns=actuals_stock,
-    #         trade_threshold_up=0.5 if args.prediction_type == "classification" else 0.0,
-    #         trade_threshold_down=0.5 if args.prediction_type == "classification" else 0.0,
-    #         initial_capital=1000,
-    #         transaction_cost_pct=0.0,
-    #         allocation_strategy="equal",
-    #         signal_horizon_name=f"validation_{ticker}",
-    #         prediction_type=args.prediction_type,
-    #         decision_type="argmax"
-    #     )
+        current_capital -= transaction_costs # Element-wise subtraction
+        actual_allocations = allocations * current_capital # Element-wise mult
+
+        # Calculate P&L for each stock independently
+        change_in_positions = actual_allocations * actual_movements[trade] # Shape: [tickers]
         
-    #     # Populate the individual metrics dictionary with prefixed keys
-    #     for stat_name, stat_value in stock_stats.items():
-    #         if not any(x in stat_name for x in ["Threshold", "Signal Horizon", "Final", "Total"]):
-    #             individual_metrics[f"{ticker}_{stat_name}"] = stat_value
+        current_positions = actual_allocations + change_in_positions
+        
+        # CRITICAL: No sum! Add P&L to each stock's capital independently.
+        current_capital += change_in_positions
 
-    # return portfolio_metrics, individual_metrics
+        # Store the vector of portfolio values
+        portfolio_values_ts[trade + 1] = current_capital
+        
+        # Calculate returns for each stock
+        # Add a small epsilon to avoid division by zero if a portfolio value is 0
+        prev_values = portfolio_values_ts[trade]
+        daily_portfolio_returns_ts[trade] = torch.where(
+            prev_values > 0,
+            (current_capital / prev_values) - 1,
+            0.0
+        )
+
+    portfolio_dict = {
+        "portfolio_values": portfolio_values_ts,
+        "daily_portfolio_returns": daily_portfolio_returns_ts,
+    }
+
+    # --- VECTORIZED PERFORMANCE STATISTICS ---
+    # Each metric will be a tensor of shape [num_tickers]
+    final_capital = portfolio_values_ts[-1]
+    total_return = (final_capital - initial_capital) / initial_capital
+    num_days = potential_trades
+    annualized_return = (1 + total_return) ** (252/num_days) - 1.0
+    annualized_volatility = torch.std(daily_portfolio_returns_ts, dim=0) * torch.sqrt(torch.tensor(252.0, dtype=torch.float64))
+
+    downside_returns = daily_portfolio_returns_ts[daily_portfolio_returns_ts < 0]
+    if downside_returns.numel() == 0:
+        downside_volatility = torch.tensor(0.0, dtype=torch.float64)
+    else:
+        downside_volatility = torch.std(downside_returns, dim=0) * torch.sqrt(torch.tensor(252.0, dtype=torch.float64))
+    sortino_ratio = torch.where(
+        downside_volatility > 1e-9,
+        annualized_return / downside_volatility,
+        0.0
+    )
+    
+    # Use torch.where to avoid division by zero for Sharpe Ratio
+    sharpe_ratio = torch.where(
+        annualized_volatility > 1e-9,
+        annualized_return / annualized_volatility,
+        0.0
+    )
+    
+    # --- NEW: Vectorized Max Drawdown and Calmar Ratio ---
+    running_max = torch.cummax(portfolio_values_ts, dim=0).values
+    drawdown = (running_max - portfolio_values_ts) / running_max
+    max_drawdown = torch.max(drawdown, dim=0).values
+
+    # Calculate Calmar Ratio, handling cases where max_drawdown is 0
+    calmar_ratio = torch.where(
+        max_drawdown > 0.04,
+        annualized_return / max_drawdown,
+        annualized_return / 0.04
+    )
+
+    num_winning_days = torch.sum(daily_portfolio_returns_ts > 0, dim=0)
+    num_losing_days = torch.sum(daily_portfolio_returns_ts < 0, dim=0)
+
+    win_loss_ratio = torch.where(
+        num_losing_days > 0,
+        num_winning_days / num_losing_days,
+        0.0 # Define as 0 if there are no losing days
+    )
+
+    stats_dict = {
+        "Total Return": total_return,
+        "Annualized Return": annualized_return,
+        "Annualized Volatility": annualized_volatility,
+        "Sharpe Ratio": sharpe_ratio,
+        "Sortino Ratio": sortino_ratio,
+        "Calmar Ratio": calmar_ratio,
+        "Max Drawdown": max_drawdown,
+        "Number of Trading Days": torch.full((num_tickers,), float(num_days), dtype=torch.float32),
+        "Number of Winning Days": num_winning_days,
+        "Number of Losing Days": num_losing_days,
+        "Win/Loss Day Ratio": win_loss_ratio,
+        "Final Capital": final_capital,
+    }
+
+    return portfolio_dict, stats_dict
+
+def new_trading_metrics(actuals, predictions, args):
+    metrics = {}
+    portfolio_dict, stats = ground_truth_strategy_trade(
+        predictions=predictions,
+        actual_movements=actuals,
+        initial_capital=1000,
+        transaction_cost_pct=0.0005,  # assuming high enough capital and US stocks
+        prediction_type=args.prediction_type,
+        decision_type="argmax",  # 'argmax' or 'threshold'
+        allocation_strategy="equal",  # 'equal' or 'signal_strength'
+    )
+
+    metrics["Annualized Return"] = stats["Annualized Return"]
+    metrics["Sharpe Ratio"] = stats["Sharpe Ratio"]
+    metrics["Sortino Ratio"] = stats["Sortino Ratio"]
+    metrics["Calmar Ratio"] = stats["Calmar Ratio"]
+    metrics["Max Drawdown"] = stats["Max Drawdown"]
+    metrics["WLR"] = stats["Win/Loss Day Ratio"]
+    metrics["Days Traded"] = stats["Number of Winning Days"] + stats["Number of Losing Days"]
+
+    return metrics
+
+def new_trading_metrics_individual(
+    actuals: torch.Tensor,
+    predictions: torch.Tensor,
+    args
+):
+    """
+    Calculate trading metrics for each ticker individually.
+    """
+    metrics = {}
+    portfolio_dict, stats = vectorized_per_stock_backtest(
+        predictions=predictions,
+        actual_movements=actuals,
+        initial_capital=1000,
+        transaction_cost_pct=0.0005,  # assuming high enough capital and US stocks
+        prediction_type=args.prediction_type,
+        decision_type="argmax",  # 'argmax' or 'threshold'
+    )
+
+    metrics["Annualized Return"] = stats["Annualized Return"]
+    metrics["Sharpe Ratio"] = stats["Sharpe Ratio"]
+    metrics["Sortino Ratio"] = stats["Sortino Ratio"]
+    metrics["Calmar Ratio"] = stats["Calmar Ratio"]
+    metrics["Max Drawdown"] = stats["Max Drawdown"]
+    metrics["WLR"] = stats["Win/Loss Day Ratio"]
+    metrics["Days Traded"] = stats["Number of Winning Days"] + stats["Number of Losing Days"]
+
+    return metrics
+
 
 
 if __name__ == "__main__":

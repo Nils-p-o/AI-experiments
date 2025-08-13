@@ -14,7 +14,9 @@ from transformer_arch.money.money_former_nGPT_2 import (
 from money_predictions_MTP_local_new import (
     calculate_metrics,
     trading_metrics,
-    trading_metrics_with_costs
+    trading_metrics_with_costs,
+    new_trading_metrics,
+    new_trading_metrics_individual
 )
 
 from muon import MuonWithAuxAdam
@@ -159,82 +161,23 @@ def calculate_expected_accuracy(targets_classes, num_classes):
         accuracy = max(accuracy, (targets_classes == i).sum() / targets_classes.numel())
     return accuracy
 
-class WeightedCCE(nn.Module):
-    def __init__(self, weight_matrix, reduction='mean'):
-        """
-        Initializes a weighted categorical cross-entropy loss function.
-
-        This loss function is compatible with multi-dimensional targets, such as
-        those in semantic segmentation (e.g., shape [N, C, H, W]).
-
-        Args:
-            weight_matrix (torch.Tensor or np.ndarray): A CxC matrix where C is the
-                number of classes. weight_matrix[i, j] is the weight for
-                predicting class j when the true class is i.
-            reduction (str): Specifies the reduction to apply to the output:
-                             'none' | 'mean' | 'sum'.
-                             'none': no reduction will be applied.
-                             'mean': the sum of the output will be divided by the
-                                     number of elements in the output.
-                             'sum': the output will be summed.
-                             Default: 'mean'.
-        """
-        super(WeightedCCE, self).__init__()
-        if not isinstance(weight_matrix, torch.Tensor):
-            weight_matrix = torch.tensor(weight_matrix, dtype=torch.float32)
-        self.weight_matrix = weight_matrix
-        
-        if reduction not in ['mean', 'sum', 'none']:
-            raise ValueError(f"Reduction must be one of 'mean', 'sum', or 'none', but got {reduction}")
-        self.reduction = reduction
-
-    def forward(self, y_pred, y_true):
-        """
-        Calculates the weighted categorical cross-entropy.
-
-        Args:
-            y_pred (torch.Tensor): The predicted probabilities (output of softmax).
-                                   Shape: (N, C, *) where * means any number of
-                                   additional dimensions.
-            y_true (torch.Tensor): The one-hot encoded true labels. Must have the
-                                   same shape as y_pred.
-
-        Returns:
-            torch.Tensor: The calculated loss, with reduction applied.
-        """
-        # Ensure weight matrix is on the same device as predictions
-        self.weight_matrix = self.weight_matrix.to(y_pred.device)
-
-        log_probs = torch.log_softmax(y_pred+1e-9, dim=1)
-
-        weights_for_batch = self.weight_matrix[y_true]
-        dims = list(range(weights_for_batch.dim()))
-        weights_for_batch = weights_for_batch.permute(dims[0], dims[-1], *dims[1:-1])
-
-        weighted_predictions = y_pred * weights_for_batch
-        loss = -torch.sum(weights_for_batch*log_probs, dim=1)
-
-        # 6. Apply the specified reduction.
-        if self.reduction == 'mean':
-            return loss.mean()
-        elif self.reduction == 'sum':
-            return loss.sum()
-        else:  # 'none'
-            return loss
-
-class WeightedCustomLoss(nn.Module): # TODO try linear version (+ rewrite)
-    def __init__(self, weight_matrix, reduction='mean'):
+class WeightedCustomLoss(nn.Module):
+    def __init__(self, cost_matrix, weights, reduction='mean'):
         super(WeightedCustomLoss, self).__init__()
-        if not isinstance(weight_matrix, torch.Tensor):
-            weight_matrix = torch.tensor(weight_matrix, dtype=torch.float32)
-        self.weight_matrix = weight_matrix
+        if not isinstance(cost_matrix, torch.Tensor):
+            cost_matrix = torch.tensor(cost_matrix, dtype=torch.float32)
+        self.cost_matrix = cost_matrix
+
+        if not isinstance(weights, torch.Tensor):
+            weights = torch.tensor(weights, dtype=torch.float32)
+        self.weights = weights
 
         if reduction not in ['mean', 'sum', 'none']:
             raise ValueError(f"Reduction must be one of 'mean', 'sum', or 'none', but got {reduction}")
         self.reduction = reduction
 
     def forward(self, y_pred, y_true):
-        self.weight_matrix = self.weight_matrix.to(y_pred.device)
+        self.cost_matrix = self.cost_matrix.to(y_pred.device)
 
         log_probs = torch.log_softmax(y_pred+1e-9, dim=1)
 
@@ -242,11 +185,44 @@ class WeightedCustomLoss(nn.Module): # TODO try linear version (+ rewrite)
         dims = list(range(one_hot_encoded.dim()))
         one_hot_encoded = one_hot_encoded.permute(dims[0], dims[-1], *dims[1:-1])
 
-        weights_for_batch = self.weight_matrix[y_true]
-        dims = list(range(weights_for_batch.dim()))
-        weights_for_batch = weights_for_batch.permute(dims[0], dims[-1], *dims[1:-1])
+        costs_for_batch = self.cost_matrix[y_true]
+        dims = list(range(costs_for_batch.dim()))
+        costs_for_batch = costs_for_batch.permute(dims[0], dims[-1], *dims[1:-1])
 
-        loss = -torch.sum(one_hot_encoded*log_probs, dim=1) * torch.exp((torch.softmax(y_pred, dim=1)*weights_for_batch).sum(dim=1))
+        weights_for_batch = self.weights[y_true].unsqueeze(1)
+
+        loss = -torch.sum(one_hot_encoded*log_probs*weights_for_batch, dim=1) * torch.exp((torch.softmax(y_pred, dim=1)*costs_for_batch).sum(dim=1))
+
+        if self.reduction == 'mean':
+            return loss.mean()
+        elif self.reduction == 'sum':
+            return loss.sum()
+        else:  # 'none'
+            return loss
+
+class WeightedClassImbalanceCrossEntropyLoss(nn.Module):
+    def __init__(self, class_weights, reduction='mean'):
+        super(WeightedClassImbalanceCrossEntropyLoss, self).__init__()
+        if not isinstance(class_weights, torch.Tensor):
+            class_weights = torch.tensor(class_weights, dtype=torch.float32)
+        self.class_weights = class_weights.permute(2, 0, 1)  # (num_classes, features, num_sequences)
+        self.class_weights = self.class_weights.unsqueeze(0).unsqueeze(2).unsqueeze(4)  # (1, num_classes, 1, features, 1, num_sequences)
+        if reduction not in ['mean', 'sum', 'none']:
+            raise ValueError(f"Reduction must be one of 'mean', 'sum', or 'none', but got {reduction}")
+        self.reduction = reduction
+
+    def forward(self, y_pred, y_true):
+        # y_pred: (batch_size, num_classes, seq_len, features, targets, num_sequences)
+        self.class_weights = self.class_weights.to(y_pred.device)
+
+        log_probs = torch.log_softmax(y_pred+1e-9, dim=1)
+
+        one_hot_encoded = torch.nn.functional.one_hot(y_true, num_classes=log_probs.shape[1])
+        dims = list(range(one_hot_encoded.dim()))
+        one_hot_encoded = one_hot_encoded.permute(dims[0], dims[-1], *dims[1:-1])
+
+        # class_weights (1, num_classes, 1, features, 1, num_sequences)
+        loss = -torch.sum(one_hot_encoded * log_probs * self.class_weights, dim=1)
 
         if self.reduction == 'mean':
             return loss.mean()
@@ -278,8 +254,17 @@ class MoneyExperiment(pl.LightningModule):
         self.batch_size = batch_size
 
         class_weights = [args.down_up_loss_weight, 1.0, args.down_up_loss_weight]
-        class_weights = [w*len(class_weights)/sum(class_weights) for w in class_weights]
+        class_weights = torch.tensor([w*len(class_weights)/sum(class_weights) for w in class_weights])
         # cost_weights = torch.tensor([[0.0, 1.0, 2.0], [1.0, 0.0, 1.0], [2.0, 1.0, 0.0]])
+
+        # self.custom_loss = True
+
+        # self.class_cost_matrix = torch.tensor([[0.0, 1.0, 3.0], 
+        #                                        [1.0, 0.0, 1.0], 
+        #                                        [3.0, 1.0, 0.0]])
+
+        # self.class_weights = torch.tensor(args.class_weights).permute(2, 0, 1)  # (num_classes, features, num_sequences)
+        # self.class_weights = self.class_weights.unsqueeze(0).unsqueeze(2).unsqueeze(4)  # (1, num_classes, 1, features, 1, num_sequences)
 
         match args.prediction_type:
             case "gaussian":
@@ -287,8 +272,9 @@ class MoneyExperiment(pl.LightningModule):
             case "regression":
                 self.loss_fn = nn.L1Loss(reduction="none")
             case "classification":
-                self.loss_fn = nn.CrossEntropyLoss(weight=torch.tensor(class_weights), reduction="none")
-                # self.loss_fn = WeightedCustomLoss(weight_matrix=torch.tensor(cost_weights), reduction="none")
+                self.loss_fn = nn.CrossEntropyLoss(weight=class_weights,reduction="none")
+                # self.loss_fn = WeightedCustomLoss(cost_matrix=torch.tensor(cost_weights), weights=torch.tensor(class_weights), reduction="none")
+                # self.loss_fn = WeightedClassImbalanceCrossEntropyLoss(class_weights=torch.tensor(args.class_weights), reduction="none")
         
         self.MAE = nn.L1Loss(reduction="none")
         self.pred_indices = args.indices_to_predict
@@ -310,7 +296,7 @@ class MoneyExperiment(pl.LightningModule):
 
 
         feature_weights = [1, 1, 1, 1, 1]
-        ticker_weights = [1 for _ in range(len(args.tickers))]
+        ticker_weights = [1, 1, 1, 1, 1, 1]
         seen_unseen_weights = [1 for _ in range(args.seq_len)]
 
         feature_weights = torch.tensor([w*len(feature_weights)/sum(feature_weights) for w in feature_weights])
@@ -417,6 +403,22 @@ class MoneyExperiment(pl.LightningModule):
                 logits = raw_logits.view(view_shape).permute(0, 3, 1, 2, 4, 5)  # (batch_size, num_classes, seq_len, features, targets, num_sequences)
 
                 loss_tensor = self.loss_fn(logits, targets_classes)
+
+                # self.class_weights shape:(1, num_classes, 1, features, 1, num_sequences)
+                # class_weights = self.class_weights.expand(batch_size, -1, seq_len, -1, max(self.pred_indices), -1)
+                # class_weights = torch.gather(class_weights, dim=1, index=targets_classes.unsqueeze(1)).squeeze(1)
+
+                # loss_tensor = loss_tensor * class_weights # class imbalance weighing (per feat, and per sequence)
+
+                # convert weights and wrong probabilities to a cost multiplier, that scales the loss
+                # batch_cost_weights = self.class_cost_matrix[targets_classes]
+                # dims = list(range(batch_cost_weights.dim()))
+                # batch_cost_weights = batch_cost_weights.permute(dims[0], dims[-1], *dims[1:-1])
+                
+                # batch_cost_weights = (torch.log_softmax(logits, dim=1).exp() * batch_cost_weights).sum(dim=1)
+
+                # loss_tensor = loss_tensor + batch_cost_weights
+
                 loss = (loss_tensor * self.loss_weights).mean()
 
                 seen_losses = loss_tensor[:, :-1, :, :, :].mean(dim=(0, 1, 2, 4))
@@ -937,40 +939,23 @@ class MoneyExperiment(pl.LightningModule):
                     metric_value,
                     **log_opts_epoch,
                 )
-            trading_strategy_metrics = trading_metrics(targets, backtest_predictions, self.args)
-            for metric_name, metric_value in trading_strategy_metrics.items():
+
+            correct_backtest_metrics = new_trading_metrics(targets, backtest_predictions, self.args)
+            for metric_name, metric_value in correct_backtest_metrics.items():
                 self.log(
-                    f"Trading_strategy_metrics/val_{metric_name}",
+                    f"Strategy_metrics/val_{metric_name}",
                     metric_value,
                     **log_opts_epoch,
                 )
-            
-            for i in range(targets.shape[-1]):
-                trading_strategy_metrics = trading_metrics(targets[:, i], backtest_predictions[:, i], self.args)
-                for metric_name, metric_value in trading_strategy_metrics.items():
+            correct_individual_backtest_metrics = new_trading_metrics_individual(targets, backtest_predictions, self.args)
+            for metric_name, metric_value in correct_individual_backtest_metrics.items():
+                for i in range(targets.shape[-1]):
                     self.log(
-                        f"Trading_strategy_metrics_individual/val_{metric_name}_{self.tickers[i]}",
-                        metric_value,
+                        f"Strategy_metrics_individual/val_{metric_name}_{self.tickers[i]}",
+                        metric_value[i].float(),
                         **log_opts_epoch,
-                )
-            
-            trading_strategy_metrics = trading_metrics_with_costs(targets, backtest_predictions, self.args)
-            for metric_name, metric_value in trading_strategy_metrics.items():
-                self.log(
-                    f"Trading_strategy_metrics_with_costs/val_{metric_name}",
-                    metric_value,
-                    **log_opts_epoch,
-                )
-            
-            for i in range(targets.shape[-1]):
-                trading_strategy_metrics = trading_metrics_with_costs(targets[:, i], backtest_predictions[:, i], self.args)
-                for metric_name, metric_value in trading_strategy_metrics.items():
-                    self.log(
-                        f"Trading_strategy_metrics_with_costs_individual/val_{metric_name}_{self.tickers[i]}",
-                        metric_value,
-                        **log_opts_epoch,
-                )
-            
+                    )
+
             cummulative_times["metrics"] += (
                 time.time_ns() - time_metrics_start
             ) / 1e6

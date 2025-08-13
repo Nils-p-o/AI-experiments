@@ -1,20 +1,17 @@
 # TODO add more features, add more indicators (quarterly reports, EPS, etc.)
 # TODO test putting all input features as part of sequence?
 
-# TODO bayesian optimization (inference + training)
 # TODO add more things as part of config (weights for loss, features, etc.)
 # TODO rewrite dataloader to take in a list of features
 
 # TODO noMachine on hypkos computer
 
-# TODO make timing be per epoch
 # TODO maybe try optimising some parts of the code by using c?
 
 # TODO set up old pc for training
 
 # TODO test nGPT
 
-# different scaling in attn
 # TODO redo some tests (global vs local, etc. groupnorm)
 
 
@@ -169,11 +166,10 @@ def proceed(args: argparse.Namespace):
     )  # Optional logging
     # --- Data Loading ---
     if args.dataset == "Money":  # yahoo finance stock data
-
-        args.normalization_means, args.normalization_stds = download_numerical_financial_data(
+        download_numerical_financial_data(
             tickers=args.tickers,
             seq_len=seq_len,
-            check_if_already_downloaded=False,  # TODO make this better/check which features are missing
+            check_if_already_downloaded=True,  # TODO make this better/check which features are missing
             target_dates=pred_indices,
             config_args=args,
         )
@@ -192,6 +188,10 @@ def proceed(args: argparse.Namespace):
     data_module.setup()  # Very important to setup the data
     # vocab_size = data_module.get_vocab_size()
     args.input_features = len(data_module._metadata["columns"])
+
+    args.class_weights = data_module._metadata.get("class_weights", None)
+    args.normalization_means = data_module._metadata.get("train_means", None)
+    args.normalization_stds = data_module._metadata.get("train_stds", None)
     # --- Model Definition ---
     match architecture:  # TODO auto format qk_rope_dim for non MLA (currently all of them)
         case "Money_former":
@@ -241,13 +241,13 @@ def proceed(args: argparse.Namespace):
     # Checkpointing
     checkpoint_callback = ModelCheckpoint(
         # dirpath="checkpoints/",
-        filename="{name}-{epoch}-{Trading_strategy_metrics/val_Calmar Ratio:.2f}",
-        save_top_k=3,
-        monitor="Trading_strategy_metrics/val_Calmar Ratio",
-        mode="max",
+        filename="{name}-{step}-{Loss/val_loss:.3f}",
+        save_top_k=-1,
+        # monitor="Trading_strategy_metrics/val_Calmar Ratio",
+        # mode="max",
         # monitor="Losses_seen_unseen/val_loss_unseen",
-        # monitor="Loss/val_loss",
-        # mode="min",
+        monitor="Loss/val_loss",
+        mode="min",
     )
 
     # Early Stopping
@@ -265,20 +265,12 @@ def proceed(args: argparse.Namespace):
         limit_val_batches=50,
         logger=logger,
         log_every_n_steps=100,
-        val_check_interval=300,
+        val_check_interval=300, # 100,
         precision=trainer_precision,
         check_val_every_n_epoch=None,
     )
 
     trainer.fit(experiment, datamodule=data_module)
-
-    # model_dir = f"models"
-    # if not os.path.exists(model_dir):
-    #     os.makedirs(model_dir)
-    # torch.save(
-    #     experiment.model, f"{model_dir}/{args.architecture}_{name.split('/')[-1]}.pth"
-    # )  # TODO make this more specific
-    # print("Model saved.")
     return
 
 

@@ -23,22 +23,21 @@ shorthand_to_full = {
     "backtest_loss": "Backtest_metrics/val_CE_Loss",
     "backtest_acc": "Backtest_metrics/val_Total_Accuracy",
     "f1": "Backtest_metrics/val_Total_F1",
-    "calmar_ratio": "Trading_strategy_metrics/val_Calmar Ratio",
-    "max_drawdown": "Trading_strategy_metrics/val_Max Drawdown",
-    "annualized_return": "Trading_strategy_metrics/val_Annualized Return",
-    "win_loss_ratio": "Trading_strategy_metrics/val_Win/Loss Day Ratio",
-    "days_traded": "Trading_strategy_metrics/val_Days Traded",
     "aapl_acc": "Close_Sequence/val_unseen_AAPL_accuracy",
     "amzn_acc": "Close_Sequence/val_unseen_AMZN_accuracy",
     "intc_acc": "Close_Sequence/val_unseen_INTC_accuracy",
     "msft_acc": "Close_Sequence/val_unseen_MSFT_accuracy",
     "nvda_acc": "Close_Sequence/val_unseen_NVDA_accuracy",
     "gspc_acc": "Close_Sequence/val_unseen_^GSPC_accuracy",
-    "calmar_ratio_costs": "Trading_strategy_metrics_with_costs/val_Calmar Ratio",
-    "max_drawdown_costs": "Trading_strategy_metrics_with_costs/val_Max Drawdown",
-    "annualized_return_costs": "Trading_strategy_metrics_with_costs/val_Annualized Return",
-    "win_loss_ratio_costs": "Trading_strategy_metrics_with_costs/val_Win/Loss Day Ratio",
-    "days_traded_costs": "Trading_strategy_metrics_with_costs/val_Days Traded",
+    "calmar_ratio": "Strategy_metrics/val_Calmar Ratio",
+    "max_drawdown": "Strategy_metrics/val_Max Drawdown",
+    "annualized_return": "Strategy_metrics/val_Annualized Return",
+    "win_loss_ratio": "Strategy_metrics/val_WLR",
+    "days_traded": "Strategy_metrics/val_Days Traded",
+    "gspc_calmar_ratio": "Strategy_metrics_individual/val_Calmar Ratio_^GSPC",
+    "gspc_annualized_return": "Strategy_metrics_individual/val_Annualized Return_^GSPC",
+    "gspc_max_drawdown": "Strategy_metrics_individual/val_Max Drawdown_^GSPC",
+    "gspc_win_loss_ratio": "Strategy_metrics_individual/val_WLR_^GSPC",
 }
 
 higher_better = {
@@ -47,7 +46,7 @@ higher_better = {
     "backtest_acc": 1,
     "f1": 1,
     "calmar_ratio": 1,
-    "max_drawdown": 1,
+    "max_drawdown": 0,
     "annualized_return": 1,
     "win_loss_ratio": 1,
     "days_traded": 1,
@@ -62,6 +61,10 @@ higher_better = {
     "annualized_return_costs": 1,
     "win_loss_ratio_costs": 1,
     "days_traded_costs": 1,
+    "gspc_calmar_ratio": 1,
+    "gspc_annualized_return": 1,
+    "gspc_max_drawdown": 0,
+    "gspc_win_loss_ratio": 1,
 }
 
 
@@ -135,12 +138,8 @@ def get_best_metrics(
         values = values[finite_mask]
 
         # Determine if lower is better (for loss) or higher is better (for everything else)
-        lower_is_better_keywords = ["loss", "mae", "mse"]
-        is_lower_better = any(
-            keyword in metrics_list[i].lower() for keyword in lower_is_better_keywords
-        )
 
-        if is_lower_better:
+        if not higher_better[shorthand_metrics_list[i]]:
             best_idx = np.argmin(values)
         else:
             best_idx = np.argmax(values)
@@ -217,16 +216,22 @@ list_of_losses = [
     "backtest_loss",
     "backtest_acc",
     "f1",
-    "calmar_ratio_costs",
-    "max_drawdown_costs",
-    "annualized_return_costs",
-    "win_loss_ratio_costs",
-    "days_traded_costs",
+    "calmar_ratio",
+    "max_drawdown",
+    "annualized_return",
+    "win_loss_ratio",
+    "days_traded",
+    "gspc_calmar_ratio",
+    "gspc_max_drawdown",
+    "gspc_annualized_return",
+    "gspc_win_loss_ratio",
 ]
 
 lowest_ver = 0
-max_ver = 4
-current_name = "Money/testing/fixed_mixing/testing_weighted_cce_15_costs_paired/Money_former_MLA_DINT_cog_attn_MTP_3_64_64_4_2_32"
+max_ver = 5
+# current_name = "Money/testing/fixed_mixing/testing_imbalance_weighted_stable_custom_linear_costs/Money_former_MLA_DINT_cog_attn_MTP_3_64_64_4_2_32"
+# current_name = "Money/opts/class/rng_class_weighted_15/Money_former_MLA_DINT_cog_attn_MTP_3_64_64_4_2_32"
+current_name = "Money/testing/class/class_weighted_15_unique_outputs/Money_former_MLA_DINT_cog_attn_MTP_3_64_64_4_2_32"
 print_metrics(current_name, lowest_ver, max_ver)
 
 # diff models and their achieved metrics (max, or min depending on the metric)
@@ -636,7 +641,7 @@ hand_feats_baseline_costs = {
 # better f1, calmar, return, wlr
 # worse acc
 # higher traded days
-hand_feats_weighted_cce_15_costs = { # def keep
+hand_feats_weighted_cce_15_costs = {  # def keep
     "backtest_loss": [0.988, 0.9878, 0.9916, 0.9918, 0.9889],
     "backtest_acc": [0.5085, 0.5041, 0.5111, 0.5022, 0.5038],
     "f1": [0.407, 0.4184, 0.4145, 0.4122, 0.4184],
@@ -647,12 +652,249 @@ hand_feats_weighted_cce_15_costs = { # def keep
     "days_traded_costs": [1259.0, 1191.0, 1291.0, 1182.0, 1200.0],
 }
 
-
-opt_feats_02_placeholder = {
-    "unseen_loss": np.array([]),
-    "calmar_ratio": np.array([]),
-    "f1": np.array([]),
+# better loss, calmar
+hand_feats_custom_loss_exp_costs = {
+    "backtest_loss": [0.987, 0.9866, 0.9844, 0.9873, 0.9878],
+    "backtest_acc": [0.5078, 0.5127, 0.5127, 0.5122, 0.513],
+    "f1": [0.3418, 0.3475, 0.3587, 0.358, 0.3639],
+    "calmar_ratio_costs": [0.572, 0.919, 1.0214, 0.9374, 1.0415],
+    "max_drawdown_costs": [-0.3475, -0.2964, -0.2397, -0.1835, -0.3505],
+    "annualized_return_costs": [0.269, 0.3701, 0.2769, 0.3725, 0.3651],
+    "win_loss_ratio_costs": [0.4571, 0.5318, 0.583, 0.5806, 0.4684],
+    "days_traded_costs": [842.0, 739.0, 807.0, 739.0, 864.0],
 }
+
+# same weights as exp, so maybe not a fair comparison, but (still comparing with baseline)
+
+# NOTE wlr till now was being gotten wrong, it was getting the lowest, not the highest, so...
+
+# ~ the same as exp version
+hand_feats_custom_loss_linear_costs = {
+    "backtest_loss": [0.9875, 0.989, 0.986, 0.9862, 0.9864],
+    "backtest_acc": [0.5127, 0.5113, 0.514, 0.51, 0.5141],
+    "f1": [0.3643, 0.3428, 0.3501, 0.3471, 0.3637],
+    "calmar_ratio_costs": [0.6821, 0.9826, 0.9402, 0.5966, 0.9138],
+    "max_drawdown_costs": [-0.3687, -0.2951, -0.233, -0.2767, -0.2757],
+    "annualized_return_costs": [0.4016, 0.3459, 0.3901, 0.1651, 0.2724],
+    "win_loss_ratio_costs": [0.9206, 0.7579, 0.8586, 0.7553, 0.8474],
+    "days_traded_costs": [1016.0, 699.0, 855.0, 592.0, 725.0],
+}
+
+# better calmar, return
+# more traded days
+hand_feats_aux_8_costs = {
+    "backtest_loss": [0.9898, 0.991, 0.999, 0.9876, 0.9887],
+    "backtest_acc": [0.5135, 0.5156, 0.5116, 0.5121, 0.5137],
+    "f1": [0.3714, 0.3527, 0.3456, 0.37, 0.362],
+    "calmar_ratio_costs": [0.9006, 1.1504, 1.3282, 0.972, 1.9402],
+    "max_drawdown_costs": [-0.3511, -0.2178, -0.2885, -0.4312, -0.3076],
+    "annualized_return_costs": [0.4027, 0.6217, 0.4348, 0.4381, 0.7018],
+    "win_loss_ratio_costs": [0.8936, 0.8761, 0.9215, 0.8373, 0.9942],
+    "days_traded_costs": [1096.0, 928.0, 1003.0, 942.0, 1029.0],
+}
+
+
+# kinda worse loss, acc
+# pretty much the same as baseline, at least, statistically
+# maybe try this for model scale up, because its more regularized?
+hand_feats_causal_costs = {
+    "backtest_loss": [0.993, 0.9932, 0.9928, 0.9889, 0.9881],
+    "backtest_acc": [0.5121, 0.5076, 0.5086, 0.5086, 0.509],
+    "f1": [0.3661, 0.3569, 0.364, 0.3477, 0.3629],
+    "calmar_ratio_costs": [0.7449, 0.3188, 0.4678, 0.414, 0.5887],
+    "max_drawdown_costs": [-0.2026, -0.3737, -0.3494, -0.3598, -0.3438],
+    "annualized_return_costs": [0.3685, 0.1507, 0.2188, 0.1941, 0.2953],
+    "win_loss_ratio_costs": [0.8302, 0.8071, 0.8116, 0.8204, 0.7962],
+    "days_traded_costs": [946.0, 862.0, 888.0, 822.0, 952.0],
+}
+
+# higher loss,
+#
+#
+hand_global_only_costs = {
+    "backtest_loss": [0.9909, 0.9948, 0.9892, 0.9929, 0.9927],
+    "backtest_acc": [0.5092, 0.5121, 0.5128, 0.51, 0.5094],
+    "f1": [0.3581, 0.3499, 0.3603, 0.3561, 0.3625],
+    "calmar_ratio_costs": [0.7423, 1.104, 0.6353, 0.5971, 0.4001],
+    "max_drawdown_costs": [-0.3612, -0.3489, -0.3437, -0.354, -0.3741],
+    "annualized_return_costs": [0.2751, 0.516, 0.2795, 0.3062, 0.2008],
+    "win_loss_ratio_costs": [0.7383, 0.7371, 0.7678, 0.7563, 0.7354],
+    "days_traded_costs": [930.0, 856.0, 817.0, 908.0, 966.0],
+}
+
+# camparing w weighted_15
+# better acc,
+# worse f1,
+# lower traded days
+# kinda worse calmar, return
+# comparing w custom loss exp
+# better
+# worse loss, drawdown
+# higher traded days
+hand_feats_custom_loss_exp_weighted_15_costs = {
+    "backtest_loss": [0.9909, 0.9948, 0.9892, 0.9929, 0.9927],
+    "backtest_acc": [0.5092, 0.5121, 0.5128, 0.51, 0.5094],
+    "f1": [0.3581, 0.3499, 0.3603, 0.3561, 0.3625],
+    "calmar_ratio_costs": [0.7423, 1.104, 0.6353, 0.5971, 0.4001],
+    "max_drawdown_costs": [-0.3612, -0.3489, -0.3437, -0.354, -0.3741],
+    "annualized_return_costs": [0.2751, 0.516, 0.2795, 0.3062, 0.2008],
+    "win_loss_ratio_costs": [0.7383, 0.7371, 0.7678, 0.7563, 0.7354],
+    "days_traded_costs": [930.0, 856.0, 817.0, 908.0, 966.0],
+}
+
+# comparing w aux_8
+# better f1,
+# worse acc, drawdown, return
+# kinda worse calmar, higher traded days
+# comparing weighted_cce_15
+# -
+# -
+# -
+hand_feats_aux_8_weighted_15_costs = {
+    "backtest_loss": [0.989, 0.9912, 0.9917, 0.9889, 0.9956],
+    "backtest_acc": [0.5117, 0.5062, 0.505, 0.5075, 0.499],
+    "f1": [0.4175, 0.4148, 0.4031, 0.4138, 0.4235],
+    "calmar_ratio_costs": [0.8537, 1.2093, 0.5382, 0.6994, 0.8053],
+    "max_drawdown_costs": [-0.4241, -0.3736, -0.5626, -0.4123, -0.3875],
+    "annualized_return_costs": [0.4281, 0.4518, 0.3028, 0.3619, 0.4045],
+    "win_loss_ratio_costs": [1.0545, 1.0525, 1.0235, 1.0233, 1.0583],
+    "days_traded_costs": [1245.0, 1268.0, 1245.0, 1224.0, 1231.0],
+}
+
+# comparing w normal baseline
+# better f1,
+# worse loss, acc, return
+# higher traded days
+hand_feats_imbalance_weighted = {
+    "backtest_loss": [1.0258, 1.0254, 1.0267, 1.027, 1.0231],
+    "backtest_acc": [0.4783, 0.4772, 0.4739, 0.48, 0.4724],
+    "f1": [0.4184, 0.4263, 0.4107, 0.4177, 0.4189],
+    "calmar_ratio_costs": [0.9843, 0.4097, 0.2957, 0.4753, 0.3513],
+    "max_drawdown_costs": [-0.2529, -0.2889, -0.2435, -0.3543, -0.2791],
+    "annualized_return_costs": [0.249, 0.1277, 0.1163, 0.1981, 0.098],
+    "win_loss_ratio_costs": [0.907, 0.9766, 0.812, 0.7847, 0.829],
+    "days_traded_costs": [1125.0, 1184.0, 1089.0, 1028.0, 1087.0],
+}
+
+# w normal baseline
+# better f1
+# worse loss, acc, return
+# higher traded days
+# w unstable ver
+# -
+# worse acc
+# -
+hand_feats_imbalance_weighted_stable = {
+    "backtest_loss": [1.026, 1.0219, 1.0298, 1.0264, 1.0298],
+    "backtest_acc": [0.4739, 0.4775, 0.4701, 0.4744, 0.4699],
+    "f1": [0.4153, 0.4204, 0.4148, 0.4194, 0.4178],
+    "calmar_ratio_costs": [0.7181, 0.4503, 0.4344, 0.0532, 0.8789],
+    "max_drawdown_costs": [-0.2303, -0.313, -0.3198, -0.2965, -0.2827],
+    "annualized_return_costs": [0.169, 0.1409, 0.1462, 0.0178, 0.2485],
+    "win_loss_ratio_costs": [0.9123, 0.9167, 0.8692, 0.7912, 0.8026],
+    "days_traded_costs": [1184.0, 1127.0, 1170.0, 1055.0, 1113.0],
+}
+
+# comparing w normal baseline
+# better drawdown,
+# worse loss, acc, f1, return
+# fewer tradeddays
+hand_feats_imbalance_weighted_custom_linear_add = {
+    "backtest_loss": [1.0047, 1.004, 1.0098, 1.0065, 1.0009],
+    "backtest_acc": [0.4999, 0.5025, 0.4971, 0.4969, 0.5015],
+    "f1": [0.3506, 0.3279, 0.324, 0.3265, 0.333],
+    "calmar_ratio_costs": [1.5741, 0.343, 0.8302, 0.4702, 0.3701],
+    "max_drawdown_costs": [-0.1393, -0.216, -0.1719, -0.2088, -0.2911],
+    "annualized_return_costs": [0.2652, 0.1086, 0.1577, 0.0982, 0.1077],
+    "win_loss_ratio_costs": [0.8079, 0.7284, 0.761, 0.6856, 0.6813],
+    "days_traded_costs": [553.0, 536.0, 405.0, 415.0, 566.0],
+}
+
+
+# better ...
+# worse loss,
+# fewer ish traded days?
+# seems ~ the same, no real impact
+hand_feats_no_mask_2 = {
+    "backtest_loss": [0.9901, 0.9913, 0.9912, 0.9894, 0.99],
+    "backtest_acc": [0.5127, 0.5126, 0.5109, 0.5121, 0.5084],
+    "f1": [0.3495, 0.3535, 0.3701, 0.3459, 0.3511],
+    "calmar_ratio_costs": [0.6591, 0.7513, 0.6464, 0.5093, 0.251],
+    "max_drawdown_costs": [-0.3642, -0.3376, -0.2289, -0.3406, -0.3172],
+    "annualized_return_costs": [0.309, 0.3113, 0.3757, 0.1792, 0.112],
+    "win_loss_ratio_costs": [0.872, 0.8337, 0.8068, 0.762, 0.7052],
+    "days_traded_costs": [750.0, 751.0, 890.0, 792.0, 717.0],
+}
+
+# better
+# worse
+# ~ the same, maybe worse loss, fewer traded days?
+hand_feats_scaled_swiglu = {
+    "backtest_loss": [0.9893, 0.9918, 0.99, 0.989, 0.9929],
+    "backtest_acc": [0.512, 0.5122, 0.5118, 0.5141, 0.5118],
+    "f1": [0.3599, 0.348, 0.3623, 0.3676, 0.3483],
+    "calmar_ratio_costs": [0.8643, 0.3075, 0.804, 0.6053, 1.0179],
+    "max_drawdown_costs": [-0.1895, -0.3508, -0.368, -0.2932, -0.2803],
+    "annualized_return_costs": [0.2669, 0.1675, 0.434, 0.2229, 0.2853],
+    "win_loss_ratio_costs": [0.8446, 0.7457, 0.7725, 0.761, 0.7627],
+    "days_traded_costs": [905.0, 717.0, 865.0, 894.0, 737.0],
+}
+
+##############################################################################################
+# NOTE post ensemble
+hand_feats_ensemble_weighted_15 = {
+    "backtest_loss": [0.9892, 0.9938, 0.9888, 0.9896, 0.9862, 0.9877],
+    "backtest_acc": [0.508, 0.5085, 0.5076, 0.5004, 0.514, 0.5024],
+    "f1": [0.4226, 0.4176, 0.4187, 0.4169, 0.4229, 0.416],
+    "calmar_ratio": [1.1368, 1.2622, 1.8974, 1.0151, 1.1435, 1.0314],
+    "max_drawdown": [0.3399, 0.3138, 0.333, 0.3327, 0.1358, 0.3107],
+    "annualized_return": [0.4721, 0.5544, 0.6412, 0.4641, 0.5529, 0.3808],
+    "win_loss_ratio": [0.9343, 1.097, 1.0344, 1.0654, 1.028, 1.0096],
+    "days_traded": [1194.0, 1275.0, 1262.0, 1270.0, 1188.0, 1263.0],
+    "gspc_calmar_ratio": [0.4227, 1.0727, 1.115, 1.9333, 0.823, 1.2895],
+    "gspc_max_drawdown": [0.1691, 0.0968, 0.097, 0.01, 0.096, 0.098],
+    "gspc_annualized_return": [0.0715, 0.137, 0.1126, 0.1895, 0.0867, 0.1264],
+    "gspc_win_loss_ratio": [0.6812, 0.78, 0.8611, 1.0, 0.9773, 0.8657],
+}
+
+# gspc is upweighted 5x compared to other tickers
+# better
+# worse f1
+# maybe better gspc (calmar, drawdown, return)
+# success?
+hand_feats_ensemble_weighted_15_gspc = {
+    "backtest_loss": [0.9866, 0.9893, 0.9906, 0.9917, 0.9885, 0.9893],
+    "backtest_acc": [0.5081, 0.5097, 0.5038, 0.5022, 0.5103, 0.5042],
+    "f1": [0.4146, 0.4184, 0.4161, 0.4083, 0.4172, 0.4145],
+    "calmar_ratio": [1.1375, 0.9277, 0.7507, 1.2114, 1.4431, 0.7969],
+    "max_drawdown": [0.3336, 0.2487, 0.2212, 0.3319, 0.2843, 0.3136],
+    "annualized_return": [0.4843, 0.4886, 0.4264, 0.5631, 0.5541, 0.4721],
+    "win_loss_ratio": [1.0697, 1.1, 1.0146, 1.0356, 1.069, 1.0532],
+    "days_traded": [1308.0, 1281.0, 1244.0, 1258.0, 1273.0, 1273.0],
+    "gspc_calmar_ratio": [1.4637, 2.1088, 1.3147, 1.5248, 1.4824, 1.422],
+    "gspc_max_drawdown": [0.0, 0.0005, 0.097, 0.0, 0.0, 0.096],
+    "gspc_annualized_return": [0.1405, 0.1695, 0.1402, 0.1653, 0.1423, 0.1442],
+    "gspc_win_loss_ratio": [0.8621, 1.0, 1.04, 0.8267, 1.0, 0.7381],
+}
+
+# better
+# worse f1, return, wlr, 
+# 
+hand_feats_ensemble_weighted_15_unique_outputs = {
+    "backtest_loss": [0.9859, 0.9898, 0.9901, 0.989, 0.9866, 0.9896],
+    "backtest_acc": [0.5112, 0.5046, 0.5047, 0.505, 0.5076, 0.5029],
+    "f1": [0.4156, 0.412, 0.4096, 0.4123, 0.4056, 0.4043],
+    "calmar_ratio": [1.12, 0.6696, 0.9004, 1.1861, 0.9091, 0.8905],
+    "max_drawdown": [0.278, 0.2218, 0.2265, 0.0652, 0.2523, 0.2944],
+    "annualized_return": [0.5613, 0.3632, 0.4201, 0.3551, 0.3296, 0.3268],
+    "win_loss_ratio": [0.9082, 0.9108, 1.0, 0.9604, 0.9128, 0.9448],
+    "days_traded": [1143.0, 1295.0, 1192.0, 1183.0, 1281.0, 1279.0],
+    "gspc_calmar_ratio": [1.0426, 0.4304, 0.8412, 0.8216, 1.0859, 0.6104],
+    "gspc_max_drawdown": [0.096, 0.0, 0.096, 0.0, 0.0251, 0.0],
+    "gspc_annualized_return": [0.1004, 0.0728, 0.1008, 0.0958, 0.1042, 0.0831],
+    "gspc_win_loss_ratio": [0.7941, 0.6481, 0.9412, 0.92, 0.8889, 0.6389],
+}
+
 
 print(f"baseline unseen_loss: {np.mean(baseline['unseen_loss'])}")
 print(f"baseline calmar_ratio: {np.mean(baseline['calmar_ratio'])}")
@@ -682,10 +924,10 @@ print(f"baseline f1: {np.mean(baseline['f1'])}")
 # print(f"\n--- hand_feats_nb_weight_normal vs hand_feats_nb_anti_weighted_cce (paired)  ---")
 # paired_compare(hand_feats_nb_normal_paired, hand_feats_nb_anti_weighted_cce)
 
-print(
-    f"\n--- hand_feats_nb_weight_normal vs hand_feats_nb_custom_loss (paired)  ---"
-)  # kinda yes, if it works together with cce weighing
-paired_compare(hand_feats_nb_normal_paired, hand_feats_nb_custom_loss)
+# print(
+#     f"\n--- hand_feats_nb_weight_normal vs hand_feats_nb_custom_loss (paired)  ---"
+# )  # kinda yes, if it works together with cce weighing
+# paired_compare(hand_feats_nb_normal_paired, hand_feats_nb_custom_loss)
 
 # print(
 #     f"\n--- hand_feats_nb_weighted_cce (20) vs hand_feats_nb_weighted_cce_15 (paired)  ---"
@@ -709,3 +951,73 @@ paired_compare(hand_feats_nb_normal_paired, hand_feats_nb_custom_loss)
 
 print(f"\n--- hand_feats_nb_weight_normal vs hand_feats_nb_weighted_cce (paired)  ---")
 paired_compare(hand_feats_baseline_costs, hand_feats_weighted_cce_15_costs)
+
+print(f"\n--- hand_feats_nb_weight_normal vs hand_feats_custom_loss_exp (paired)  ---")
+paired_compare(hand_feats_baseline_costs, hand_feats_custom_loss_exp_costs)
+
+# print(f"\n--- hand_feats_custom_loss_exp vs hand_feats_custom_loss_linear (paired)  ---")
+# paired_compare(hand_feats_custom_loss_exp_costs, hand_feats_custom_loss_linear_costs)
+
+print(f"\n--- hand_feats_nb_weight_normal vs hand_feats_aux_8_costs (paired)  ---")
+paired_compare(hand_feats_baseline_costs, hand_feats_aux_8_costs)
+
+# print(f"\n--- hand_feats_nb_weight_normal vs hand_feats_causal (paired)  ---")
+# paired_compare(hand_feats_baseline_costs, hand_feats_causal_costs)
+
+print(f"\n--- hand_feats_nb_weight_normal vs hand_global_only_costs (paired)  ---")
+paired_compare(hand_feats_baseline_costs, hand_global_only_costs)
+
+# print(
+#     f"\n--- hand_feats_nb_weighted_cce vs hand_feats_custom_loss_exp_weighted_15_costs (paired)  ---"
+# )
+# paired_compare(
+#     hand_feats_weighted_cce_15_costs, hand_feats_custom_loss_exp_weighted_15_costs
+# )
+
+# print(
+#     f"\n--- hand_feats_custom_loss_exp vs hand_feats_custom_loss_exp_weighted_15_costs (paired)  ---"
+# )
+# paired_compare(
+#     hand_feats_custom_loss_exp_costs, hand_feats_custom_loss_exp_weighted_15_costs
+# )
+
+# print(f"\n--- hand_feats_aux_8 vs hand_feats_aux_8_weighted_15_costs (paired)  ---")
+# paired_compare(hand_feats_aux_8_costs, hand_feats_aux_8_weighted_15_costs)
+
+# print(f"\n--- hand_feats_weighted_cce_15_costs vs hand_feats_aux_8_weighted_15_costs (paired)  ---")
+# paired_compare(hand_feats_weighted_cce_15_costs, hand_feats_aux_8_weighted_15_costs)
+
+# print(f"\n--- hand_feats_nb_weight_normal vs hand_feats_imbalance_weighted (paired)  ---")
+# paired_compare(hand_feats_baseline_costs, hand_feats_imbalance_weighted)
+
+# print(f"\n--- hand_feats_nb_weight_normal vs hand_feats_no_mask_2 (paired)  ---")
+# paired_compare(hand_feats_baseline_costs, hand_feats_no_mask_2)
+
+# print(f"\n--- hand_feats_nb_weight_normal vs hand_feats_scaled_swiglu (paired)  ---")
+# paired_compare(hand_feats_baseline_costs, hand_feats_scaled_swiglu)
+
+# print(
+#     f"\n--- hand_feats_nb_weight_normal vs hand_feats_imbalance_weighted_stable (paired)  ---"
+# )
+# paired_compare(hand_feats_baseline_costs, hand_feats_imbalance_weighted_stable)
+
+# print(
+#     f"\n--- hand_feats_imbalance_weighted vs hand_feats_imbalance_weighted_stable (paired)  ---"
+# )
+# paired_compare(hand_feats_imbalance_weighted, hand_feats_imbalance_weighted_stable)
+
+print(
+    f"\n--- hand_feats_nb_weight_normal vs hand_feats_imbalance_weighted_custom_linear_add (paired)  ---"
+)
+paired_compare(
+    hand_feats_baseline_costs, hand_feats_imbalance_weighted_custom_linear_add
+)
+
+
+# post ensemble
+print("\n--- hand_feats_ensemble_weighted_15 vs hand_feats_ensemble_weighted_15_gspc (paired)  ---")
+paired_compare(hand_feats_ensemble_weighted_15, hand_feats_ensemble_weighted_15_gspc)
+
+
+print("\n--- hand_feats_ensemble_weighted_15 vs hand_feats_ensemble_weighted_15_unique_outputs (paired)  ---")
+paired_compare(hand_feats_ensemble_weighted_15, hand_feats_ensemble_weighted_15_unique_outputs)

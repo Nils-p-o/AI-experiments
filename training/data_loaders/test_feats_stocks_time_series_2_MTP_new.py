@@ -369,11 +369,12 @@ def download_numerical_financial_data(
     if config_args.include_sep_in_loss:
         MTP_full = torch.cat((torch.zeros_like(MTP_full[:, :1, :]), MTP_full), dim=1)
     MTP_full = data_fix_ffill(MTP_full)
-    # if prediction_type == "classification":
-    #     MTP_targets_classes = torch.full_like(MTP_full, 1)
-    #     MTP_targets_classes[MTP_full < -classification_threshold] = 0
-    #     MTP_targets_classes[MTP_full > classification_threshold] = 2
-    #     MTP_full = MTP_targets_classes.long()
+    
+    # TODO only supposed to be train data
+    MTP_targets_classes = torch.full_like(MTP_full, 1)
+    MTP_targets_classes[MTP_full < -config_args.classification_threshold] = 0
+    MTP_targets_classes[MTP_full > config_args.classification_threshold] = 2
+    MTP_targets_classes = MTP_targets_classes.long()
 
     for i in range(max(target_dates)):
         if i == max(target_dates) - 1:
@@ -510,6 +511,15 @@ def download_numerical_financial_data(
     collected_data_start_date = str(train_indexes[0])[:10]
     collected_data_end_date = str(val_indexes[-1])[:10]
 
+    # (chlov, time, ticker)
+    # (chlov, ticker, 3)
+    class_counts = torch.empty((MTP_targets_classes.shape[0], MTP_targets_classes.shape[2], 3))
+    for i in range(3):
+        class_counts[:,:,i] = (MTP_targets_classes == i).sum(dim=1)
+    
+    class_weights = torch.empty_like(class_counts)
+    class_weights = class_counts.sum(dim=-1, keepdim=True) / (3*class_counts)
+
     metadata = {
         "tickers": unique_tickers,
         "ticker_to_id": ticker_to_id,
@@ -521,12 +531,15 @@ def download_numerical_financial_data(
         "column_to_id": column_to_id,
         "indexes": data_length,
         "target_dates": target_dates,
+        "class_weights": class_weights.tolist(),
+        "train_means": means[:, 0, 0, :].tolist(),
+        "train_stds": stds[:, 0, 0, :].tolist(),
     }
 
     with open(os.path.join(output_dir, "metadata.json"), "w") as f:
         json.dump(metadata, f, indent=4)
 
-    return means[:, 0, 0, :].tolist(), stds[:, 0, 0, :].tolist()
+    return
 
 
 def calculate_features(
