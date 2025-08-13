@@ -2,16 +2,81 @@ similar to notes, but just for money former concenpt
 
 ################################################
 current notes:
+just because model performs worse during training trading strat metrics, does not mean the model is worse potential wise,
+maybe even better with a good probability thresh
+
+ALL of my trading metric based conclusions are void -- the trading strategy function was wrong, it was doing some spooky shit, which led
+to leverage in the simulation
+--nvm, barely a fucking difference in actual metrics
+
+TODO
+seems like ticker weighing may be useful in ensemble creation? (not quite stat sig though)
+ensemble model is a great success, but i should redo it with better train/val/test splits, to make sure, because currently i am relying on some bias
+
+
+maybe global znorm of feats could be bad? (might need to do procedural znorm, like only using the stats from up to t to norm  t+1)
+
+# TODOs
+
+tiers: ~(easiest to hardest)
+1. loss weighing / unique inputs/outputs
+2. feats
+3. encoder-decoder aux
+4. BERT semantic
+
+
+indexes should be cut, same as data
+
+then,
+analyze everything (just start from the beginning, and build up)
+figure out whether class or regression or nll is better
+figure out why feats all of a sudden dont matter
+what loss weighing is best
+...
+
+dunno if original loss weighted, or balanced loss + linear cost is better
+
+maybe revisit unique inputs (for aux seq specifically)
+
+think about why gpu usage is so low on old pc (too much cpu utilization somewhere?)
+
+local feats do nothing, just a waste of space/parameters
+rework aux feats:
+-split between those that have vol and those that dont?
+-alter how data gets saved?
+-shared time feat encoding (for all types of feats)
+-noisy data gen (currently only works with main data)
+-test more feats
+
+
+check trained model input layer weights to see which features are important
+
+back to regression?
+rethink f1 to be weighted
+
+maybe do way more specialized ver of model? (unique ffn, input,outputs heads)?
+
+why is the simple 1.5x weighing better than the per feat/sequence weighing?
+(maybe because no unique output heads?)
+
+just do every test out there - 
+-what metrics should i trust? (combined/weighted f1? or calmar?)
+
+feats
+hlo based on c?
 
 to be implemented in new best model:
 muon + muP (kinda already done)
-cce weighing  -- (weighing up/down by 1.5x as much)
 aux seqs -- just need to find how much helps
+
 more stocks? - would help with data, and thus regularization, + higher theoretical profit ceiling/lower risk?
 
 more reguralization - dont know how, but currently the limiting factor, as bigger =/= better (i think, needs stat test)
 
 maybes:
+cce weighing  -- (weighing up/down by 1.5x as much)
+custom loss?
+
 bigger batches? - dunno, kinda a dead end, i think
 more data, somehow?
 noise -- stat test
@@ -22,28 +87,51 @@ needs a bit of work:
 bert Inclusion
 diffusion lm
 nGPT - again?
-
-do stats for causal, diff seqs
-maybe causal scales better???
+encoder-decoder aux (maybe all causal?)
 
 
-cce weighing - maybe 1.5 is best (makes sense, thats ~ class imbalance)
 
-find optimum for cce weighing (value + loss ver)
+find optimum for custom loss (both ver)
+custom custom loss
 find optimum for aux seqs (value + which help)
 
+maybe i should just do class imbalance weighing in cce? (that could be why the original cce weighing worked?)
+not really?
+
+
+class imbalance + custom loss exp - can definitely be tuned to reign in worst case errors
+
 deffo improvements:
-aux seqs --- will be more data + i can already see it helps with reguralization,
---better calmar, return, --worse wlr, --higher trading days
-cce weighing --- downweighing flat loss (still need to find optimal value, + test cost matrix loss function (both ver))
---better calmar, return, f1, drawdown, wlr, --worse loss, acc, --higher trading days
-custom loss function (exp) -- need to check linear, to see if works together with cce weights
+cce weighing - maybe 1.5 is best (makes sense, thats ~ class imbalance)
+--better calmar, return, f1 --worse loss --higher trading days
+custom loss function -- no stat diff between linear and exp, i will just assume exp is better (calmar is non stat higher, ig)
 --better loss, calmar
+aux seqs -- will be more data + i can already see it helps with reguralization,
+--better calmar, return, --higher trading days
+
+with current weighing, cce weighing and custom loss dont work better together (for now, staying with cce weighing)
 
 maybe (inconclusive):
 LoRA ff ~ the same performance? but should scale better for speed, so proposal for big model ver
-global data, or local simple? -- idk, win/loss is def worse, but everything else is ~the same
+global data-- idk loss is worse, but all else is ~ the same
+local simple?
 feats loss weighing --- not really great rn
+
+higher causal seq_len - shit
+causal - seems the same as "full" attn, but maybe i should use it when i scale up, because it is definitely more regularized
+
+second mask fill in custom mha - seems like nothing, maybe worse loss?
+scaling swiglu - also nothing
+
+from scaled up ver:
+more sequences allows for more model size
+local feats do not improve loss
+seq_len does not really matter (so sticking with 2)
+causal is not better - just worse performance and slower convergence
+
+engineered feats do not really affect performance, when super many stocks
+- however they do prevent overfitting a bit/keep acc improving
+
 
 
 
