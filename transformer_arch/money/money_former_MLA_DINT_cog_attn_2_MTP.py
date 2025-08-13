@@ -44,19 +44,30 @@ class Money_former_MLA_DINT_cog_attn_MTP(nn.Module):
             )
         self.norm = nn.RMSNorm(self.d_model) # TODO maybe one per MTP block?
 
-        match args.prediction_type:
-            case "gaussian":
-                self.out = nn.Linear(
-                    self.d_model, 5 * 2, bias=args.bias
-                )  # decodes to mean and std
-            case "regression":
-                self.out = nn.Linear(
-                    self.d_model, 5, bias=args.bias
-                )  # decodes to target(s) features
-            case "classification":
-                self.out = nn.Linear(
-                    self.d_model, 5 * args.num_classes, bias=args.bias
-                )  # decodes to target(s) features
+        self.unique_outputs = False
+        if self.unique_outputs:
+            match args.prediction_type:
+                case "classification":
+                    self.out = nn.ModuleList(
+                        [
+                            nn.Linear(self.d_model, 5*args.num_classes, bias=args.bias)
+                            for _ in range(len(args.tickers))
+                        ]
+                    )
+        else:
+            match args.prediction_type:
+                case "gaussian":
+                    self.out = nn.Linear(
+                        self.d_model, 5 * 2, bias=args.bias
+                    )  # decodes to mean and std
+                case "regression":
+                    self.out = nn.Linear(
+                        self.d_model, 5, bias=args.bias
+                    )  # decodes to target(s) features
+                case "classification":
+                    self.out = nn.Linear(
+                        self.d_model, 5 * args.num_classes, bias=args.bias
+                    )  # decodes to target(s) features
 
         self.register_buffer("freqs_cis", precompute_freqs_cis(args), persistent=False)
 
@@ -126,7 +137,21 @@ class Money_former_MLA_DINT_cog_attn_MTP(nn.Module):
             x_end.append(self.norm(MTP_block(x_as_list.pop(0), x_end[-1], freqs_cis)))
         x_end = torch.stack(x_end, dim=1)
 
-        x_end = self.out(x_end)
+        if self.unique_outputs:
+            x_ends = x_end[:,:,1:,:].view(
+                batch_size, targets, num_sequences, seq_len, -1
+            )
+            unique_x_ends = []
+            for i in range(num_sequences):
+                unique_x_ends.append(self.out[i](x_ends[:, :, i, :, :]))
+            x_ends = torch.stack(unique_x_ends, dim=2)
+            x_ends = x_ends.view(
+                batch_size, targets, num_sequences * seq_len, -1
+            )
+            x_end = torch.cat([torch.zeros_like(x_ends[:,:,:1,:]), x_ends], dim=2)
+
+        else:
+            x_end = self.out(x_end)
         return x_end  # (batch_size, targets, seq_len, features) logits
     
     def encode_inputs(self, x):
