@@ -72,8 +72,16 @@ class Money_former_MLA_DINT_cog_attn_MTP(nn.Module):
         )
 
         # auxiliary inputs
-        self.aux_inputs = nn.Linear(args.aux_input_features+args.time_features, self.d_model, bias=args.bias)
+        self.shared_aux_inputs = nn.Linear(args.aux_input_features+args.time_features, self.shared_value_input_dim, bias=args.bias)
         self.num_normal_tickers = len(args.tickers)
+
+        if self.unique_inputs:
+            self.unique_aux_input = nn.ModuleList(
+                [
+                    nn.Linear(args.aux_input_features+args.time_features, self.unique_value_input_dim, bias=args.bias)
+                    for _ in range(len(args.aux_tickers))
+                ]
+            )
 
         self.aux_input_features = args.aux_input_features
         self.time_features = args.time_features
@@ -141,13 +149,17 @@ class Money_former_MLA_DINT_cog_attn_MTP(nn.Module):
     def encode_inputs(self, x):
         # batch_size, targets, seq_len, num_sequences, _ = x.size()
         shared_temp_x_normal = self.shared_value_input(x[:,:,:,:self.num_normal_tickers,:])
-        shared_temp_x_aux = self.aux_inputs(torch.cat((x[:,:,:,self.num_normal_tickers:,:self.aux_input_features],x[:,:,:,self.num_normal_tickers:,-self.time_features:]), dim=-1))
+        shared_temp_x_aux = self.shared_aux_inputs(torch.cat((x[:,:,:,self.num_normal_tickers:,:self.aux_input_features],x[:,:,:,self.num_normal_tickers:,-self.time_features:]), dim=-1))
         shared_temp_x = torch.cat([shared_temp_x_normal, shared_temp_x_aux], dim=-2)
         if self.unique_inputs:
             unique_temp_x = []
             x_as_list = [t.squeeze(3) for t in torch.split(x, 1, dim=3)]
             for unique_input in self.unique_value_input:
                 unique_temp_x.append(unique_input(x_as_list.pop(0)))
+            for aux_unique_input in self.unique_aux_input:
+                aux_input = x_as_list.pop(0)
+                aux_input = torch.cat([aux_input[:,:,:,:self.aux_input_features], aux_input[:,:,:,-self.time_features:]], dim=-1)
+                unique_temp_x.append(aux_unique_input(aux_input)) # NOTE just for quick test, this will be different if aux and normal inputs have different dim sizes
             unique_temp_x = torch.stack(unique_temp_x, dim=3)
             x = torch.cat([shared_temp_x, unique_temp_x], dim=-1)
         else:
@@ -167,8 +179,8 @@ class Money_former_block(nn.Module):
         self.num_sequences = len(args.tickers) + len(args.aux_tickers)
         if args.use_global_seperator:
             # self.mask = torch.zeros(1, 1, args.seq_len*self.num_sequences+1, args.seq_len*self.num_sequences+1)
-            temp_mask = get_causal_mask(args.seq_len)
-            temp_mask = temp_mask.repeat(1, 1, self.num_sequences, self.num_sequences)
+            # temp_mask = get_causal_mask(args.seq_len)
+            # temp_mask = temp_mask.repeat(1, 1, self.num_sequences, self.num_sequences)
             self.mask = torch.ones(1, 1, args.seq_len*self.num_sequences+1, args.seq_len*self.num_sequences+1)
             self.mask[:,:,:,0] = 0
             self.mask[:,:,1:,1:] = 0

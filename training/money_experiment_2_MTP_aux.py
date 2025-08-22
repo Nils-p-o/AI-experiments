@@ -217,6 +217,7 @@ class MoneyExperiment(pl.LightningModule):
         class_weights = [args.down_up_loss_weight, 1.0, args.down_up_loss_weight]
         class_weights = [w*len(class_weights)/sum(class_weights) for w in class_weights]
 
+
         match args.prediction_type:
             case "gaussian":
                 self.loss_fn = nn.GaussianNLLLoss(reduction="none")
@@ -256,24 +257,30 @@ class MoneyExperiment(pl.LightningModule):
         loss_weights = seen_unseen_weights.unsqueeze(-1).unsqueeze(-1) * loss_weights.unsqueeze(0)
         self.loss_weights = loss_weights.unsqueeze(0).unsqueeze(3).to("cuda" if torch.cuda.is_available() else "cpu")
 
+        include_loss = torch.tensor(args.include_loss)
+        self.include_loss = include_loss.view(1, 1, -1, 1, self.num_sequences).to("cuda" if torch.cuda.is_available() else "cpu")
+        self.placeholder = torch.tensor([0.0, 3.0, 0.0]).to("cuda" if torch.cuda.is_available() else "cpu")
 
     def forward(self, *args, **kwargs):
         return self.model(*args, **kwargs)
 
     def _shared_step(self, batch, batch_idx, stage="train"):
         time_preprocessing_start = time.time_ns()
+
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+
         inputs, labels = batch
         # inputs (batch_size, features, targets, seq_len, num_sequences)
         # labels (batch_size, features (chlov), targets, seq_len, num_sequences)
         batch_size, _, _, seq_len, num_sequences = inputs.shape
 
         # inputs = inputs.permute(0, 2, 3, 1)  # (batch_size, seq_len, num_sequences, features)
-        inputs = inputs.permute(0, 2, 3, 4, 1) # (batch_size, targets, seq_len, num_sequences, features)
+        inputs = inputs.permute(0, 2, 3, 4, 1).to(device) # (batch_size, targets, seq_len, num_sequences, features)
 
         targets = labels  # (batch_size, features, targets, seq_len, num_sequences)
         targets = targets.permute(0, 3, 1, 2, 4)  # (batch_size, seq_len, features, targets, num_sequences)
 
-        tickers = torch.arange(self.num_sequences, device=inputs.device)
+        tickers = torch.arange(self.num_sequences, device=device)
         tickers = tickers.unsqueeze(0).unsqueeze(0).repeat(
             batch_size, len(self.pred_indices), 1
         )  # (batch_size, targets, num_sequences)
@@ -352,7 +359,12 @@ class MoneyExperiment(pl.LightningModule):
                 logits = raw_logits.view(view_shape).permute(0, 3, 1, 2, 4, 5)  # (batch_size, num_classes, seq_len, features, targets, num_sequences)
 
                 loss_tensor = self.loss_fn(logits, targets_classes)
+                loss_tensor = loss_tensor * self.include_loss
                 loss = (loss_tensor * self.loss_weights).mean()
+
+                logits = logits.permute(0, 2, 3, 4, 5, 1)
+                logits[(self.include_loss == False).expand(batch_size, seq_len, -1, max(self.pred_indices), -1)] = self.placeholder
+                logits = logits.permute(0, 5, 1, 2, 3, 4)
 
                 seen_losses = loss_tensor[:, :-1, :, :, :].mean(dim=(0, 1, 2, 4))
                 unseen_losses = loss_tensor[:, -1:, :, :, :].mean(dim=(0, 1, 2, 4))
@@ -726,6 +738,8 @@ class MoneyExperiment(pl.LightningModule):
             if self.args.unique_inputs_ratio[0] > 0:
                 for i in range(len(self.model.unique_value_input)):
                     non_muon_linear_weights.add(f'model.unique_value_input.{i}.weight')
+                for i in range(len(self.model.unique_aux_input)):
+                    non_muon_linear_weights.add(f'model.unique_aux_input.{i}.weight')
 
             # The rest of the logic is the same and now works perfectly
             for name, p in self.named_parameters():

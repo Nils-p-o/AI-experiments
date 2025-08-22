@@ -190,11 +190,17 @@ def proceed(args: argparse.Namespace):
     # vocab_size = data_module.get_vocab_size()
     args.input_features = len(data_module._metadata["columns"])
     args.aux_input_features = len(data_module._metadata["aux_columns"])
-    args.time_features = len(data_module._metadata["time_features"])
+    args.time_features = len(data_module._metadata["time_columns"])
+    args.include_loss = data_module._metadata["include_loss"]
 
     with open("experiment_configs/hpo_classification_base_aux.json", "r") as f:
         base_args = argparse.Namespace(**json.load(f))
     base_args.input_features = args.input_features
+    base_args.aux_input_features = args.aux_input_features
+    base_args.time_features = args.time_features
+
+    base_args.tickers = args.tickers
+    base_args.aux_tickers = args.aux_tickers
 
     # --- Model Definition ---
     match architecture:  # TODO auto format qk_rope_dim for non MLA (currently all of them)
