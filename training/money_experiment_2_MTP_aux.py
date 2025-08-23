@@ -13,8 +13,8 @@ from transformer_arch.money.money_former_nGPT_2 import (
 )
 from money_predictions_MTP_local_new import (
     calculate_metrics,
-    trading_metrics,
-    trading_metrics_with_costs
+    new_trading_metrics,
+    new_trading_metrics_individual
 )
 
 from muon import MuonWithAuxAdam
@@ -214,9 +214,18 @@ class MoneyExperiment(pl.LightningModule):
         self.lr_mult = lr_mult
         self.batch_size = batch_size
 
-        class_weights = [args.down_up_loss_weight, 1.0, args.down_up_loss_weight]
-        class_weights = [w*len(class_weights)/sum(class_weights) for w in class_weights]
+        # class_weights = [args.down_up_loss_weight, 1.0, args.down_up_loss_weight]
+        # class_weights = [w*len(class_weights)/sum(class_weights) for w in class_weights]
 
+        args.up_down_err_w = 1.0
+        args.flat_p_err_w = 1.5
+        args.flat_t_err_w = 2.0
+        self.class_cost_matrix = torch.tensor([[0.0, args.flat_t_err_w, args.up_down_err_w], 
+                                               [args.flat_p_err_w, 0.0, args.flat_p_err_w], 
+                                               [args.up_down_err_w, args.flat_t_err_w, 0.0]])
+
+        self.class_weights = torch.tensor(args.class_weights).permute(2, 0, 1)  # (num_classes, features, num_sequences)
+        self.class_weights = self.class_weights.unsqueeze(0).unsqueeze(2).unsqueeze(4)  # (1, num_classes, 1, features, 1, num_sequences)
 
         match args.prediction_type:
             case "gaussian":
@@ -224,7 +233,7 @@ class MoneyExperiment(pl.LightningModule):
             case "regression":
                 self.loss_fn = nn.L1Loss(reduction="none")
             case "classification":
-                self.loss_fn = nn.CrossEntropyLoss(weight=torch.tensor(class_weights), reduction="none")
+                self.loss_fn = nn.CrossEntropyLoss(reduction="none")
         self.MAE = nn.L1Loss(reduction="none")
         self.pred_indices = args.indices_to_predict
         self.save_hyperparameters(ignore=["model"])
@@ -359,8 +368,22 @@ class MoneyExperiment(pl.LightningModule):
                 logits = raw_logits.view(view_shape).permute(0, 3, 1, 2, 4, 5)  # (batch_size, num_classes, seq_len, features, targets, num_sequences)
 
                 loss_tensor = self.loss_fn(logits, targets_classes)
+
+                # self.class_weights shape:(1, num_classes, 1, features, 1, num_sequences)
+                class_weights = self.class_weights.expand(batch_size, -1, seq_len, -1, max(self.pred_indices), -1)
+                class_weights = torch.gather(class_weights, dim=1, index=targets_classes.unsqueeze(1)).squeeze(1)
+
+                # loss_tensor = loss_tensor * class_weights # class imbalance weighing (per feat, and per sequence)
+
+                # convert weights and wrong probabilities to a cost multiplier, that scales the loss
+                batch_cost_weights = self.class_cost_matrix[targets_classes]
+                dims = list(range(batch_cost_weights.dim()))
+                batch_cost_weights = batch_cost_weights.permute(dims[0], dims[-1], *dims[1:-1])
+                
+                batch_cost_weights = (torch.log_softmax(logits, dim=1).exp() * batch_cost_weights).sum(dim=1)
+                batch_cost_weights = torch.exp(batch_cost_weights) - 1
                 loss_tensor = loss_tensor * self.include_loss
-                loss = (loss_tensor * self.loss_weights).mean()
+                loss = ((loss_tensor * self.loss_weights * class_weights + batch_cost_weights) * self.include_loss).mean()
 
                 logits = logits.permute(0, 2, 3, 4, 5, 1)
                 logits[(self.include_loss == False).expand(batch_size, seq_len, -1, max(self.pred_indices), -1)] = self.placeholder
@@ -892,39 +915,22 @@ class MoneyExperiment(pl.LightningModule):
                     metric_value,
                     **log_opts_epoch,
                 )
-            trading_strategy_metrics = trading_metrics(targets, backtest_predictions, self.args)
-            for metric_name, metric_value in trading_strategy_metrics.items():
+                
+            correct_backtest_metrics = new_trading_metrics(targets, backtest_predictions, self.args)
+            for metric_name, metric_value in correct_backtest_metrics.items():
                 self.log(
-                    f"Trading_strategy_metrics/val_{metric_name}",
+                    f"Strategy_metrics/val_{metric_name}",
                     metric_value,
                     **log_opts_epoch,
                 )
-            
-            for i in range(targets.shape[-1]):
-                trading_strategy_metrics = trading_metrics(targets[:, i], backtest_predictions[:, i], self.args)
-                for metric_name, metric_value in trading_strategy_metrics.items():
+            correct_individual_backtest_metrics = new_trading_metrics_individual(targets, backtest_predictions, self.args)
+            for metric_name, metric_value in correct_individual_backtest_metrics.items():
+                for i in range(targets.shape[-1]):
                     self.log(
-                        f"Trading_strategy_metrics_individual/val_{metric_name}_{self.tickers[i]}",
-                        metric_value,
+                        f"Strategy_metrics_individual/val_{metric_name}_{self.tickers[i]}",
+                        metric_value[i].float(),
                         **log_opts_epoch,
-                )
-            
-            trading_strategy_metrics = trading_metrics_with_costs(targets, backtest_predictions, self.args)
-            for metric_name, metric_value in trading_strategy_metrics.items():
-                self.log(
-                    f"Trading_strategy_metrics_with_costs/val_{metric_name}",
-                    metric_value,
-                    **log_opts_epoch,
-                )
-            
-            for i in range(targets.shape[-1]):
-                trading_strategy_metrics = trading_metrics_with_costs(targets[:, i], backtest_predictions[:, i], self.args)
-                for metric_name, metric_value in trading_strategy_metrics.items():
-                    self.log(
-                        f"Trading_strategy_metrics_with_costs_individual/val_{metric_name}_{self.tickers[i]}",
-                        metric_value,
-                        **log_opts_epoch,
-                )
+                    )
             
             cummulative_times["metrics"] += (
                 time.time_ns() - time_metrics_start

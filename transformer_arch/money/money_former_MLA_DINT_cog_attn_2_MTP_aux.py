@@ -61,8 +61,7 @@ class Money_former_MLA_DINT_cog_attn_MTP(nn.Module):
         self.register_buffer("freqs_cis", precompute_freqs_cis(args), persistent=False)
 
         # seperator/attention sink token
-        # self.seperator = nn.Embedding(1, self.d_model)
-        self.seperator = nn.Parameter(torch.zeros(self.d_model, dtype=torch.float32))
+        self.seperator_embedding = nn.Embedding(1, self.d_model)
         self.use_global_seperator = args.use_global_seperator
 
         self.MTP_blocks = nn.ModuleList(
@@ -70,9 +69,11 @@ class Money_former_MLA_DINT_cog_attn_MTP(nn.Module):
         )
 
         # auxiliary inputs
-        self.aux_inputs = nn.Linear(20, self.d_model, bias=args.bias)
+        self.aux_inputs = nn.Linear(args.aux_input_features+args.time_features, self.d_model, bias=args.bias)
         self.num_normal_tickers = len(args.tickers)
 
+        self.aux_input_features = args.aux_input_features
+        self.time_features = args.time_features
 
     def forward(
         self, x, tickers=None
@@ -84,7 +85,8 @@ class Money_former_MLA_DINT_cog_attn_MTP(nn.Module):
         if self.use_global_seperator:
             x = x.permute(0, 1, 3, 2, 4).contiguous()
             x = x.view(batch_size, targets, num_sequences * seq_len, self.d_model)
-            seperator = self.seperator.view(1, 1, 1, self.d_model)
+            seperator_idx = torch.tensor([0], device=x.device)
+            seperator = self.seperator_embedding(seperator_idx).view(1, 1, 1, self.d_model)
             seperator = seperator.expand(batch_size, targets, 1, -1)
             x = torch.cat([seperator, x], dim=2)
             
@@ -98,7 +100,8 @@ class Money_former_MLA_DINT_cog_attn_MTP(nn.Module):
             # x = self.ticker_projection(torch.cat((x,ticker_embs), dim=-1))
             x = (x + ticker_embs) * self.scaling
         else:
-            seperator = self.seperator.view(1, 1, 1, 1, self.d_model)
+            seperator_idx = torch.tensor([0], device=x.device) 
+            seperator = self.seperator_embedding(seperator_idx).view(1, 1, 1, self.d_model)
             seperator = seperator.expand(batch_size, targets, 1, num_sequences, -1)
 
             tickers = self.ticker_embedding(tickers).unsqueeze(2)
@@ -135,7 +138,7 @@ class Money_former_MLA_DINT_cog_attn_MTP(nn.Module):
     def encode_inputs(self, x):
         # batch_size, targets, seq_len, num_sequences, _ = x.size()
         shared_temp_x_normal = self.shared_value_input(x[:,:,:,:self.num_normal_tickers,:])
-        shared_temp_x_aux = self.aux_inputs(torch.cat((x[:,:,:,self.num_normal_tickers:,:10],x[:,:,:,self.num_normal_tickers:,-10:]), dim=-1))
+        shared_temp_x_aux = self.aux_inputs(torch.cat((x[:,:,:,self.num_normal_tickers:,:self.aux_input_features],x[:,:,:,self.num_normal_tickers:,-self.time_features:]), dim=-1))
         shared_temp_x = torch.cat([shared_temp_x_normal, shared_temp_x_aux], dim=-2)
         if self.unique_inputs:
             unique_temp_x = []
@@ -161,15 +164,17 @@ class Money_former_block(nn.Module):
         self.num_sequences = len(args.tickers) + len(args.aux_tickers)
         if args.use_global_seperator:
             # self.mask = torch.zeros(1, 1, args.seq_len*self.num_sequences+1, args.seq_len*self.num_sequences+1)
-            temp_mask = get_causal_mask(args.seq_len)
-            temp_mask = temp_mask.repeat(1, 1, self.num_sequences, self.num_sequences)
-            self.mask = torch.ones(1, 1, args.seq_len*self.num_sequences+1, args.seq_len*self.num_sequences+1).to("cuda" if torch.cuda.is_available() else "cpu")
+            # temp_mask = get_causal_mask(args.seq_len)
+            # temp_mask = temp_mask.repeat(1, 1, self.num_sequences, self.num_sequences)
+            self.mask = torch.ones(1, 1, args.seq_len*self.num_sequences+1, args.seq_len*self.num_sequences+1)
             self.mask[:,:,:,0] = 0
             self.mask[:,:,1:,1:] = 0
             # self.mask[:,:,1:,1:] = temp_mask
         else:
             self.mask = get_causal_mask(args.seq_len+1)
             self.mask = self.mask.repeat(1, 1, self.num_sequences, self.num_sequences)
+
+        self.mask = self.mask.to("cuda" if torch.cuda.is_available() else "cpu")
 
     def forward(self, x, freqs_cis):
         batch_size, seq_len, _ = x.size()

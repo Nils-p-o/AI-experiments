@@ -457,7 +457,6 @@ def download_numerical_financial_data(
     if config_args.include_sep_in_loss:
         MTP_full = torch.cat((torch.zeros_like(MTP_full[:, :1, :]), MTP_full), dim=1)
     MTP_full = data_fix_ffill(MTP_full)
-
     MTP_targets_classes = torch.full_like(MTP_full, 1)
     MTP_targets_classes[MTP_full < -config_args.classification_threshold] = 0
     MTP_targets_classes[MTP_full > config_args.classification_threshold] = 2
@@ -592,20 +591,6 @@ def download_numerical_financial_data(
         noisy_tensor = torch.cat(processed_copies, dim=2)
         train_data = torch.cat((train_data, noisy_tensor), dim=2)
 
-    class_counts = torch.empty(MTP_targets_classes.shape[0], MTP_targets_classes.shape[2], 3)
-    for i in range(3):
-        class_counts[:, :, i] = (
-            MTP_targets_classes == i
-        ).sum(dim=1)
-    
-    rel_per_class = class_counts/class_counts.sum(dim=2, keepdim=True)
-    include_loss = (rel_per_class == 1.0).float()
-    include_loss += rel_per_class == 0.0
-    include_loss = (include_loss.sum(dim=2) == 0).bool()
-    # include_loss (features, tickers)
-
-    class_weights = class_counts.sum(dim=-1, keepdim=True) / (3*class_counts)
-
 
     save_indexes_to_csv(train_indexes, os.path.join(output_dir, "train.csv"))
     save_indexes_to_csv(val_indexes, os.path.join(output_dir, "val.csv"))
@@ -621,29 +606,44 @@ def download_numerical_financial_data(
 
     collected_data_start_date = str(train_indexes[0])[:10]
     collected_data_end_date = str(val_indexes[-1])[:10]
+    class_counts = torch.empty(MTP_targets_classes.shape[0], MTP_targets_classes.shape[2], 3)
+    for i in range(3):
+        class_counts[:, :, i] = (MTP_targets_classes == i).sum(dim=1)
+    
+    rel_per_class = class_counts/class_counts.sum(dim=2, keepdim=True)
+    include_loss = (rel_per_class == 1.0).float()
+    include_loss += rel_per_class == 0.0
+    include_loss = (include_loss.sum(dim=2) == 0).bool()
+    # include_loss (features, tickers)
+
+    class_weights = class_counts.sum(dim=-1, keepdim=True) / (3*class_counts)
+
 
     metadata = {
         "tickers": unique_tickers,
-        "aux_tickers": unique_aux_tickers,
         "ticker_to_id": ticker_to_id,
-        "aux_ticker_to_id": aux_ticker_to_id,
         "start_date": collected_data_start_date,
         "end_date": collected_data_end_date,
         "val_split_ratio": val_split_ratio,
         "test_split_ratio": test_split_ratio,
         "columns": columns,
-        "aux_columns": aux_columns,
-        "time_columns": time_columns,
         "column_to_id": column_to_id,
         "indexes": data_length,
         "target_dates": target_dates,
+        "class_weights": class_weights.tolist(),
+        "train_means": means[:, 0, 0, :].tolist(),
+        "train_stds": stds[:, 0, 0, :].tolist(),
+        "aux_tickers": unique_aux_tickers,
+        "aux_ticker_to_id": aux_ticker_to_id,
+        "aux_columns": aux_columns,
+        "time_columns": time_columns,
         "include_loss": include_loss.tolist(),
     }
 
     with open(os.path.join(output_dir, "metadata.json"), "w") as f:
         json.dump(metadata, f, indent=4)
 
-    return means[:, 0, 0, :].tolist(), stds[:, 0, 0, :].tolist()
+    return # means[:, 0, 0, :].tolist(), stds[:, 0, 0, :].tolist()
 
 
 def calculate_features(

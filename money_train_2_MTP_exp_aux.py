@@ -1,20 +1,17 @@
 # TODO add more features, add more indicators (quarterly reports, EPS, etc.)
 # TODO test putting all input features as part of sequence?
 
-# TODO bayesian optimization (inference + training)
 # TODO add more things as part of config (weights for loss, features, etc.)
 # TODO rewrite dataloader to take in a list of features
 
 # TODO noMachine on hypkos computer
 
-# TODO make timing be per epoch
 # TODO maybe try optimising some parts of the code by using c?
 
 # TODO set up old pc for training
 
 # TODO test nGPT
 
-# different scaling in attn
 # TODO redo some tests (global vs local, etc. groupnorm)
 
 
@@ -46,12 +43,7 @@ from transformer_arch.money.money_former_MLA_DINT_cog_attn_2 import Money_former
 # from transformer_arch.money.money_former_MLA_DINT_cog_attn_2_MTP_diff_attn_dims import Money_former_MLA_DINT_cog_attn_MTP
 
 # from transformer_arch.money.money_former_MLA_DINT_cog_attn_2_MTP_muP import Money_former_MLA_DINT_cog_attn_MTP
-# from transformer_arch.money.money_former_MLA_DINT_cog_attn_2_MTP import Money_former_MLA_DINT_cog_attn_MTP
-# from training.data_loaders.test_feats_stocks_time_series_2_MTP_new import (
-#     FinancialNumericalDataModule,
-#     download_numerical_financial_data,
-# )
-# from training.money_experiment_2_MTP import MoneyExperiment
+
 
 from transformer_arch.money.money_former_MLA_DINT_cog_attn_2_MTP_aux import Money_former_MLA_DINT_cog_attn_MTP
 from training.data_loaders.test_feats_stocks_time_series_2_MTP_new_aux import (
@@ -116,12 +108,6 @@ def apply_distributed_patch():
 
     print("--- Applied comprehensive torch.distributed patches for get_world_size, get_rank, and all_gather ---")
 
-# from transformer_arch.money.money_former_MLA_DINT_cog_attn_2_MTP_c_only import Money_former_MLA_DINT_cog_attn_MTP
-# from training.data_loaders.test_feats_stocks_time_series_2_MTP_new_c_only import (
-#     FinancialNumericalDataModule,
-#     download_numerical_financial_data,
-# )
-# from training.money_experiment_2_MTP_c_only import MoneyExperiment
 
 
 def proceed(args: argparse.Namespace):
@@ -179,11 +165,11 @@ def proceed(args: argparse.Namespace):
     # --- Data Loading ---
     if args.dataset == "Money":  # yahoo finance stock data
 
-        args.normalization_means, args.normalization_stds = download_numerical_financial_data(
+        download_numerical_financial_data(
             tickers=args.tickers,
             aux_tickers=args.aux_tickers,
             seq_len=seq_len,
-            check_if_already_downloaded=False,  # TODO make this better/check which features are missing
+            check_if_already_downloaded=True,  # TODO make this better/check which features are missing
             target_dates=pred_indices,
             config_args=args,
         )
@@ -202,6 +188,14 @@ def proceed(args: argparse.Namespace):
     data_module.setup()  # Very important to setup the data
     # vocab_size = data_module.get_vocab_size()
     args.input_features = len(data_module._metadata["columns"])
+
+    args.class_weights = data_module._metadata.get("class_weights", None)
+    args.normalization_means = data_module._metadata.get("train_means", None)
+    args.normalization_stds = data_module._metadata.get("train_stds", None)
+    args.aux_input_features = len(data_module._metadata["aux_columns"])
+    args.time_features = len(data_module._metadata["time_columns"])
+    args.include_loss = data_module._metadata["include_loss"]
+
     # --- Model Definition ---
     match architecture:  # TODO auto format qk_rope_dim for non MLA (currently all of them)
         case "Money_former":
@@ -251,13 +245,13 @@ def proceed(args: argparse.Namespace):
     # Checkpointing
     checkpoint_callback = ModelCheckpoint(
         # dirpath="checkpoints/",
-        filename="{name}-{epoch}-{Trading_strategy_metrics/val_Calmar Ratio:.2f}",
-        save_top_k=3,
-        monitor="Trading_strategy_metrics/val_Calmar Ratio",
-        mode="max",
+        filename="{name}-{step}-{Loss/val_loss:.3f}",
+        save_top_k=-1,
+        # monitor="Trading_strategy_metrics/val_Calmar Ratio",
+        # mode="max",
         # monitor="Losses_seen_unseen/val_loss_unseen",
-        # monitor="Loss/val_loss",
-        # mode="min",
+        monitor="Loss/val_loss",
+        mode="min",
     )
 
     # Early Stopping
@@ -281,14 +275,6 @@ def proceed(args: argparse.Namespace):
     )
 
     trainer.fit(experiment, datamodule=data_module)
-
-    # model_dir = f"models"
-    # if not os.path.exists(model_dir):
-    #     os.makedirs(model_dir)
-    # torch.save(
-    #     experiment.model, f"{model_dir}/{args.architecture}_{name.split('/')[-1]}.pth"
-    # )  # TODO make this more specific
-    # print("Model saved.")
     return
 
 

@@ -221,17 +221,17 @@ list_of_losses = [
     "annualized_return",
     "win_loss_ratio",
     "days_traded",
-    "gspc_calmar_ratio",
-    "gspc_max_drawdown",
-    "gspc_annualized_return",
-    "gspc_win_loss_ratio",
+    # "gspc_calmar_ratio",
+    # "gspc_max_drawdown",
+    # "gspc_annualized_return",
+    # "gspc_win_loss_ratio",
 ]
 
 lowest_ver = 0
-max_ver = 5
+max_ver = 4
 # current_name = "Money/testing/fixed_mixing/testing_imbalance_weighted_stable_custom_linear_costs/Money_former_MLA_DINT_cog_attn_MTP_3_64_64_4_2_32"
 # current_name = "Money/opts/class/rng_class_weighted_15/Money_former_MLA_DINT_cog_attn_MTP_3_64_64_4_2_32"
-current_name = "Money/testing/class/class_weighted_15_unique_outputs/Money_former_MLA_DINT_cog_attn_MTP_3_64_64_4_2_32"
+current_name = "Money/testing/class/class_imb_opt_exp_add_cost_adj_data/Money_former_MLA_DINT_cog_attn_MTP_3_64_64_4_2_32"
 print_metrics(current_name, lowest_ver, max_ver)
 
 # diff models and their achieved metrics (max, or min depending on the metric)
@@ -858,7 +858,7 @@ hand_feats_ensemble_weighted_15 = {
 }
 
 # gspc is upweighted 5x compared to other tickers
-# better
+#
 # worse f1
 # maybe better gspc (calmar, drawdown, return)
 # success?
@@ -877,9 +877,9 @@ hand_feats_ensemble_weighted_15_gspc = {
     "gspc_win_loss_ratio": [0.8621, 1.0, 1.04, 0.8267, 1.0, 0.7381],
 }
 
-# better
-# worse f1, return, wlr, 
-# 
+#
+# worse f1, return, wlr,
+#
 hand_feats_ensemble_weighted_15_unique_outputs = {
     "backtest_loss": [0.9859, 0.9898, 0.9901, 0.989, 0.9866, 0.9896],
     "backtest_acc": [0.5112, 0.5046, 0.5047, 0.505, 0.5076, 0.5029],
@@ -895,65 +895,147 @@ hand_feats_ensemble_weighted_15_unique_outputs = {
     "gspc_win_loss_ratio": [0.7941, 0.6481, 0.9412, 0.92, 0.8889, 0.6389],
 }
 
+####### seeds 12345 again ########
+hand_feats_ensemble_imbalance_base = {
+    "backtest_loss": [1.026, 1.0219, 1.0298, 1.0264, 1.0298],
+    "backtest_acc": [0.4739, 0.4775, 0.4701, 0.4744, 0.4699],
+    "f1": [0.4153, 0.4204, 0.4148, 0.4194, 0.4178],
+    "calmar_ratio": [0.7179, 0.4502, 0.4344, 0.0531, 0.8788],
+    "max_drawdown": [0.2302, 0.3128, 0.3197, 0.2962, 0.2826],
+    "annualized_return": [0.1689, 0.1408, 0.1461, 0.0177, 0.2484],
+    "win_loss_ratio": [0.9123, 0.9214, 0.8692, 0.7912, 0.8026],
+    "days_traded": [1184.0, 1124.0, 1170.0, 1055.0, 1113.0],
+}
+
+# imbalance global only - now worse apparently?
+# compared w imbalance weight
+#
+# worse drawdown (maybe calmar, wlr)
+#
+hand_feats_ensemble_imbalance_global_only = {
+    "backtest_loss": [1.0313, 1.0293, 1.0178, 1.0184, 1.0308],
+    "backtest_acc": [0.4762, 0.4677, 0.4837, 0.4828, 0.4697],
+    "f1": [0.4219, 0.4186, 0.4141, 0.4137, 0.416],
+    "calmar_ratio": [0.2427, 0.1641, 0.1175, 0.3742, 0.16],
+    "max_drawdown": [0.4397, 0.3272, 0.4542, 0.4004, 0.5144],
+    "annualized_return": [0.1067, 0.0537, 0.0563, 0.168, 0.0831],
+    "win_loss_ratio": [0.8247, 0.8079, 0.8121, 0.826, 0.7923],
+    "days_traded": [1099.0, 1118.0, 1136.0, 1081.0, 1184.0],
+    "gspc_calmar_ratio": [0.6299, 0.2613, 0.4327, 1.8713, 0.7646],
+    "gspc_max_drawdown": [0.1994, 0.2426, 0.186, 0.1036, 0.2167],
+    "gspc_annualized_return": [0.1256, 0.0906, 0.0805, 0.1938, 0.1657],
+    "gspc_win_loss_ratio": [0.8581, 0.7414, 0.7723, 0.811, 0.8656],
+}
+
+# imbalance hlo on prev c global only
+# compared w imbalance_weight
+# better (maybe wlr?)
+# worse loss, acc, f1 (maybe everything)
+#
+hand_feats_ensemble_imbalance_global_only_hlo_on_c = {
+    "backtest_loss": [1.0485, 1.0466, 1.0408, 1.0408, 1.0469],
+    "backtest_acc": [0.4718, 0.4678, 0.4639, 0.4701, 0.4662],
+    "f1": [0.4142, 0.409, 0.4056, 0.4108, 0.4103],
+    "calmar_ratio": [0.3351, 0.1394, 0.5149, 0.2023, 0.6421],
+    "max_drawdown": [0.3156, 0.4258, 0.2528, 0.4062, 0.2464],
+    "annualized_return": [0.1057, 0.0625, 0.1971, 0.0878, 0.1641],
+    "win_loss_ratio": [0.9178, 0.8977, 0.9023, 0.8957, 0.9468],
+    "days_traded": [1120.0, 1089.0, 1209.0, 1003.0, 1112.0],
+}
+
+# unique outputs
+# comp w imb base
+# better acc
+# worse f1, calmar, drawdown, return, wlr
+# fewer traded days
+hand_feats_ensemble_imbalance_unique_outputs = {
+    "backtest_loss": [1.0311, 1.0293, 1.0318, 1.0287, 1.0284],
+    "backtest_acc": [0.477, 0.4847, 0.4737, 0.4844, 0.4733],
+    "f1": [0.4084, 0.4103, 0.4104, 0.4123, 0.4097],
+    "calmar_ratio": [0.1886, 0.1299, 0.1784, 0.204, 0.0491],
+    "max_drawdown": [0.3447, 0.3074, 0.3568, 0.3085, 0.4263],
+    "annualized_return": [0.0671, 0.0412, 0.0714, 0.0629, 0.0223],
+    "win_loss_ratio": [0.8303, 0.7456, 0.7978, 0.7706, 0.782],
+    "days_traded": [1085.0, 1031.0, 1045.0, 1031.0, 1007.0],
+}
+
+
+# multiple seperators, full attn - ~no difference
+#
+# worse (maybe f1)
+#
+hf_ens_imb_multiple_seps = {
+    "backtest_loss": [1.0309, 1.0181, 1.0294, 1.0306, 1.0146],
+    "backtest_acc": [0.4654, 0.4774, 0.4727, 0.4762, 0.4799],
+    "f1": [0.4142, 0.4063, 0.4089, 0.4165, 0.4166],
+    "calmar_ratio": [0.465, 0.8372, 0.4653, 0.8462, 0.8418],
+    "max_drawdown": [0.4079, 0.2708, 0.257, 0.1918, 0.2401],
+    "annualized_return": [0.1991, 0.2267, 0.2003, 0.2161, 0.2021],
+    "win_loss_ratio": [0.9404, 0.8933, 0.8564, 0.8078, 0.8003],
+    "days_traded": [1205.0, 1047.0, 1099.0, 1073.0, 1073.0],
+}
+
+# exp_add from cost optimizations - deff keep
+# better loss, acc, f1 (maybe calmar, return, wlr)
+# worse -
+# higher days traded
+hf_ens_imb_exp_add_cost = {
+    "backtest_loss": [1.0089, 0.9965, 1.0108, 1.0072, 1.0143],
+    "backtest_acc": [0.4835, 0.4935, 0.4811, 0.4867, 0.4827],
+    "f1": [0.4331, 0.4292, 0.4293, 0.4305, 0.4267],
+    "calmar_ratio": [0.8728, 1.0621, 0.4786, 1.1256, 0.6204],
+    "max_drawdown": [0.372, 0.2303, 0.2788, 0.2489, 0.2843],
+    "annualized_return": [0.3487, 0.305, 0.2389, 0.4073, 0.1764],
+    "win_loss_ratio": [1.0017, 1.0177, 1.0032, 0.9439, 0.9741],
+    "days_traded": [1238.0, 1255.0, 1269.0, 1211.0, 1224.0],
+}
+
+# compared w exp add - just worse
+#
+# worse loss, f1, calmar, drawdown, return, wlr (maybe acc)
+# fewer traded days
+hf_ens_imb_lin_add_cost = {
+    "backtest_loss": [1.0197, 1.0187, 1.0309, 1.0237, 1.0324],
+    "backtest_acc": [0.485, 0.4853, 0.4772, 0.4853, 0.4809],
+    "f1": [0.4262, 0.4246, 0.428, 0.4251, 0.4204],
+    "calmar_ratio": [0.1119, 0.3943, 0.5313, 0.2201, 0.1809],
+    "max_drawdown": [0.5233, 0.2536, 0.4428, 0.3578, 0.2742],
+    "annualized_return": [0.0586, 0.1161, 0.2352, 0.0908, 0.0496],
+    "win_loss_ratio": [0.8789, 0.87, 0.9414, 0.8569, 0.8315],
+    "days_traded": [1181.0, 1179.0, 1236.0, 1148.0, 1179.0],
+}
+
+
+# same as exp_add, but using auto adjust from yfinance - no real diff
+# -
+# -
+#
+hf_ens_imb_exp_add_cost_adj_data = {
+    "backtest_loss": [1.0004, 1.001, 1.0099, 1.0066, 1.015],
+    "backtest_acc": [0.4875, 0.4851, 0.4808, 0.4849, 0.485],
+    "f1": [0.4283, 0.4284, 0.4242, 0.428, 0.4349],
+    "calmar_ratio": [0.5338, 0.7477, 0.7627, 0.6787, 1.1308],
+    "max_drawdown": [0.4041, 0.2765, 0.2975, 0.2836, 0.2239],
+    "annualized_return": [0.2314, 0.2067, 0.2269, 0.1924, 0.2531],
+    "win_loss_ratio": [0.9732, 0.9671, 1.0175, 0.8861, 1.0169],
+    "days_traded": [1251.0, 1293.0, 1271.0, 1223.0, 1215.0],
+}
+
 
 print(f"baseline unseen_loss: {np.mean(baseline['unseen_loss'])}")
 print(f"baseline calmar_ratio: {np.mean(baseline['calmar_ratio'])}")
 print(f"baseline f1: {np.mean(baseline['f1'])}")
-
-# print(f"\n--- hand_feats_nb_weight_loss_1 vs hand_feats_nb_weight_loss_5  ---")
-# compare(hand_feats_nb_weight_loss_1, hand_feats_nb_weight_loss_5)
-
-# print(f"\n--- hand_feats_nb_weight_normal vs hand_feats_nb_weight_loss_5 (paired)  ---")
-# paired_compare(hand_feats_nb_normal_paired, hand_feats_nb_weight_loss_5_paired)
-
-# print(f"\n--- hand_feats_nb_weight_normal vs hand_feats_nb_lora_ff (paired)  ---") # maybe
-# paired_compare(hand_feats_nb_normal_paired, hand_feats_nb_lora_ff)
-
-# print(f"\n--- hand_feats_nb_weight_normal vs hand_feats_nb_local_simple (paired)  ---")
-# paired_compare(hand_feats_nb_normal_paired, hand_feats_nb_local_simple)
-
-# print(f"\n--- hand_feats_nb_weight_normal vs hand_feats_nb_global (paired)  ---") # maybe
-# paired_compare(hand_feats_nb_normal_paired, hand_feats_nb_global)
-
-# print(f"\n--- hand_feats_nb_weight_normal vs hand_feats_nb_weighted_cce (paired)  ---") # yes
-# paired_compare(hand_feats_nb_normal_paired, hand_feats_nb_weighted_cce)
-
-# print(f"\n--- hand_feats_nb_weight_normal vs hand_feats_nb_aux_8 (paired)  ---") # yes
-# paired_compare(hand_feats_nb_normal_paired, hand_feats_nb_aux_8)
-
-# print(f"\n--- hand_feats_nb_weight_normal vs hand_feats_nb_anti_weighted_cce (paired)  ---")
-# paired_compare(hand_feats_nb_normal_paired, hand_feats_nb_anti_weighted_cce)
-
-# print(
-#     f"\n--- hand_feats_nb_weight_normal vs hand_feats_nb_custom_loss (paired)  ---"
-# )  # kinda yes, if it works together with cce weighing
-# paired_compare(hand_feats_nb_normal_paired, hand_feats_nb_custom_loss)
-
-# print(
-#     f"\n--- hand_feats_nb_weighted_cce (20) vs hand_feats_nb_weighted_cce_15 (paired)  ---"
-# )
-# paired_compare(hand_feats_nb_weighted_cce, hand_feats_nb_weighted_cce_15)
-
-# print(
-#     f"\n--- hand_feats_nb_weighted_cce (20) vs hand_feats_nb_weighted_cce_25 (paired)  ---"
-# )
-# paired_compare(hand_feats_nb_weighted_cce, hand_feats_nb_weighted_cce_25)
-
-# print(
-#     f"\n--- hand_feats_nb_weighted_cce (20) vs hand_feats_nb_weighted_cce_30 (paired)  ---"
-# )
-# paired_compare(hand_feats_nb_weighted_cce, hand_feats_nb_weighted_cce_30)
 
 
 #################################################################
 # comparisons with costs
 #################################################################
 
-print(f"\n--- hand_feats_nb_weight_normal vs hand_feats_nb_weighted_cce (paired)  ---")
-paired_compare(hand_feats_baseline_costs, hand_feats_weighted_cce_15_costs)
+# print(f"\n--- hand_feats_nb_weight_normal vs hand_feats_nb_weighted_cce (paired)  ---")
+# paired_compare(hand_feats_baseline_costs, hand_feats_weighted_cce_15_costs)
 
-print(f"\n--- hand_feats_nb_weight_normal vs hand_feats_custom_loss_exp (paired)  ---")
-paired_compare(hand_feats_baseline_costs, hand_feats_custom_loss_exp_costs)
+# print(f"\n--- hand_feats_nb_weight_normal vs hand_feats_custom_loss_exp (paired)  ---")
+# paired_compare(hand_feats_baseline_costs, hand_feats_custom_loss_exp_costs)
 
 # print(f"\n--- hand_feats_custom_loss_exp vs hand_feats_custom_loss_linear (paired)  ---")
 # paired_compare(hand_feats_custom_loss_exp_costs, hand_feats_custom_loss_linear_costs)
@@ -964,8 +1046,8 @@ paired_compare(hand_feats_baseline_costs, hand_feats_aux_8_costs)
 # print(f"\n--- hand_feats_nb_weight_normal vs hand_feats_causal (paired)  ---")
 # paired_compare(hand_feats_baseline_costs, hand_feats_causal_costs)
 
-print(f"\n--- hand_feats_nb_weight_normal vs hand_global_only_costs (paired)  ---")
-paired_compare(hand_feats_baseline_costs, hand_global_only_costs)
+# print(f"\n--- hand_feats_nb_weight_normal vs hand_global_only_costs (paired)  ---")
+# paired_compare(hand_feats_baseline_costs, hand_global_only_costs)
 
 # print(
 #     f"\n--- hand_feats_nb_weighted_cce vs hand_feats_custom_loss_exp_weighted_15_costs (paired)  ---"
@@ -1006,18 +1088,45 @@ paired_compare(hand_feats_baseline_costs, hand_global_only_costs)
 # )
 # paired_compare(hand_feats_imbalance_weighted, hand_feats_imbalance_weighted_stable)
 
-print(
-    f"\n--- hand_feats_nb_weight_normal vs hand_feats_imbalance_weighted_custom_linear_add (paired)  ---"
-)
-paired_compare(
-    hand_feats_baseline_costs, hand_feats_imbalance_weighted_custom_linear_add
-)
+# print(
+#     f"\n--- hand_feats_nb_weight_normal vs hand_feats_imbalance_weighted_custom_linear_add (paired)  ---"
+# )
+# paired_compare(
+#     hand_feats_baseline_costs, hand_feats_imbalance_weighted_custom_linear_add
+# )
 
-
+######################################################
 # post ensemble
-print("\n--- hand_feats_ensemble_weighted_15 vs hand_feats_ensemble_weighted_15_gspc (paired)  ---")
-paired_compare(hand_feats_ensemble_weighted_15, hand_feats_ensemble_weighted_15_gspc)
+######################################################
+# print(
+#     "\n--- hand_feats_ensemble_weighted_15 vs hand_feats_ensemble_weighted_15_gspc (paired)  ---"
+# )
+# paired_compare(hand_feats_ensemble_weighted_15, hand_feats_ensemble_weighted_15_gspc)
 
 
-print("\n--- hand_feats_ensemble_weighted_15 vs hand_feats_ensemble_weighted_15_unique_outputs (paired)  ---")
-paired_compare(hand_feats_ensemble_weighted_15, hand_feats_ensemble_weighted_15_unique_outputs)
+# print(
+#     "\n--- hand_feats_ensemble_weighted_15 vs hand_feats_ensemble_weighted_15_unique_outputs (paired)  ---"
+# )
+# paired_compare(
+#     hand_feats_ensemble_weighted_15, hand_feats_ensemble_weighted_15_unique_outputs
+# )
+
+# print("\n--- hand_feats_ensemble_imbalance_base vs hand_feats_ensemble_imbalance_global_only (paired)  ---")
+# paired_compare(hand_feats_ensemble_imbalance_base, hand_feats_ensemble_imbalance_global_only)
+
+# print("\n--- hand_feats_ensemble_imbalance_base vs hand_feats_ensemble_imbalance_global_only_hlo_on_c (paired)  ---")
+# paired_compare(hand_feats_ensemble_imbalance_base, hand_feats_ensemble_imbalance_global_only_hlo_on_c)
+
+# print("\n--- hand_feats_ensemble_imbalance_base vs hand_feats_ensemble_imbalance_unique_outputs (paired)  ---")
+# paired_compare(hand_feats_ensemble_imbalance_base, hand_feats_ensemble_imbalance_unique_outputs)
+
+# print("\n--- hand_feats_ensemble_imbalance_base vs hf_ens_imb_multiple_seps (paired)  ---")
+# paired_compare(hand_feats_ensemble_imbalance_base, hf_ens_imb_multiple_seps)
+
+print(
+    "\n--- hand_feats_ensemble_imbalance_base vs hf_ens_imb_exp_add_cost (paired) ---"
+)
+paired_compare(hand_feats_ensemble_imbalance_base, hf_ens_imb_exp_add_cost)
+
+print("\n--- hf_ens_imb_exp_add_cost vs hf_ens_imb_exp_add_cost_adj_data (paired)  ---")
+paired_compare(hf_ens_imb_exp_add_cost, hf_ens_imb_exp_add_cost_adj_data)
