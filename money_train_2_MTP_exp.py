@@ -105,12 +105,6 @@ def apply_distributed_patch():
 
     print("--- Applied comprehensive torch.distributed patches for get_world_size, get_rank, and all_gather ---")
 
-# from transformer_arch.money.money_former_MLA_DINT_cog_attn_2_MTP_c_only import Money_former_MLA_DINT_cog_attn_MTP
-# from training.data_loaders.test_feats_stocks_time_series_2_MTP_new_c_only import (
-#     FinancialNumericalDataModule,
-#     download_numerical_financial_data,
-# )
-# from training.money_experiment_2_MTP_c_only import MoneyExperiment
 
 
 def proceed(args: argparse.Namespace):
@@ -169,7 +163,7 @@ def proceed(args: argparse.Namespace):
         download_numerical_financial_data(
             tickers=args.tickers,
             seq_len=seq_len,
-            check_if_already_downloaded=True,  # TODO make this better/check which features are missing
+            check_if_already_downloaded=(not args.reload_data),  # TODO make this better/check which features are missing
             target_dates=pred_indices,
             config_args=args,
         )
