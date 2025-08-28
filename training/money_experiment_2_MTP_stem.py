@@ -324,6 +324,9 @@ class MoneyExperiment(pl.LightningModule):
         targets = labels  # (batch_size, features, targets, seq_len, num_sequences)
         targets = targets.permute(0, 3, 1, 2, 4)  # (batch_size, seq_len, features, targets, num_sequences)
 
+        # stem specific
+        targets = targets[:, -seq_len:, :, :, :]
+
         tickers = torch.arange(self.num_sequences, device=inputs.device)
         tickers = tickers.unsqueeze(0).unsqueeze(0).repeat(
             batch_size, len(self.pred_indices), 1
@@ -411,14 +414,14 @@ class MoneyExperiment(pl.LightningModule):
                 # loss_tensor = loss_tensor * class_weights # class imbalance weighing (per feat, and per sequence)
 
                 # convert weights and wrong probabilities to a cost multiplier, that scales the loss
-                batch_cost_weights = self.class_cost_matrix[targets_classes]
-                dims = list(range(batch_cost_weights.dim()))
-                batch_cost_weights = batch_cost_weights.permute(dims[0], dims[-1], *dims[1:-1])
+                # batch_cost_weights = self.class_cost_matrix[targets_classes]
+                # dims = list(range(batch_cost_weights.dim()))
+                # batch_cost_weights = batch_cost_weights.permute(dims[0], dims[-1], *dims[1:-1])
                 
-                batch_cost_weights = (torch.log_softmax(logits, dim=1).exp() * batch_cost_weights).sum(dim=1)
-                batch_cost_weights = torch.exp(batch_cost_weights) - 1
+                # batch_cost_weights = (torch.log_softmax(logits, dim=1).exp() * batch_cost_weights).sum(dim=1)
+                # batch_cost_weights = torch.exp(batch_cost_weights) - 1
 
-                loss = (loss_tensor * self.loss_weights * class_weights + batch_cost_weights).mean()
+                loss = (loss_tensor * self.loss_weights * class_weights).mean() # + batch_cost_weights).mean()
 
                 seen_losses = loss_tensor[:, :-1, :, :, :].mean(dim=(0, 1, 2, 4))
                 unseen_losses = loss_tensor[:, -1:, :, :, :].mean(dim=(0, 1, 2, 4))
