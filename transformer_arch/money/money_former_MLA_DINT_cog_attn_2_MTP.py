@@ -190,6 +190,7 @@ class Money_former_block(nn.Module):
         else:
             self.mask = get_causal_mask(args.seq_len+1)
             self.mask = self.mask.repeat(1, 1, self.num_sequences, self.num_sequences)
+            self.mask = torch.zeros_like(self.mask)
 
     def forward(self, x, freqs_cis):
         batch_size, seq_len, _ = x.size()
@@ -390,27 +391,46 @@ class custom_MHA(nn.Module): # a mix of MLA and DINT
         return output
 
 
-class SwiGLU_feed_forward(nn.Module):
+class SwiGLU_feed_forward(nn.Module): # NOTE currently using xielu non-linearity
     def __init__(self, args):
         super().__init__()
-        self.linear_in_gate = nn.Linear(args.d_model, args.d_ff * 2, bias=args.bias)
+        # self.linear_in_gate = nn.Linear(args.d_model, args.d_ff * 2, bias=args.bias)
         # self.linear_in_gate_down = nn.Linear(args.d_model, 16 * 2, bias=args.bias)
         # self.linear_in_up = nn.Linear(16, args.d_ff, bias=args.bias)
         # self.linear_gate_up = nn.Linear(16, args.d_ff, bias=args.bias)
+        self.linear_in = nn.Linear(args.d_model, args.d_ff, bias=args.bias)
         self.linear_out = nn.Linear(args.d_ff, args.d_model, bias=args.bias)
         self.dropout = nn.Dropout(args.dropout)
         self.d_model = args.d_model
 
+        self.xielu = xIELU()
+
     def forward(self, x):
-        u, v = self.linear_in_gate(x).chunk(2, dim=-1)
+        # u, v = self.linear_in_gate(x).chunk(2, dim=-1)
         # u, v = self.linear_in_gate_down(x).chunk(2, dim=-1)
         # u = self.linear_in_up(u)
         # v = self.linear_gate_up(v)
-        x = u * F.silu(v)  # * self.d_model ** 0.5) # Apply SwiGLU with scaling
+        # x = u * F.silu(v)  # * self.d_model ** 0.5) # Apply SwiGLU with scaling
+        x = self.linear_in(x)
+        x = self.xielu(x)
         x = self.linear_out(x)
         x = self.dropout(x)  # Apply dropout *after* the output projection
         return x
 
+class xIELU(nn.Module):
+    def __init__(self, alpha_p_init=0.8, alpha_n_init=0.8, beta=0.5, eps=-1e-6):
+        super().__init__()
+        self.beta = beta
+        self.alpha_p = nn.Parameter(torch.log(torch.exp(alpha_p_init) - 1))
+        self.alpha_n = nn.Parameter(torch.log(torch.exp(alpha_n_init - self.beta) - 1))
+        self.eps = torch.tensor(eps)
+
+    def forward(self, x):
+        alpha_p = F.softplus(self.alpha_p)
+        alpha_n = self.beta + F.softplus(self.alpha_n)
+        return torch.where(x > 0,
+                           alpha_p * x * x + self.beta * x,
+                           alpha_n * torch.expm1(torch.min(x, self.eps)) - alpha_n * x + self.beta * x)
 
 def precompute_freqs_cis(args) -> torch.Tensor:
     # original values in deepseek V3 inference (https://github.com/deepseek-ai/DeepSeek-V3/blob/main/inference/model.py#L766)
