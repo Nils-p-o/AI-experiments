@@ -251,6 +251,8 @@ class MoneyExperiment(pl.LightningModule):
         self.lr_mult = lr_mult
         self.batch_size = batch_size
 
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
         # class_weights = [args.down_up_loss_weight, 1.0, args.down_up_loss_weight]
         # class_weights = torch.tensor([w*len(class_weights)/sum(class_weights) for w in class_weights])
         # cost_weights = torch.tensor([[0.0, 1.0, 2.0], [1.0, 0.0, 1.0], [2.0, 1.0, 0.0]])
@@ -261,10 +263,10 @@ class MoneyExperiment(pl.LightningModule):
         args.flat_t_err_w = 2.0
         self.class_cost_matrix = torch.tensor([[0.0, args.flat_t_err_w, args.up_down_err_w], 
                                                [args.flat_p_err_w, 0.0, args.flat_p_err_w], 
-                                               [args.up_down_err_w, args.flat_t_err_w, 0.0]])
+                                               [args.up_down_err_w, args.flat_t_err_w, 0.0]]).to(device)
 
         self.class_weights = torch.tensor(args.class_weights).permute(2, 0, 1)  # (num_classes, features, num_sequences)
-        self.class_weights = self.class_weights.unsqueeze(0).unsqueeze(2).unsqueeze(4)  # (1, num_classes, 1, features, 1, num_sequences)
+        self.class_weights = self.class_weights.unsqueeze(0).unsqueeze(2).unsqueeze(4).to(device)  # (1, num_classes, 1, features, 1, num_sequences)
 
         match args.prediction_type:
             case "gaussian":
@@ -303,7 +305,7 @@ class MoneyExperiment(pl.LightningModule):
 
         loss_weights = feature_weights.unsqueeze(-1) * ticker_weights.unsqueeze(0)
         loss_weights = seen_unseen_weights.unsqueeze(-1).unsqueeze(-1) * loss_weights.unsqueeze(0)
-        self.loss_weights = loss_weights.unsqueeze(0).unsqueeze(3).to("cuda" if torch.cuda.is_available() else "cpu")
+        self.loss_weights = loss_weights.unsqueeze(0).unsqueeze(3).to(device)
 
 
     def forward(self, *args, **kwargs):

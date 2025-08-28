@@ -191,6 +191,8 @@ class Money_former_block(nn.Module):
             self.mask = get_causal_mask(args.seq_len+1)
             self.mask = self.mask.repeat(1, 1, self.num_sequences, self.num_sequences)
             self.mask = torch.zeros_like(self.mask)
+        
+        self.mask = self.mask.to("cuda" if torch.cuda.is_available() else "cpu")
 
     def forward(self, x, freqs_cis):
         batch_size, seq_len, _ = x.size()
@@ -421,8 +423,8 @@ class xIELU(nn.Module):
     def __init__(self, alpha_p_init=0.8, alpha_n_init=0.8, beta=0.5, eps=-1e-6):
         super().__init__()
         self.beta = beta
-        self.alpha_p = nn.Parameter(torch.log(torch.exp(alpha_p_init) - 1))
-        self.alpha_n = nn.Parameter(torch.log(torch.exp(alpha_n_init - self.beta) - 1))
+        self.alpha_p = nn.Parameter(torch.log(torch.exp(torch.tensor(alpha_p_init)) - 1))
+        self.alpha_n = nn.Parameter(torch.log(torch.exp(torch.tensor(alpha_n_init) - self.beta) - 1))
         self.eps = torch.tensor(eps)
 
     def forward(self, x):
