@@ -9,28 +9,69 @@ ALL of my trading metric based conclusions are void -- the trading strategy func
 to leverage in the simulation
 --nvm, barely a fucking difference in actual metrics
 
+100% unique outputs is bad (w/ imbalance weighing, or simple 1.5 weighing)
+
+rope is very important
+the model is pretty good at ignoring noise in input features, so i should be able to try multiple feature sets at once
+
+maybe i can get away with just 3 layers, which would be faster to train
+
+try to revisit what made GPT speedrunning work
+- u-net type residuals?
+
+---- theory wise ----
+maybe higher seq len is shit because the potential search space for correlations in attn matrix grows with the square, so signal/noise gets worse, as scale up?
+
+
 TODO
 seems like ticker weighing may be useful in ensemble creation? (not quite stat sig though)
 ensemble model is a great success, but i should redo it with better train/val/test splits, to make sure, because currently i am relying on some bias
 
+check weights of input features, to see which are important, and which are not
 
 maybe global znorm of feats could be bad? (might need to do procedural znorm, like only using the stats from up to t to norm  t+1)
 
+maybe unique outputs as part of total outputs, like with inputs
+maybe unique outputs+unique inputs is better (or even w unique ffn)
+
+feats to test - true range?, acc/dist index, ema vol, mfi/mfr, rsi, stoch osc, 
+some rolling versions of cumulative feats? - like vpt
+
+maybe sep should just be set to all 0, because it is a pure attention simk? (no real diff)
+
+
+
 # TODOs
 
+night trading data?
+
+maybe skew/kurtosis fix should be per feature, per ticker?
+
+MoE
+apple scaling method
+
+up down precission metric
+
+aux:
+which aux seqs are good
+
+
 tiers: ~(easiest to hardest)
-1. loss weighing / unique inputs/outputs
+1. unique inputs/outputs
 2. feats
+2.1. aux feats
 3. encoder-decoder aux
 4. BERT semantic
 
-
+simple TODOs (mostly maintenance/QoL)
 indexes should be cut, same as data
+rework max expected acc to be from per feat/sequence
+for class imbalance weighing, - only use train set for class weights?
+
 
 then,
 analyze everything (just start from the beginning, and build up)
 figure out whether class or regression or nll is better
-figure out why feats all of a sudden dont matter
 what loss weighing is best
 ...
 
@@ -40,7 +81,7 @@ maybe revisit unique inputs (for aux seq specifically)
 
 think about why gpu usage is so low on old pc (too much cpu utilization somewhere?)
 
-local feats do nothing, just a waste of space/parameters
+
 rework aux feats:
 -split between those that have vol and those that dont?
 -alter how data gets saved?
@@ -57,13 +98,8 @@ rethink f1 to be weighted
 maybe do way more specialized ver of model? (unique ffn, input,outputs heads)?
 
 why is the simple 1.5x weighing better than the per feat/sequence weighing?
-(maybe because no unique output heads?)
-
-just do every test out there - 
--what metrics should i trust? (combined/weighted f1? or calmar?)
 
 feats
-hlo based on c?
 
 to be implemented in new best model:
 muon + muP (kinda already done)
@@ -89,14 +125,8 @@ diffusion lm
 nGPT - again?
 encoder-decoder aux (maybe all causal?)
 
-
-
-find optimum for custom loss (both ver)
 custom custom loss
 find optimum for aux seqs (value + which help)
-
-maybe i should just do class imbalance weighing in cce? (that could be why the original cce weighing worked?)
-not really?
 
 
 class imbalance + custom loss exp - can definitely be tuned to reign in worst case errors
@@ -113,9 +143,8 @@ with current weighing, cce weighing and custom loss dont work better together (f
 
 maybe (inconclusive):
 LoRA ff ~ the same performance? but should scale better for speed, so proposal for big model ver
-global data-- idk loss is worse, but all else is ~ the same
-local simple?
-feats loss weighing --- not really great rn
+
+
 
 higher causal seq_len - shit
 causal - seems the same as "full" attn, but maybe i should use it when i scale up, because it is definitely more regularized
@@ -126,7 +155,7 @@ scaling swiglu - also nothing
 from scaled up ver:
 more sequences allows for more model size
 local feats do not improve loss
-seq_len does not really matter (so sticking with 2)
+seq_len does not really matter (so sticking with 2/3)
 causal is not better - just worse performance and slower convergence
 
 engineered feats do not really affect performance, when super many stocks

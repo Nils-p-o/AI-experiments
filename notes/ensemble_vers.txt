@@ -1,0 +1,18 @@
+Ensemble v0.0.0:
+- kind of just thrown together for confirming that it works in concept - it does
+- hand picked feats (for specifics go to dataloader script or google doc)
+- 15 weighted cce loss
+
+
+current in progress (ensemble v0.0.1):
+- hand feats
+- imbalance weighted
+- optimized exp add cost
+- muon training
+
+
+
+- aux? (maybe enc dec)
+- more stocks
+- bert sentiment analysis
+- train more directly for trading (maybe new loss function? / Q learning)
