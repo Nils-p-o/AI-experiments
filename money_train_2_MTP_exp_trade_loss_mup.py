@@ -26,8 +26,8 @@ from transformer_arch.money.money_former_nGPT_2 import Money_former_nGPT, normal
 from transformer_arch.money.money_former_MLA_DINT_cog_attn_2 import Money_former_MLA_DINT_cog_attn
 # from transformer_arch.money.money_former_MLA_DINT_cog_attn_2_MTP_diff_attn_dims import Money_former_MLA_DINT_cog_attn_MTP
 
-# from transformer_arch.money.money_former_MLA_DINT_cog_attn_2_MTP_muP import Money_former_MLA_DINT_cog_attn_MTP
-from transformer_arch.money.money_former_MLA_DINT_cog_attn_2_MTP_trade_loss import Money_former_MLA_DINT_cog_attn_MTP
+# from transformer_arch.money.money_former_MLA_DINT_cog_attn_2_MTP import Money_former_MLA_DINT_cog_attn_MTP
+from transformer_arch.money.money_former_MLA_DINT_cog_attn_2_MTP_trade_loss_muP import Money_former_MLA_DINT_cog_attn_MTP
 from training.data_loaders.test_feats_stocks_time_series_trade_loss import (
     FinancialNumericalDataModule,
     download_numerical_financial_data,
@@ -36,6 +36,8 @@ from training.money_experiment_2_MTP_trade_loss import MoneyExperiment
 
 import torch.distributed as dist
 from functools import wraps
+
+from mup import set_base_shapes 
 
 def apply_distributed_patch():
     """
@@ -169,6 +171,11 @@ def proceed(args: argparse.Namespace):
     args.class_weights = data_module._metadata.get("class_weights", None)
     args.normalization_means = data_module._metadata.get("train_means", None)
     args.normalization_stds = data_module._metadata.get("train_stds", None)
+
+    with open("experiment_configs/MTP_trade_loss_exp_base.json", "r") as f:
+        base_args = argparse.Namespace(**json.load(f))
+    base_args.input_features = args.input_features
+
     # --- Model Definition ---
     match architecture:  # TODO auto format qk_rope_dim for non MLA (currently all of them)
         case "Money_former":
@@ -186,6 +193,7 @@ def proceed(args: argparse.Namespace):
         case "Money_former_MLA_DINT_cog_attn":
             model = Money_former_MLA_DINT_cog_attn(args=args)
         case "Money_former_MLA_DINT_cog_attn_MTP":
+            base_model = Money_former_MLA_DINT_cog_attn_MTP(args=base_args)
             model = Money_former_MLA_DINT_cog_attn_MTP(args=args)
         case _:
             raise ValueError(f"Architecture {architecture} not supported")
@@ -195,6 +203,8 @@ def proceed(args: argparse.Namespace):
         f"The model has {num_params:,} trainable parameters. Parameter dtype: {args.dtype}"
     )
     args.num_params = num_params
+
+    set_base_shapes(model, base_model)
 
     # torch compile
     # model = torch.compile(model)
@@ -242,7 +252,7 @@ def proceed(args: argparse.Namespace):
         limit_val_batches=50,
         logger=logger,
         log_every_n_steps=50,
-        val_check_interval=100, # 100,
+        val_check_interval=100,
         precision=trainer_precision,
         check_val_every_n_epoch=None,
     )
@@ -276,7 +286,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--config",
         type=str,
-        default="./experiment_configs/MTP_trade_loss_exp.json",
+        default="./experiment_configs/MTP_trade_loss_exp_base.json",
         help="Path to config file.",
     )
 

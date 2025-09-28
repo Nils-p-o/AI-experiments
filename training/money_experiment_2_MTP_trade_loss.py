@@ -206,6 +206,20 @@ def calculate_trading_metrics(returns):
         "WLR": win_loss_ratio,
     }
 
+def align_and_mean(tensor):
+    # assumes tensor is of shape {batch/time, targets, ...}
+    time = tensor.shape[0]
+    targets = tensor.shape[1]
+    aligned_dims = [size for size in tensor.shape]
+    aligned_dims[0] = time - (targets - 1)
+    aligned = torch.empty(aligned_dims) # (batch/time-1, targets, ...)
+    for i in range(targets):
+        start_day = targets - i - 1
+        aligned[:,i] = tensor[start_day:time-i,i]
+    
+    return aligned.mean(dim=1)
+
+
 
 class MoneyExperiment(pl.LightningModule):
     def __init__(
@@ -301,10 +315,10 @@ class MoneyExperiment(pl.LightningModule):
         seq_len = self.args.seq_len
 
         # inputs = inputs.permute(0, 2, 3, 1)  # (batch_size, seq_len, num_sequences, features)
-        inputs = inputs.permute(0, 2, 3, 4, 1) # (batch_size, targets, seq_len, num_sequences, features)
+        inputs = inputs.permute(0, 2, 3, 4, 1).contiguous() # (batch_size, targets, seq_len, num_sequences, features)
 
         targets = labels  # (batch_size, features, targets, seq_len, num_sequences)
-        targets = targets.permute(0, 3, 1, 2, 4)  # (batch_size, seq_len, features, targets, num_sequences)
+        targets = targets.permute(0, 3, 1, 2, 4).contiguous()  # (batch_size, seq_len, features, targets, num_sequences)
 
         tickers = torch.arange(self.num_sequences, device=inputs.device)
         tickers = tickers.unsqueeze(0).unsqueeze(0).repeat(
@@ -319,7 +333,7 @@ class MoneyExperiment(pl.LightningModule):
         trades, cash = self(inputs, tickers)
         # confirmations (batch_size, targets, seq_len, 1)
         if self.args.use_global_seperator:
-            trades = trades[:, :, 1:, :]
+            trades = trades[:, :, 1:, :].contiguous()
         match self.args.prediction_type:
             case "gaussian":
                 outputs = outputs.view(
@@ -335,13 +349,12 @@ class MoneyExperiment(pl.LightningModule):
                 ).permute(0, 2, 4, 1, 3)  # (batch_size, seq_len, features (chlov) * classes, targets, num_sequences)
             case "portfolio":
                 trades = trades.view(
-                    batch_size, max(self.pred_indices), (seq_len+1-int(self.args.use_global_seperator)), self.num_sequences, 2
-                ).permute(0, 2, 4, 1, 3) # (batch_size, seq_len, 2, targets, num_sequences)
-                cash = cash.permute(0, 2, 1, 3) # (batch_size, seq_len, targets, 1)
+                    batch_size, max(self.pred_indices), self.num_sequences, (seq_len+1-int(self.args.use_global_seperator)), 2
+                ).contiguous()
+                trades = trades.permute(0, 3, 4, 1, 2).contiguous() # (batch_size, seq_len, 2, targets, num_sequences)
+                cash = cash.permute(0, 2, 1, 3).contiguous() # (batch_size, seq_len, targets, 1)
         if stage == "train":
             cummulative_times["model"] += (time.time_ns() - time_model_start) / 1e6
-        if not (self.args.use_global_seperator or self.args.include_sep_in_loss):
-            outputs = outputs[:, 1:, :, :, :]
 
         # for debugging reasons
         if torch.isnan(trades).any():
@@ -411,10 +424,10 @@ class MoneyExperiment(pl.LightningModule):
 
                 preds = logits
                 
-            case "portfolio": # TODO transaction costs dont really work rn (because of elementwise weight calculation)
-                raw_weights = trades[:,:,0,:,:] # (batch_size, seq_len, targets, num_sequences)
+            case "portfolio":
+                raw_weights = trades[:,:,0,:,:].contiguous() # (batch_size, seq_len, targets, num_sequences)
                 raw_weights = torch.cat([raw_weights, cash], dim=-1) # (batch_size, seq_len, targets, num_sequences+1) cash as the last sequence
-                raw_directions = trades[:,:,1,:,:] # (batch_size, seq_len, targets, num_sequences)
+                raw_directions = trades[:,:,1,:,:].contiguous() # (batch_size, seq_len, targets, num_sequences)
 
                 # (batch_size, seq_len, targets, num_sequences+1)
                 sequence_returns = torch.cat([targets[:,:,0,:,:], torch.zeros_like(targets[:,:,0,:,:1])], dim=-1) # assuming close to close trading
@@ -441,13 +454,24 @@ class MoneyExperiment(pl.LightningModule):
                 period_returns = torch.sum(sequence_returns * final_weights, dim=-1) # (batch_size, seq_len, targets)
                 period_returns = period_returns - transaction_costs
 
-                mean_return = torch.mean(period_returns, dim=1) # (batch_size, targets)
-                std_return = torch.std(period_returns, dim=1) # (batch_size, targets)
+                # mean_return = torch.mean(period_returns, dim=1) # (batch_size, targets)
+                # std_return = torch.std(period_returns, dim=1) # (batch_size, targets)
 
-                hurdle_rate = 0.00
-                sharpe = (mean_return - hurdle_rate) / (std_return + 1e-8) # (batch_size, targets)
+                # hurdle_rate = 0.00
+                # sharpe = (mean_return - hurdle_rate) / (std_return + 1e-8) # (batch_size, targets)
 
-                loss = -sharpe.mean()
+                # HHI penalty
+                risky_weights = final_weights[:,:,:,:-1]
+                current_risky_exposure = torch.sum(torch.abs(risky_weights), dim=-1, keepdim=True) # (batch_size, seq_len, targets, 1)
+                adjusted_risky_weights = risky_weights / (current_risky_exposure + 1e-8)
+                hhi = torch.sum(torch.pow(adjusted_risky_weights, 2), dim=-1) # (batch_size, seq_len, targets)
+
+                # loss = -sharpe.mean()
+                daily_mult = 1 + period_returns
+                log_utilities = torch.log(daily_mult + 1e-8)
+                loss = -log_utilities.mean() + hhi.mean() * self.args.hhi_lambda
+                seen_losses = -log_utilities[:, :-1, :].mean(dim=(0, 1))
+                unseen_losses = -log_utilities[:, -1:, :].mean(dim=(0, 1))
 
 
 
@@ -494,6 +518,16 @@ class MoneyExperiment(pl.LightningModule):
             current_log_opts = log_opts_step if stage == "train" else log_opts_epoch
 
             with torch.no_grad():
+                self.log(
+                    f"Losses_seen_unseen/{stage}_loss_seen",
+                    torch.mean(seen_losses),
+                    **current_log_opts,
+                )
+                self.log(
+                    f"Losses_seen_unseen/{stage}_loss_unseen",
+                    torch.mean(unseen_losses),
+                    **current_log_opts,
+                )
                 if self.args.prediction_type == "portfolio":
                     targets_classes = torch.full_like(targets[:,:,0,:,:], 1)
                     targets_classes[targets[:,:,0,:,:].sign() == -1] = 0
@@ -502,13 +536,6 @@ class MoneyExperiment(pl.LightningModule):
                     preds_classes[stock_directions[:,:,:,:-1].sign() == -1] = 0
 
                     if stage == "val":
-                        self.log(
-                            f"Accuracy_finer/{stage}_max_expected_acc_bin_simple",
-                            calculate_expected_accuracy(
-                                targets_classes, 2
-                            ),
-                            **current_log_opts,
-                        )
                         self.log(
                             f"Accuracy_finer/{stage}_max_expected_acc_bin_finer",
                             calculate_expected_accuracy_finer(
@@ -529,27 +556,27 @@ class MoneyExperiment(pl.LightningModule):
                                 **current_log_opts,
                             )
 
-                            self.log( # mock weights
-                                f"Portfolio_weights_extra/{stage}_seen_m_weight_{self.tickers[i]}",
-                                mock_weights[:, :-1, :, i].abs().mean(),
-                                **current_log_opts,
-                            )
-                            self.log(
-                                f"Portfolio_weights_extra/{stage}_unseen_m_weight_{self.tickers[i]}",
-                                mock_weights[:, -1:, :, i].abs().mean(), 
-                                **current_log_opts,
-                            )
+                            # self.log( # mock weights
+                            #     f"Portfolio_weights_extra/{stage}_seen_m_weight_{self.tickers[i]}",
+                            #     mock_weights[:, :-1, :, i].abs().mean(),
+                            #     **current_log_opts,
+                            # )
+                            # self.log(
+                            #     f"Portfolio_weights_extra/{stage}_unseen_m_weight_{self.tickers[i]}",
+                            #     mock_weights[:, -1:, :, i].abs().mean(), 
+                            #     **current_log_opts,
+                            # )
 
-                            self.log( # "raw" portfolio weights
-                                f"Portfolio_weights_extra/{stage}_seen_p_weight_{self.tickers[i]}",
-                                portfolio_weights[:, :-1, :, i].mean(),
-                                **current_log_opts,
-                            )
-                            self.log(
-                                f"Portfolio_weights_extra/{stage}_unseen_p_weight_{self.tickers[i]}",
-                                portfolio_weights[:, -1:, :, i].mean(), 
-                                **current_log_opts,
-                            )                        
+                            # self.log( # "raw" portfolio weights
+                            #     f"Portfolio_weights_extra/{stage}_seen_p_weight_{self.tickers[i]}",
+                            #     portfolio_weights[:, :-1, :, i].mean(),
+                            #     **current_log_opts,
+                            # )
+                            # self.log(
+                            #     f"Portfolio_weights_extra/{stage}_unseen_p_weight_{self.tickers[i]}",
+                            #     portfolio_weights[:, -1:, :, i].mean(), 
+                            #     **current_log_opts,
+                            # )                        
 
                     for i in range(len(self.tickers)):
                         seen_target_accuracy = (preds_classes == targets_classes)[:, :-1, :, i].sum() / targets_classes[:, :-1, :, i].numel()
@@ -670,6 +697,32 @@ class MoneyExperiment(pl.LightningModule):
                         period_returns[:,-1:,:].mean() / (period_returns[:,-1:,:].std() + 1e-8),
                         **current_log_opts,
                     )
+
+                    # adjusts the stock weights to sum to 1
+                    risky_allocation = final_weights[:,:,:,:-1].abs().sum(dim=-1, keepdim=True)
+                    recalibrated_risky_allocations = (final_weights[:,:,:,:-1] / (risky_allocation + 1e-8))
+
+                    self.log(
+                        f"Portfolio/{stage}_seen_sum_of_sq_weights",
+                        recalibrated_risky_allocations[:,:-1,:,:].pow(2).sum(dim=-1).mean(),
+                        **current_log_opts,
+                    )
+                    self.log(
+                        f"Portfolio/{stage}_unseen_sum_of_sq_weights",
+                        recalibrated_risky_allocations[:,-1:,:,:].pow(2).sum(dim=-1).mean(),
+                        **current_log_opts,
+                    )
+
+
+                    # for benchmarking
+                    if stage == "val":
+                        buy_and_hold = torch.full_like(sequence_returns[:,-1,:,:-1], 1./(sequence_returns.shape[-1]-1))
+                        buy_and_hold = torch.sum(sequence_returns[:,-1,:,:-1] * buy_and_hold, dim=-1)
+                        self.log(
+                            f"Benchmarks/val_BH_loss",
+                            -torch.log(buy_and_hold + 1 + 1e-8).mean(),
+                            **current_log_opts,
+                        )
 
                     
 
@@ -952,7 +1005,13 @@ class MoneyExperiment(pl.LightningModule):
 
             if self.args.prediction_type == 'portfolio':
                 self.validation_step_outputs.append({
-                    'period_returns': period_returns[:,-1,:].detach().cpu()
+                    'period_returns': period_returns[:,-1,:].detach().cpu(),
+                    'sequence_returns': sequence_returns[:,-1,:,:].detach().cpu(),
+                    'raw_weights': raw_weights[:,-1,:,:].detach().cpu(),
+                    'raw_directions': raw_directions[:,-1,:,:].detach().cpu(),
+                    'portfolio_weights': portfolio_weights[:,-1,:,:].detach().cpu(),
+                    'stock_directions': stock_directions[:,-1,:,:].detach().cpu(),
+                    'mock_weights': mock_weights[:,-1,:,:].detach().cpu(),
                 })
             else:
                 self.validation_step_outputs.append({
@@ -983,7 +1042,8 @@ class MoneyExperiment(pl.LightningModule):
             # Define the full parameter names of layers that should NOT use Muon.
             non_muon_linear_weights = {
                 'model.shared_value_input.weight',
-                'model.out.weight'
+                'model.out.weight',
+                'model.confirmation.weight'
             }
             if self.args.unique_inputs_ratio[0] > 0:
                 for i in range(len(self.model.unique_value_input)):
@@ -1081,52 +1141,79 @@ class MoneyExperiment(pl.LightningModule):
         outputs = self.validation_step_outputs # TODO add averaging of target predictions
         all_returns = torch.cat([x['period_returns'] for x in outputs], dim=0) # (batch/time, targets)
 
+        sequence_returns = torch.cat([x['sequence_returns'] for x in outputs], dim=0) # (batch/time, targets, num_sequences+1)
+        sequence_returns = sequence_returns[1:,0] # (batch/time, num_sequences)
 
+        # combining post-mock_weights calculation
+        # mock_weights = torch.cat([x['mock_weights'] for x in outputs], dim=0) # (batch/time, targets, num_sequences+1)
+        # mock_weights = align_and_mean(mock_weights) # (batch/time, num_sequences+1)
 
+        # target_gross_exposure = 1.0
+        # current_gross_exposure = torch.sum(torch.abs(mock_weights), dim=-1, keepdim=True) # (batch/time, 1)
+        # final_weights = target_gross_exposure * (mock_weights / (current_gross_exposure + 1e-8)) # (batch/time, num_sequences+1)
 
-        # outputs = self.validation_step_outputs
+        # prev_weights = torch.roll(final_weights, shifts=1, dims=0) # (batch/time, num_sequences+1)
+        # prev_weights[0,:] = 0.0
+        # prev_weights[0,-1:] = 1.0 # set beginning as all cash
 
-        # all_preds = torch.cat([x['preds'] for x in outputs], dim=0) # (batch/time, seq_len, features, targets, num_sequences) or
-        # # (batch_size, num_classes, seq_len, features, targets, num_sequences)
-        # # depending on prediction type
-        # if self.cli_args.average_predictions:
-        #     if self.args.prediction_type == 'regression':
-        #         preds = all_preds[:, -1, 0, :, :]
-        #         norm_means_for_close = self.args.normalization_means[0, :]
-        #         norm_stds_for_close = self.args.normalization_stds[0, :]
+        # transaction_cost_rate = 0.0005
+        # turnover = torch.sum(torch.abs(final_weights - prev_weights), dim=-1) # (batch.time)
+        # transaction_costs = transaction_cost_rate * turnover # (batch/time)
 
-        #         aligned_predictions = torch.empty((preds.shape[0]-(preds.shape[1]-1), preds.shape[1], preds.shape[2]))
-        #         for i in range(preds.shape[1]):
-        #             start_day = preds.shape[1] - i - 1
-        #             aligned_predictions[:, i, :] = preds[start_day:preds.shape[0]-i, i, :]
-        #         aligned_predictions = aligned_predictions.mean(dim=1)
-        #         backtest_predictions = (aligned_predictions * norm_stds_for_close) + norm_means_for_close
-        #     elif self.args.prediction_type == 'classification':
-        #         preds = all_preds[:, :, -1, 0, :, :] # time, classes, targets, num_sequences
-        #         preds = preds.permute(0, 2, 3, 1) # time, targets, num_sequences, classes
-        #         aligned_predictions = torch.empty((preds.shape[0]-(preds.shape[1]-1), preds.shape[1], preds.shape[2], preds.shape[3]))
-        #         for i in range(preds.shape[1]):
-        #             start_day = preds.shape[1] - i - 1
-        #             aligned_predictions[:, i, :, :] = preds[start_day:preds.shape[0]-i, i, :, :]
-        #         aligned_predictions = aligned_predictions.mean(dim=1)
-        #         backtest_predictions = torch.softmax(aligned_predictions, dim=-1)
-        # else:
-        #     if self.args.prediction_type == 'regression':
-        #         preds = all_preds[:, -1, 0, self.cli_args.pred_day-1, :]
-        #         norm_means_for_close = self.args.normalization_means[0, :]
-        #         norm_stds_for_close = self.args.normalization_stds[0, :]
+        # period_returns = torch.sum(sequence_returns * final_weights, dim=-1) # (batch/time)
+        # mean_post_mock_returns = period_returns - transaction_costs
 
-        #         backtest_predictions = (aligned_predictions * norm_stds_for_close) + norm_means_for_close
-        #     elif self.args.prediction_type == 'classification':
-        #         preds = all_preds[:, :, -1, 0, self.cli_args.pred_day-1, :] # time, classes, num_sequences
-        #         preds = preds.permute(0, 2, 1) # time, num_sequences, classes
-        #         backtest_predictions = torch.softmax(preds, dim=-1)
+        # combining pre-mock_weights calculation
+        # portfolio_weights = torch.cat([x['portfolio_weights'] for x in outputs], dim=0) # (batch/time, targets, num_sequences+1)
+        # stock_directions = torch.cat([x['stock_directions'] for x in outputs], dim=0) # (batch/time, targets, num_sequences+1)
 
-        # all_targets = torch.cat([x['targets'] for x in outputs], dim=0) # (batch/time, seq_len, features, targets, num_sequences)
-        # targets = all_targets[:, -1, 0, self.cli_args.pred_day-1, :] # time, num_sequences 
-        # if self.cli_args.average_predictions:
-        #     if max(self.pred_indices) != 1:
-        #         targets = targets[:-(preds.shape[1]-1)]
+        # portfolio_weights = align_and_mean(portfolio_weights) # (batch/time, num_sequences+1)
+        # stock_directions = align_and_mean(stock_directions) # (batch/time, num_sequences+1)
+
+        # mock_weights = portfolio_weights * stock_directions # (batch/time, num_sequences+1)
+
+        # target_gross_exposure = 1.0
+        # current_gross_exposure = torch.sum(torch.abs(mock_weights), dim=-1, keepdim=True) # (batch/time, 1)
+        # final_weights = target_gross_exposure * (mock_weights / (current_gross_exposure + 1e-8)) # (batch/time, num_sequences+1)
+
+        # prev_weights = torch.roll(final_weights, shifts=1, dims=0) # (batch/time, num_sequences+1)
+        # prev_weights[0,:] = 0.0
+        # prev_weights[0,-1:] = 1.0 # set beginning as all cash
+
+        # transaction_cost_rate = 0.0005
+        # turnover = torch.sum(torch.abs(final_weights - prev_weights), dim=-1) # (batch.time)
+        # transaction_costs = transaction_cost_rate * turnover # (batch/time)
+
+        # period_returns = torch.sum(sequence_returns * final_weights, dim=-1) # (batch/time)
+        # mean_pre_mock_returns = period_returns - transaction_costs
+
+        # combining from raw logits
+        raw_weights = torch.cat([x['raw_weights'] for x in outputs], dim=0) # (batch/time, targets, num_sequences+1)
+        raw_directions = torch.cat([x['raw_directions'] for x in outputs], dim=0) # (batch/time, targets, num_sequences)
+
+        raw_weights = align_and_mean(raw_weights) # (batch/time, num_sequences+1)
+        raw_directions = align_and_mean(raw_directions) # (batch/time, num_sequences)
+
+        portfolio_weights = torch.softmax(raw_weights, dim=-1) # (batch/time, num_sequences+1)
+        stock_directions = torch.tanh(raw_directions) # (batch/time, num_sequences)
+        stock_directions = torch.cat([stock_directions, torch.ones_like(stock_directions[:, :1])], dim=-1) # (batch/time, num_sequences+1)
+
+        mock_weights = portfolio_weights * stock_directions # (batch/time, num_sequences+1)
+
+        target_gross_exposure = 1.0
+        current_gross_exposure = torch.sum(torch.abs(mock_weights), dim=-1, keepdim=True) # (batch/time, 1)
+        final_weights = target_gross_exposure * (mock_weights / (current_gross_exposure + 1e-8)) # (batch/time, num_sequences+1)
+
+        prev_weights = torch.roll(final_weights, shifts=1, dims=0) # (batch/time, num_sequences+1)
+        prev_weights[0,:] = 0.0
+        prev_weights[0,-1:] = 1.0 # set beginning as all cash
+
+        transaction_cost_rate = 0.0005
+        turnover = torch.sum(torch.abs(final_weights - prev_weights), dim=-1) # (batch.time)
+        transaction_costs = transaction_cost_rate * turnover # (batch/time)
+
+        period_returns = torch.sum(sequence_returns * final_weights, dim=-1) # (batch/time)
+        mean_logit_returns = period_returns - transaction_costs
 
 
         # gets average time for each stage
@@ -1147,48 +1234,50 @@ class MoneyExperiment(pl.LightningModule):
                         metric_value,
                         **log_opts_epoch,
                     )
+                self.log(
+                    f"Strategy_metrics_{indice}/val_log_utility",
+                    -torch.log(all_returns[:,indice-1] + 1 + 1e-8).mean(),
+                    **log_opts_epoch,
+                )
 
-            # backtest_metrics = calculate_trading_metrics(all_returns[:,0])
+            # backtest_metrics = calculate_trading_metrics(mean_post_mock_returns)
             # for metric_name, metric_value in backtest_metrics.items():
             #     self.log(
-            #         f"Strategy_metrics_1/val_{metric_name}",
+            #         f"Strategy_metrics_post_mock/val_{metric_name}",
             #         metric_value,
             #         **log_opts_epoch,
             #     )
-            # backtest_metrics = calculate_trading_metrics(all_returns[:,1])
+            # self.log(
+            #     f"Strategy_metrics_post_mock/val_log_utility",
+            #     -torch.log(mean_post_mock_returns + 1 + 1e-8).mean(),
+            #     **log_opts_epoch,
+            # )
+
+            # backtest_metrics = calculate_trading_metrics(mean_pre_mock_returns)
             # for metric_name, metric_value in backtest_metrics.items():
             #     self.log(
-            #         f"Strategy_metrics_2/val_{metric_name}",
+            #         f"Strategy_metrics_pre_mock/val_{metric_name}",
             #         metric_value,
             #         **log_opts_epoch,
             #     )
+            # self.log(
+            #     f"Strategy_metrics_pre_mock/val_log_utility",
+            #     -torch.log(mean_pre_mock_returns + 1 + 1e-8).mean(),
+            #     **log_opts_epoch,
+            # )
 
-
-            # # reliable backtest metrics
-            # # backtest_predictions = get_mtp_predictions_for_backtest(self.model, self.backtest_input_data, self.args, self.cli_args.days_to_check, device, self.cli_args)
-            # backtest_metrics = calculate_metrics(targets, backtest_predictions, self.args)
-            # for metric_name, metric_value in backtest_metrics.items():
-            #     self.log(
-            #         f"Backtest_metrics/val_{metric_name}",
-            #         metric_value,
-            #         **log_opts_epoch,
-            #     )
-
-            # correct_backtest_metrics = new_trading_metrics(targets, backtest_predictions, self.args)
-            # for metric_name, metric_value in correct_backtest_metrics.items():
-            #     self.log(
-            #         f"Strategy_metrics/val_{metric_name}",
-            #         metric_value,
-            #         **log_opts_epoch,
-            #     )
-            # correct_individual_backtest_metrics = new_trading_metrics_individual(targets, backtest_predictions, self.args)
-            # for metric_name, metric_value in correct_individual_backtest_metrics.items():
-            #     for i in range(targets.shape[-1]):
-            #         self.log(
-            #             f"Strategy_metrics_individual/val_{metric_name}_{self.tickers[i]}",
-            #             metric_value[i].float(),
-            #             **log_opts_epoch,
-            #         )
+            backtest_metrics = calculate_trading_metrics(mean_logit_returns)
+            for metric_name, metric_value in backtest_metrics.items():
+                self.log(
+                    f"Strategy_metrics_logit/val_{metric_name}",
+                    metric_value,
+                    **log_opts_epoch,
+                )
+            self.log(
+                f"Strategy_metrics_logit/val_log_utility",
+                -torch.log(mean_logit_returns + 1 + 1e-8).mean(),
+                **log_opts_epoch,
+            )
 
             cummulative_times["metrics"] += (
                 time.time_ns() - time_metrics_start
