@@ -25,23 +25,30 @@ warnings.simplefilter(action="ignore", category=FutureWarning)
 # basically about seperating aux data from regular data
 # maybe even about seperating aux data by whether they have volume or not
 
+##### written for use in enc dec model
+
+
+
 class FinancialNumericalDataset(Dataset):
     def __init__(
         self,
         file_path: str,
         targets_file_path: str,
+        aux_file_path: str,
+        aux_targets_file_path: str,
         seq_len: Optional[int] = None,
         preload: bool = True,
         num_targets: int = 3,
     ):
         self.seq_len = seq_len
         self.preload = preload
-        self.file_path = file_path
         self.num_targets = num_targets
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         if preload:
             self.sequences_data = torch.load(file_path).to(self.device)
             self.targets_data = torch.load(targets_file_path).to(self.device)
+            self.aux_sequences_data = torch.load(aux_file_path).to(self.device)
+            self.aux_targets_data = torch.load(aux_targets_file_path).to(self.device)
         else:
             self.sequences_data = None
 
@@ -53,10 +60,10 @@ class FinancialNumericalDataset(Dataset):
 
     def __getitem__(self, idx):
         if self.preload:
-            input_sequence = self.sequences_data[:, :, idx, :, :]
-            target_sequence = self.targets_data[:, :, idx, :, :]
+            input_sequence = (self.sequences_data[:, :, idx, :, :], self.aux_sequences_data[:, :, idx, :, :])
+            target_sequence = (self.targets_data[:, :, idx, :, :], self.aux_targets_data[:, :, idx, :, :])
             return input_sequence, target_sequence
-        else:  # TODO?
+        else:
             raise NotImplementedError
 
 
@@ -70,6 +77,12 @@ class FinancialNumericalDataModule(pl.LightningDataModule):
         test_file: str,
         test_targets_file: str,
         metadata_file: str,
+        aux_train_file: str,
+        aux_train_targets_file: str,
+        aux_val_file: str,
+        aux_val_targets_file: str,
+        aux_test_file: str,
+        aux_test_targets_file: str,
         batch_size: int,
         num_workers: int = 0,
         seq_len: Optional[int] = None,
@@ -87,6 +100,14 @@ class FinancialNumericalDataModule(pl.LightningDataModule):
         self.persistent_workers = num_workers > 0
         self.seq_len = seq_len
 
+        self.aux_train_file = aux_train_file
+        self.aux_train_targets_file = aux_train_targets_file
+        self.aux_val_file = aux_val_file
+        self.aux_val_targets_file = aux_val_targets_file
+        self.aux_test_file = aux_test_file
+        self.aux_test_targets_file = aux_test_targets_file
+
+
         self.train_dataset: Optional[FinancialNumericalDataset] = None
         self.val_dataset: Optional[FinancialNumericalDataset] = None
         self.test_dataset: Optional[FinancialNumericalDataset] = None
@@ -103,12 +124,16 @@ class FinancialNumericalDataModule(pl.LightningDataModule):
             self.train_dataset = FinancialNumericalDataset(
                 self.train_file,
                 self.train_targets_file,
+                self.aux_train_file,
+                self.aux_train_targets_file,
                 self.seq_len,
                 num_targets=len(self._metadata["target_dates"]),
             )
             self.val_dataset = FinancialNumericalDataset(
                 self.val_file,
                 self.val_targets_file,
+                self.aux_val_file,
+                self.aux_val_targets_file,
                 self.seq_len,
                 num_targets=len(self._metadata["target_dates"]),
             )
@@ -116,6 +141,8 @@ class FinancialNumericalDataModule(pl.LightningDataModule):
             self.test_dataset = FinancialNumericalDataset(
                 self.test_file,
                 self.test_targets_file,
+                self.aux_test_file,
+                self.aux_test_targets_file,
                 self.seq_len,
                 num_targets=len(self._metadata["target_dates"]),
             )
@@ -349,7 +376,7 @@ def download_numerical_financial_data(
     columns.extend(local_columns)
     columns.extend(time_columns)
 
-
+    # TODO add local feats + local feats handling logic
     # aux data
     raw_aux_data = download_with_retry(
         aux_tickers,
@@ -359,10 +386,10 @@ def download_numerical_financial_data(
         auto_adjust=False,
         back_adjust=False,
     )
-    aligned_raw_data = pd.DataFrame(columns=raw_aux_data.columns)
+    aligned_raw_aux_data = pd.DataFrame(columns=raw_aux_data.columns)
     for i in range(len(aux_tickers)):
         for j in range(len(raw_aux_data.columns.levels[0])):
-            aligned_raw_data[raw_aux_data.columns.levels[0][j], aux_tickers[i]] = (
+            aligned_raw_aux_data[raw_aux_data.columns.levels[0][j], aux_tickers[i]] = (
                 align_financial_dataframes(
                     {aux_tickers[i]: raw_aux_data[raw_aux_data.columns.levels[0][j]]},
                     target_column=aux_tickers[i],
@@ -371,7 +398,7 @@ def download_numerical_financial_data(
                     max_date=end_date,
                 )
             )
-    raw_aux_data = aligned_raw_data
+    raw_aux_data = aligned_raw_aux_data
     if raw_aux_data.empty:
         print("No data downloaded.")
         return
@@ -380,7 +407,7 @@ def download_numerical_financial_data(
         -1, len(raw_aux_data.columns.levels[0]), len(aux_tickers)
     )  # (Time, Features, tickers)
     raw_aux_data = raw_aux_data.transpose(0, 1)  # (Features, Time series, tickers)
-    raw_aux_data = raw_aux_data[1:-1, :, :]
+    raw_aux_data = raw_aux_data[1:-1, :, :] # TODO figure out how to handle what has volume and what does not
     raw_aux_data = data_fix_ffill(raw_aux_data)
     aux_columns = ["aux_"+col for col in columns[:4]]
 
@@ -420,18 +447,8 @@ def download_numerical_financial_data(
 
     aux_data = data_fix_ffill(aux_data)
 
-    full_aux_data = torch.cat((aux_data, full_data[-len(time_columns):, :, 0:1].repeat(1,1,aux_data.shape[2])),dim=1)
-
-    # padded_aux_data = torch.zeros(
-    #     full_data.shape[0],
-    #     full_data.shape[1],
-    #     aux_data.shape[2],
-    #     dtype=torch.float32,
-    # )
-    # padded_aux_data[:aux_data.shape[0]] = aux_data
-    # padded_aux_data[-len(time_columns):] = full_data[-len(time_columns):, :, 0:1].repeat(1,1,aux_data.shape[2])
-
-    # full_data = torch.cat((full_data, padded_aux_data), dim=-1)
+    full_aux_data = torch.cat((aux_data, full_data[-len(time_columns):, :, 0:1].repeat(1,1,aux_data.shape[2])),dim=0)
+    aux_columns.extend(time_columns)
     # end of aux data
 
     data = torch.empty(
@@ -463,23 +480,20 @@ def download_numerical_financial_data(
             (5, max(target_dates), data.shape[2] + 20, data.shape[3]), dtype=torch.float32
         )  # (chlov, target_dates, time series, tickers)
     MTP_full = (raw_data[:, 1:, :] - raw_data[:, :-1, :]) / raw_data[:, :-1, :]
-    # MTP_full = torch.cat((MTP_full, (raw_aux_data[:, 1:, :] - raw_aux_data[:, :-1, :]) / raw_aux_data[:, :-1, :]), dim=-1)
     if config_args.include_sep_in_loss:
         MTP_full = torch.cat((torch.zeros_like(MTP_full[:, :1, :]), MTP_full), dim=1)
     MTP_full = data_fix_ffill(MTP_full)
 
-
     aux_MTP_targets = torch.empty(
-        (5, max(target_dates), aux_data.shape[2] + 20, aux_data.shape[3]), dtype=torch.float32
+        (4, max(target_dates), aux_data.shape[2] + 20, aux_data.shape[3]), dtype=torch.float32
     )  # (chlov, target_dates, time series, tickers)
     aux_MTP_full = (raw_aux_data[:, 1:, :] - raw_aux_data[:, :-1, :]) / raw_aux_data[:, :-1, :]
     aux_MTP_full = data_fix_ffill(aux_MTP_full)
 
-    # if prediction_type == "classification":
-    #     MTP_targets_classes = torch.full_like(MTP_full, 1)
-    #     MTP_targets_classes[MTP_full < -classification_threshold] = 0
-    #     MTP_targets_classes[MTP_full > classification_threshold] = 2
-    #     MTP_full = MTP_targets_classes.long()
+    MTP_targets_classes = torch.full_like(MTP_full, 1)
+    MTP_targets_classes[MTP_full < -config_args.classification_threshold] = 0
+    MTP_targets_classes[MTP_full > config_args.classification_threshold] = 2
+    MTP_targets_classes = MTP_targets_classes.long()
 
     for i in range(max(target_dates)):
         if i == max(target_dates) - 1:
@@ -520,12 +534,10 @@ def download_numerical_financial_data(
     # global z-normalization
 
     num_of_non_global_norm_feats = len(local_columns) + len(time_columns)
-    # data[:,:,:,:len(tickers)], fitted_processors = auto_correct_feature_skew_pre_znorm(data[:,:,:,:len(tickers)], column_to_id, train_data_length+seq_len-1, num_of_non_global_norm_feats, len(time_columns), seq_len)
-    data, fitted_processors = auto_correct_feature_skew_pre_znorm(data, column_to_id, train_data_length+seq_len-1, num_of_non_global_norm_feats, len(time_columns), seq_len)
+    # data, fitted_processors = auto_correct_feature_skew_pre_znorm(data, column_to_id, train_data_length+seq_len-1, num_of_non_global_norm_feats, len(time_columns), seq_len)
 
     # aux data manipulation
-    # data[:len(aux_columns),:,:,len(tickers):], fitted_processors = auto_correct_feature_skew_pre_znorm(data[:len(aux_columns),:,:,len(tickers):], column_to_id, train_data_length+seq_len-1, num_of_non_global_norm_feats, 0, seq_len)
-    aux_data, aux_fitted_processors = auto_correct_feature_skew_pre_znorm(aux_data, column_to_id, train_data_length+seq_len-1, num_of_non_global_norm_feats, len(time_columns), seq_len)
+    # aux_data, aux_fitted_processors = auto_correct_feature_skew_pre_znorm(aux_data, column_to_id, train_data_length+seq_len-1, num_of_non_global_norm_feats, len(time_columns), seq_len)
 
     means = data[:-num_of_non_global_norm_feats, :, :train_data_length, :].mean(
         dim=2, keepdim=True
@@ -536,9 +548,9 @@ def download_numerical_financial_data(
     data[:-num_of_non_global_norm_feats] = (
         data[:-num_of_non_global_norm_feats] - means
     ) / (stds + 1e-8)
+    # data[:-num_of_non_global_norm_feats] = tensor_fill(data[:-num_of_non_global_norm_feats], dim=2)
 
     # aux data
-    data[:-num_of_non_global_norm_feats] = tensor_fill(data[:-num_of_non_global_norm_feats], dim=2)
     aux_means = aux_data[:-len(time_columns), :, :train_data_length, :].mean(
         dim=2, keepdim=True
     )
@@ -592,13 +604,12 @@ def download_numerical_financial_data(
         data[-num_of_non_global_norm_feats : -len(time_columns)] = (
             data[-num_of_non_global_norm_feats : -len(time_columns)] - local_means
         ) / (local_stds + 1e-8)
-
         # aux data
-        data[-num_of_non_global_norm_feats : -len(time_columns)] = tensor_fill(data[-num_of_non_global_norm_feats : -len(time_columns)], dim=3)
+        # data[-num_of_non_global_norm_feats : -len(time_columns)] = tensor_fill(data[-num_of_non_global_norm_feats : -len(time_columns)], dim=3)
 
 
-    data[:-len(time_columns)] = auto_correct_feature_kurtosis_post_znorm(data[:-len(time_columns)], column_to_id, train_data_length)
-    aux_data[:-len(time_columns)] = auto_correct_feature_kurtosis_post_znorm(aux_data[:-len(time_columns)], column_to_id, train_data_length)
+    # data[:-len(time_columns)] = auto_correct_feature_kurtosis_post_znorm(data[:-len(time_columns)], column_to_id, train_data_length)
+    # aux_data[:-len(time_columns)] = auto_correct_feature_kurtosis_post_znorm(aux_data[:-len(time_columns)], column_to_id, train_data_length)
     
     train_data, val_data, test_data = torch.split(
         data,
@@ -672,6 +683,15 @@ def download_numerical_financial_data(
     collected_data_start_date = str(train_indexes[0])[:10]
     collected_data_end_date = str(val_indexes[-1])[:10]
 
+    # (chlov, time, ticker)
+    # (chlov, ticker, 3)
+    class_counts = torch.empty((MTP_targets_classes.shape[0], MTP_targets_classes.shape[2], 3))
+    for i in range(3):
+        class_counts[:, :, i] = (MTP_targets_classes[:,:train_data_length] == i).sum(dim=1)
+    
+    class_weights = torch.empty_like(class_counts)
+    class_weights = class_counts.sum(dim=-1, keepdim=True) / (3*class_counts)
+
     metadata = {
         "tickers": unique_tickers,
         "aux_tickers": unique_aux_tickers,
@@ -683,16 +703,18 @@ def download_numerical_financial_data(
         "test_split_ratio": test_split_ratio,
         "columns": columns,
         "aux_columns": aux_columns,
-        "time_columns": time_columns,
         "column_to_id": column_to_id,
         "indexes": data_length,
         "target_dates": target_dates,
+        "class_weights": class_weights.tolist(),
+        "train_means": means[:, 0, 0, :].tolist(),
+        "train_stds": stds[:, 0, 0, :].tolist(),
     }
 
     with open(os.path.join(output_dir, "metadata.json"), "w") as f:
         json.dump(metadata, f, indent=4)
 
-    return means[:, 0, 0, :].tolist(), stds[:, 0, 0, :].tolist()
+    return
 
 
 def calculate_features(
@@ -762,7 +784,84 @@ def calculate_features(
     full_data = torch.cat((full_data, clv_data), dim=0)
     columns.extend(["clv"])
 
+    prices = raw_data
+    local_price_columns = ["local_" + s for s in price_columns]
+    local_returns_columns = ["local_" + s for s in returns_columns]
     local_columns = []
+    full_data = torch.cat((full_data, prices), dim=0)
+    local_columns.extend(local_price_columns)
+
+    full_ema = []
+    full_ema_columns = []
+    for i in range(len(local_price_columns)):
+        temp_ema = []
+        for j in range(len(tickers)):
+            ema_data, ema_columns = feature_ema(prices[i, :, j], prefix=local_price_columns[i] + "_")
+            temp_ema.append(ema_data.unsqueeze(-1))
+        full_ema.append(torch.cat(temp_ema, dim=-1))
+        full_ema_columns.extend(ema_columns)
+    full_data = torch.cat((full_data, torch.cat(full_ema, dim=0)), dim=0)
+    local_columns.extend(full_ema_columns)
+
+    full_price_vol = []
+    full_price_vol_columns = []
+    for i in range(len(local_price_columns)):
+        price_vol, vol_columns = feature_volatility_ret(prices[i:i+1], prefix=local_price_columns[i] + "_")
+        full_price_vol.append(price_vol)
+        full_price_vol_columns.extend(vol_columns)
+    full_data = torch.cat((full_data, torch.cat(full_price_vol, dim=0)), dim=0)
+    local_columns.extend(full_price_vol_columns)
+
+    full_data = torch.cat((full_data, torch.cat(full_vpt, dim=0)), dim=0)
+    local_columns.extend(["local_vpt_close", "local_vpt_high", "local_vpt_low", "local_vpt_open"])
+    
+    full_data = torch.cat((full_data, clv_data), dim=0)
+    local_columns.extend(["local_clv"])
+
+    full_ppo = []
+    full_ppo_columns = []
+    for i in range(len(local_price_columns)):
+        temp_ppo = []
+        for j in range(len(tickers)):
+            ppo_data, ppo_columns = feature_ppo(prices[i, :, j], prefix=local_price_columns[i] + "_")
+            temp_ppo.append(ppo_data.unsqueeze(-1))
+        full_ppo.append(torch.cat(temp_ppo, dim=-1))
+        full_ppo_columns.extend(ppo_columns)
+    full_data = torch.cat((full_data, torch.cat(full_ppo, dim=0)), dim=0)
+    local_columns.extend(full_ppo_columns)
+
+    returns = full_data[:5, :, :]
+    full_data = torch.cat((full_data, returns), dim=0)
+    local_columns.extend(local_returns_columns)
+
+    full_ema = []
+    full_ema_columns = []
+    for i in range(len(local_returns_columns)):
+        temp_ema = []
+        for j in range(len(tickers)):
+            ema_data, ema_columns = feature_ema(returns[i, :, j], prefix=local_returns_columns[i] + "_")
+            temp_ema.append(ema_data.unsqueeze(-1))
+        full_ema.append(torch.cat(temp_ema, dim=-1))
+        full_ema_columns.extend(ema_columns)
+    full_data = torch.cat((full_data, torch.cat(full_ema, dim=0)), dim=0)
+    local_columns.extend(full_ema_columns)
+
+    full_ret_vol = []
+    full_ret_vol_columns = []
+    for i in range(len(local_returns_columns)):
+        ret_vol, vol_columns = feature_volatility_ret(returns[i:i+1], prefix=local_returns_columns[i] + "_")
+        full_ret_vol.append(ret_vol)
+        full_ret_vol_columns.extend(vol_columns)
+    full_data = torch.cat((full_data, torch.cat(full_ret_vol, dim=0)), dim=0)
+    local_columns.extend(full_ret_vol_columns)
+
+    bb_data, bb_columns = feature_bollinger_bands_price_histogram(prices[0:1], prefix=local_price_columns[0] + "_")
+    full_data = torch.cat((full_data, bb_data), dim=0)
+    local_columns.extend(bb_columns)
+
+    bb_data, bb_columns = feature_bollinger_bands_price_histogram(returns[0:1], prefix=local_returns_columns[0] + "_")
+    full_data = torch.cat((full_data, bb_data), dim=0)
+    local_columns.extend(bb_columns)
 
     time_data, time_columns = feature_time_data(indexes, tickers)
     full_data = torch.cat((full_data, time_data), dim=0)
@@ -1336,21 +1435,6 @@ def feature_time_data(
     return time_data, time_columns
 
 
-def calculate_volatility_log_ret(
-    data: torch.Tensor, lookback: int = 30
-) -> torch.Tensor:
-    log_returns = torch.log(data[1:] / data[:-1])  # from adj. Close for now
-    volatility = [0, 0]
-    for i in range(2, data.shape[0]):
-        if i < lookback:
-            volatility.append(log_returns[:i].std())
-        else:
-            volatility.append(log_returns[i - lookback : i].std())
-    volatility[0] = volatility[2]  # maybe wrong, but its just two datapoints
-    volatility[1] = volatility[2]
-    return torch.tensor(volatility)
-
-
 def calculate_true_range(
     close: torch.Tensor, high: torch.Tensor, low: torch.Tensor
 ) -> torch.Tensor:
@@ -1370,17 +1454,6 @@ def calculate_sma(series: torch.Tensor, lookback: int = 10) -> torch.Tensor:
     )
     sma[:, lookback:] = (cumsum[:, lookback:] - cumsum[:, :-lookback]) / lookback
     return sma
-
-
-def calculate_moving_average_returns(
-    price: torch.Tensor, lookback: int = 10
-) -> torch.Tensor:
-    SMAR = (price[lookback:] - price[:-lookback]) / lookback
-    temp = torch.zeros(lookback)
-    for i in range(1, lookback):
-        temp[i] = (price[i] - price[0]) / i
-    temp[0] = temp[1]
-    return torch.cat((temp, SMAR))
 
 
 def calculate_volatility_returns(
@@ -1418,23 +1491,6 @@ def calculate_accumulation_distribution_index_standard(
     volume: torch.Tensor, clv: torch.Tensor
 ):
     return torch.cumsum(clv * volume, dim=1)
-
-
-def calculate_volume_price_trend(
-    price: torch.Tensor, volume: torch.Tensor, lookback: int = 10
-):
-    returns = torch.zeros(price.shape[0])
-    returns[1:] = (price[1:] - price[:-1]) / (price[:-1] + 1e-6)
-    returns[0] = returns[1]
-
-    vtr = volume * returns
-    rolling_sum_vtr = torch.cumsum(vtr, dim=0)
-
-    vpt = torch.empty_like(price)
-    vpt[:lookback] = rolling_sum_vtr[:lookback]
-    vpt[lookback:] = rolling_sum_vtr[lookback:] - rolling_sum_vtr[:-lookback]
-    return vpt
-
 
 def calculate_volume_price_trend_standard(returns: torch.Tensor, volume: torch.Tensor):
     vtr = volume * returns
