@@ -409,10 +409,6 @@ class SwiGLU_feed_forward(nn.Module): # NOTE currently using xielu non-linearity
     def __init__(self, args):
         super().__init__()
         self.linear_in_gate = nn.Linear(args.d_model, args.d_ff * 2, bias=args.bias)
-        # self.linear_in_gate_down = nn.Linear(args.d_model, 16 * 2, bias=args.bias)
-        # self.linear_in_up = nn.Linear(16, args.d_ff, bias=args.bias)
-        # self.linear_gate_up = nn.Linear(16, args.d_ff, bias=args.bias)
-        # self.linear_in = nn.Linear(args.d_model, args.d_ff, bias=args.bias)
         self.linear_out = nn.Linear(args.d_ff, args.d_model, bias=args.bias)
         self.dropout = nn.Dropout(args.dropout)
         self.d_model = args.d_model
@@ -421,12 +417,8 @@ class SwiGLU_feed_forward(nn.Module): # NOTE currently using xielu non-linearity
 
     def forward(self, x):
         u, v = self.linear_in_gate(x).chunk(2, dim=-1)
-        # u, v = self.linear_in_gate_down(x).chunk(2, dim=-1)
-        # u = self.linear_in_up(u)
-        # v = self.linear_gate_up(v)
         x = u * F.silu(v)  # * self.d_model ** 0.5) # Apply SwiGLU with scaling
-        # x = self.linear_in(x)
-        # x = self.xielu(x)
+        # x = u * self.xielu(v)
         x = self.linear_out(x)
         x = self.dropout(x)  # Apply dropout *after* the output projection
         return x

@@ -464,7 +464,9 @@ class MoneyExperiment(pl.LightningModule):
                 risky_weights = final_weights[:,:,:,:-1]
                 current_risky_exposure = torch.sum(torch.abs(risky_weights), dim=-1, keepdim=True) # (batch_size, seq_len, targets, 1)
                 adjusted_risky_weights = risky_weights / (current_risky_exposure + 1e-8)
-                hhi = torch.sum(torch.pow(adjusted_risky_weights, 2), dim=-1) # (batch_size, seq_len, targets)
+                # hhi = torch.sum(torch.pow(adjusted_risky_weights, 2), dim=-1) # (batch_size, seq_len, targets)
+                seq_avg_risky_weights = torch.mean(adjusted_risky_weights, dim=1) # (batch_size, targets, num_sequences)
+                hhi = torch.sum(torch.pow(seq_avg_risky_weights, 2), dim=-1) # (batch_size, targets)
 
                 # loss = -sharpe.mean()
                 daily_mult = 1 + period_returns
@@ -698,20 +700,28 @@ class MoneyExperiment(pl.LightningModule):
                         **current_log_opts,
                     )
 
-                    # adjusts the stock weights to sum to 1
-                    risky_allocation = final_weights[:,:,:,:-1].abs().sum(dim=-1, keepdim=True)
-                    recalibrated_risky_allocations = (final_weights[:,:,:,:-1] / (risky_allocation + 1e-8))
+                    if stage == "val":
+                        # adjusts the stock weights to sum to 1
+                        risky_allocation = final_weights[:,:,:,:-1].abs().sum(dim=-1, keepdim=True)
+                        recalibrated_risky_allocations = (final_weights[:,:,:,:-1] / (risky_allocation + 1e-8))
 
-                    self.log(
-                        f"Portfolio/{stage}_seen_sum_of_sq_weights",
-                        recalibrated_risky_allocations[:,:-1,:,:].pow(2).sum(dim=-1).mean(),
-                        **current_log_opts,
-                    )
-                    self.log(
-                        f"Portfolio/{stage}_unseen_sum_of_sq_weights",
-                        recalibrated_risky_allocations[:,-1:,:,:].pow(2).sum(dim=-1).mean(),
-                        **current_log_opts,
-                    )
+                        self.log(
+                            f"Portfolio/{stage}_seen_sum_of_sq_weights",
+                            recalibrated_risky_allocations[:,:-1,:,:].pow(2).sum(dim=-1).mean(),
+                            **current_log_opts,
+                        )
+                        self.log(
+                            f"Portfolio/{stage}_unseen_sum_of_sq_weights",
+                            recalibrated_risky_allocations[:,-1:,:,:].pow(2).sum(dim=-1).mean(),
+                            **current_log_opts,
+                        )
+
+                        seq_avg_risky_allocations = recalibrated_risky_allocations.mean(dim=1)
+                        self.log(
+                            f"Portfolio/{stage}_seq_avg_HHI",
+                            seq_avg_risky_allocations.pow(2).sum(dim=-1).mean(),
+                            **current_log_opts,
+                        )
 
 
                     # for benchmarking
@@ -1142,7 +1152,7 @@ class MoneyExperiment(pl.LightningModule):
         all_returns = torch.cat([x['period_returns'] for x in outputs], dim=0) # (batch/time, targets)
 
         sequence_returns = torch.cat([x['sequence_returns'] for x in outputs], dim=0) # (batch/time, targets, num_sequences+1)
-        sequence_returns = sequence_returns[1:,0] # (batch/time, num_sequences)
+        sequence_returns = sequence_returns[all_returns.shape[1]-1:,0] # (batch/time, num_sequences)
 
         # combining post-mock_weights calculation
         # mock_weights = torch.cat([x['mock_weights'] for x in outputs], dim=0) # (batch/time, targets, num_sequences+1)
@@ -1276,6 +1286,15 @@ class MoneyExperiment(pl.LightningModule):
             self.log(
                 f"Strategy_metrics_logit/val_log_utility",
                 -torch.log(mean_logit_returns + 1 + 1e-8).mean(),
+                **log_opts_epoch,
+            )
+
+
+            best_single_benchmark = torch.log(sequence_returns + 1 + 1e-8).mean(dim=0)
+            best_single_benchmark = best_single_benchmark.max(dim=0)[0]
+            self.log(
+                f"Benchmarks/val_best_single_BH",
+                -best_single_benchmark,
                 **log_opts_epoch,
             )
 

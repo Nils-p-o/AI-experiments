@@ -172,9 +172,10 @@ def proceed(args: argparse.Namespace):
     args.normalization_means = data_module._metadata.get("train_means", None)
     args.normalization_stds = data_module._metadata.get("train_stds", None)
 
-    with open("experiment_configs/MTP_trade_loss_exp_base.json", "r") as f:
-        base_args = argparse.Namespace(**json.load(f))
-    base_args.input_features = args.input_features
+    # with open("experiment_configs/MTP_trade_loss_exp_base.json", "r") as f:
+    #     base_args = argparse.Namespace(**json.load(f))
+    # base_args.input_features = args.input_features
+    base_args = args
 
     # --- Model Definition ---
     match architecture:  # TODO auto format qk_rope_dim for non MLA (currently all of them)
