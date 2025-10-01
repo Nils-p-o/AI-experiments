@@ -471,7 +471,8 @@ class MoneyExperiment(pl.LightningModule):
                 # loss = -sharpe.mean()
                 daily_mult = 1 + period_returns
                 log_utilities = torch.log(daily_mult + 1e-8)
-                loss = -log_utilities.mean() + hhi.mean() * self.args.hhi_lambda
+                # loss = -log_utilities.mean() + hhi.mean() * self.args.hhi_lambda
+                loss = -torch.log(daily_mult - self.args.steepness_correction).mean() + hhi.mean() * self.args.hhi_lambda
                 seen_losses = -log_utilities[:, :-1, :].mean(dim=(0, 1))
                 unseen_losses = -log_utilities[:, -1:, :].mean(dim=(0, 1))
 
