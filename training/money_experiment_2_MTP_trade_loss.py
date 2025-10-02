@@ -287,6 +287,8 @@ class MoneyExperiment(pl.LightningModule):
         if self.cli_args.average_predictions:
             self.cli_args.pred_day = max(self.pred_indices)
         self.validation_step_outputs = []
+        self.grad_norms_since_last_log = []
+        self.clipped_grad_norms_since_last_log = []
 
 
         feature_weights = [1, 1, 1, 1, 1]
@@ -1329,10 +1331,83 @@ class MoneyExperiment(pl.LightningModule):
             cummulative_times["loss"] = 0
             cummulative_times["metrics"] = 0
 
+    def on_before_optimizer_step(self, optimizer):
+        # This is a hook that runs after gradients are computed but before the optimizer steps.
+        # It's an ideal place to inspect gradients.
+        
+        # We compute the L2 norm of all model parameters' gradients.
+        # This gives us a single value representing the magnitude of the gradient update.
+        norms = [torch.linalg.norm(p.grad.detach()) for p in self.parameters() if p.grad is not None]
+        total_norm = torch.linalg.norm(torch.stack(norms))
+        self.grad_norms_since_last_log.append(total_norm)
+
+        # Log the gradient norm. You can view this in your logger (e.g., TensorBoard)
+        # to check for spikes or large values.
+        self.log("gradients/norm", total_norm, on_step=True, on_epoch=False, logger=True)
+
     def on_train_batch_end(self, outputs, batch, batch_idx):
-        if self.model.__class__.__name__ == "Money_former_nGPT":
-            normalize_weights_and_enforce_positive_eigenvalues(self.model)
-        return
+        # This hook runs after every training step.
+        # We check if it's time to log based on your trainer's `log_every_n_steps`.
+        
+        # First, call the original method from the parent class if it exists
+        # to ensure things like weight normalization still happen.
+        # super().on_train_batch_end(outputs, batch, batch_idx)
+
+        # Now, add the logging logic
+        if (self.global_step + 1) % self.trainer.log_every_n_steps == 0:
+            if self.trainer.is_global_zero and self.grad_norms_since_last_log:
+                # Calculate the maximum norm observed in the last 50 steps
+                max_norm = torch.max(torch.stack(self.grad_norms_since_last_log))
+                
+                # Log this maximum value
+                self.log("gradients/norm_max", max_norm, on_step=True, on_epoch=False, logger=True)
+                
+                # Clear the list for the next logging interval
+                self.grad_norms_since_last_log.clear()
+
+    # def optimizer_step(self, epoch, batch_idx, optimizer, optimizer_closure):
+    #     # This function overrides the default optimization behavior
+
+    #     # 1. Run the model forward, calculate loss, and run backward.
+    #     optimizer_closure()
+
+    #     # # 2. Log the PRE-CLIPPING norm (what you are currently doing)
+    #     # pre_clip_norm = torch.linalg.norm(torch.stack([
+    #     #     torch.linalg.norm(p.grad.detach()) for p in self.parameters() if p.grad is not None
+    #     # ]))
+    #     # self.log("gradient_norm_pre_clip", pre_clip_norm, on_step=True, on_epoch=False, logger=True)
+
+    #     # 3. Manually clip the gradients using the Trainer's settings
+    #     self.clip_gradients(
+    #         optimizer,
+    #         gradient_clip_val=self.trainer.gradient_clip_val,
+    #         gradient_clip_algorithm=self.trainer.gradient_clip_algorithm
+    #     )
+
+    #     # 4. Log the POST-CLIPPING norm
+    #     post_clip_norm = torch.linalg.norm(torch.stack([
+    #         torch.linalg.norm(p.grad.detach()) for p in self.parameters() if p.grad is not None
+    #     ]))
+    #     self.log("gradients/norm_post_clip", post_clip_norm, on_step=True, on_epoch=False, logger=True)
+    #     self.clipped_grad_norms_since_last_log.append(post_clip_norm)
+    #     if (self.global_step + 1) % self.trainer.log_every_n_steps == 0:
+    #         if self.trainer.is_global_zero and self.clipped_grad_norms_since_last_log:
+    #             # Calculate the maximum norm observed in the last 50 steps
+    #             max_norm = torch.max(torch.stack(self.clipped_grad_norms_since_last_log))
+                
+    #             # Log this maximum value
+    #             self.log("gradients/norm_max_clip", max_norm, on_step=True, on_epoch=False, logger=True)
+                
+    #             # Clear the list for the next logging interval
+    #             self.clipped_grad_norms_since_last_log.clear()
+
+    #     # 5. Finally, tell the optimizer to update the weights
+    #     optimizer.step()
+
+    # def on_train_batch_end(self, outputs, batch, batch_idx):
+    #     if self.model.__class__.__name__ == "Money_former_nGPT":
+    #         normalize_weights_and_enforce_positive_eigenvalues(self.model)
+    #     return
 
 # class MuonWithCustomAux(Optimizer):
     # """

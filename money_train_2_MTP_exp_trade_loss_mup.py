@@ -256,6 +256,8 @@ def proceed(args: argparse.Namespace):
         val_check_interval=100,
         precision=trainer_precision,
         check_val_every_n_epoch=None,
+        # gradient_clip_val=0.1,
+        # gradient_clip_algorithm="norm",
     )
 
     trainer.fit(experiment, datamodule=data_module)
