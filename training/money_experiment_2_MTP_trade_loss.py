@@ -11,11 +11,6 @@ from scipy import stats
 from transformer_arch.money.money_former_nGPT_2 import (
     normalize_weights_and_enforce_positive_eigenvalues,
 )
-from money_predictions_MTP_local_new import (
-    calculate_metrics,
-    new_trading_metrics,
-    new_trading_metrics_individual
-)
 
 from muon import MuonWithAuxAdam
 from muon import Muon
@@ -206,6 +201,43 @@ def calculate_trading_metrics(returns):
         "WLR": win_loss_ratio,
     }
 
+def calculate_individual_trading_metrics(final_weights, sequence_returns, tickers, transaction_cost_rate=0.0005):
+    """
+    Calculates trading metrics for each stock individually, assuming it was the only asset traded.
+    The strategy for each stock is to hold its weight from the main portfolio, with the rest in cash.
+    """
+    all_metrics = {}
+    num_stocks = len(tickers)
+
+    for i in range(num_stocks):
+        # Isolate the weights for the individual stock strategy.
+        stock_weight = final_weights[:, i]
+        # The portfolio's gross exposure is normalized to 1, so the cash portion is 1 - abs(stock_weight).
+        cash_weight = 1.0 - torch.abs(stock_weight)
+
+        # Construct the full weight tensor for this single-stock-plus-cash portfolio.
+        individual_strategy_weights = torch.zeros_like(final_weights)
+        individual_strategy_weights[:, i] = stock_weight
+        individual_strategy_weights[:, -1] = cash_weight
+
+        # Calculate transaction costs for this isolated strategy.
+        prev_weights = torch.roll(individual_strategy_weights, shifts=1, dims=0)
+        prev_weights[0, :] = 0.0
+        prev_weights[0, -1] = 1.0  # Start with 100% cash.
+
+        turnover = torch.sum(torch.abs(individual_strategy_weights - prev_weights), dim=-1)
+        transaction_costs = transaction_cost_rate * turnover
+
+        # Calculate the daily returns for this isolated strategy.
+        # Return comes from the stock's performance multiplied by its weight, minus transaction costs. Cash return is zero.
+        period_returns = (sequence_returns[:, i] * stock_weight) - transaction_costs
+
+        # Use the existing trading metrics calculator on the resulting returns series.
+        stock_metrics = calculate_trading_metrics(period_returns)
+        all_metrics[tickers[i]] = stock_metrics
+
+    return all_metrics
+
 def align_and_mean(tensor):
     # assumes tensor is of shape {batch/time, targets, ...}
     time = tensor.shape[0]
@@ -277,15 +309,6 @@ class MoneyExperiment(pl.LightningModule):
         self.num_sequences = len(args.tickers)
         self.tickers = args.tickers
 
-        self.cli_args = argparse.Namespace()
-        self.cli_args.start_date_data = "2020-01-01"
-        self.cli_args.end_date_data = "2025-05-25"
-        self.cli_args.days_to_check = 1300
-        self.cli_args.average_predictions = True
-        self.cli_args.batch_size = batch_size
-        self.cli_args.pred_day = 1
-        if self.cli_args.average_predictions:
-            self.cli_args.pred_day = max(self.pred_indices)
         self.validation_step_outputs = []
         self.grad_norms_since_last_log = []
         self.clipped_grad_norms_since_last_log = []
@@ -467,14 +490,30 @@ class MoneyExperiment(pl.LightningModule):
                 current_risky_exposure = torch.sum(torch.abs(risky_weights), dim=-1, keepdim=True) # (batch_size, seq_len, targets, 1)
                 adjusted_risky_weights = risky_weights / (current_risky_exposure + 1e-8)
                 # hhi = torch.sum(torch.pow(adjusted_risky_weights, 2), dim=-1) # (batch_size, seq_len, targets)
-                seq_avg_risky_weights = torch.mean(adjusted_risky_weights, dim=1) # (batch_size, targets, num_sequences)
+                seq_avg_risky_weights = torch.mean(adjusted_risky_weights.abs(), dim=1) # (batch_size, targets, num_sequences)
                 hhi = torch.sum(torch.pow(seq_avg_risky_weights, 2), dim=-1) # (batch_size, targets)
+                hhi_penalty = hhi.mean()
 
                 # loss = -sharpe.mean()
                 daily_mult = 1 + period_returns
                 log_utilities = torch.log(daily_mult + 1e-8)
-                # loss = -log_utilities.mean() + hhi.mean() * self.args.hhi_lambda
-                loss = -torch.log(daily_mult - self.args.steepness_correction).mean() + hhi.mean() * self.args.hhi_lambda
+                daily_loss = log_utilities.mean()
+                
+                # Drawdown penalty
+                # cum_value = torch.cumprod(daily_mult, dim=1) # (batch_size, seq_len, targets)
+                # running_max = torch.cummax(cum_value, dim=1).values # (batch_size, seq_len, targets)
+
+                # drawdown = (cum_value / (running_max + 1e-8) - 1) # (batch_size, seq_len, targets)
+
+                # max_drawdown_per_sequence = torch.min(drawdown, dim=1).values # (batch_size, targets)
+                # drawdown_penalty = torch.abs(max_drawdown_per_sequence).mean()
+                # drawdown_penalty = torch.pow(drawdown, 2).mean()
+
+                # Var penalty
+                var_penalty = torch.var(period_returns, dim=1).mean()
+
+                loss = -daily_loss + hhi_penalty * self.args.hhi_lambda + var_penalty * self.args.var_lambda #+ drawdown_penalty * self.args.drawdown_lambda
+                # loss = -torch.log(daily_mult - self.args.steepness_correction + 1e-8).mean() + hhi_penalty
                 seen_losses = -log_utilities[:, :-1, :].mean(dim=(0, 1))
                 unseen_losses = -log_utilities[:, -1:, :].mean(dim=(0, 1))
 
@@ -486,16 +525,50 @@ class MoneyExperiment(pl.LightningModule):
         if torch.isnan(loss).any():
             print("NAN IN LOSS")
 
+        general_log_opts = {
+            "on_step": (stage == "train"), 
+            "on_epoch": (stage != "train"), 
+            "logger": True,
+            "sync_dist": True
+            }
         self.log(
             f"Loss/{stage}_loss",
             loss,
             prog_bar=True,
-            on_step=(stage == "train"),
-            on_epoch=(stage != "train"),
-            logger=True,
-            sync_dist=True,
+            **general_log_opts
         )
-        
+
+        # For logging loss components separately
+        self.log(
+            f"Loss_components/scaled/{stage}_daily_log_util_loss",
+            -daily_loss,
+            **general_log_opts
+        )
+        self.log(
+            f"Loss_components/scaled/{stage}_var_penalty",
+            var_penalty * self.args.var_lambda,
+            **general_log_opts
+        )
+        self.log(
+            f"Loss_components/scaled/{stage}_hhi_penalty",
+            hhi_penalty * self.args.hhi_lambda,
+            **general_log_opts
+        )
+        self.log(
+            f"Loss_components/unscaled/{stage}_daily_log_util_loss",
+            -daily_loss,
+            **general_log_opts
+        )
+        self.log(
+            f"Loss_components/unscaled/{stage}_var_penalty",
+            var_penalty,
+            **general_log_opts
+        )
+        self.log(
+            f"Loss_components/unscaled/{stage}_hhi_penalty",
+            hhi_penalty,
+            **general_log_opts
+        )
 
         calculate_detailed_metrics = False
         if stage == "train":
@@ -560,28 +633,6 @@ class MoneyExperiment(pl.LightningModule):
                                 final_weights[:, -1:, :, i].abs().mean(),
                                 **current_log_opts,
                             )
-
-                            # self.log( # mock weights
-                            #     f"Portfolio_weights_extra/{stage}_seen_m_weight_{self.tickers[i]}",
-                            #     mock_weights[:, :-1, :, i].abs().mean(),
-                            #     **current_log_opts,
-                            # )
-                            # self.log(
-                            #     f"Portfolio_weights_extra/{stage}_unseen_m_weight_{self.tickers[i]}",
-                            #     mock_weights[:, -1:, :, i].abs().mean(), 
-                            #     **current_log_opts,
-                            # )
-
-                            # self.log( # "raw" portfolio weights
-                            #     f"Portfolio_weights_extra/{stage}_seen_p_weight_{self.tickers[i]}",
-                            #     portfolio_weights[:, :-1, :, i].mean(),
-                            #     **current_log_opts,
-                            # )
-                            # self.log(
-                            #     f"Portfolio_weights_extra/{stage}_unseen_p_weight_{self.tickers[i]}",
-                            #     portfolio_weights[:, -1:, :, i].mean(), 
-                            #     **current_log_opts,
-                            # )                        
 
                     for i in range(len(self.tickers)):
                         seen_target_accuracy = (preds_classes == targets_classes)[:, :-1, :, i].sum() / targets_classes[:, :-1, :, i].numel()
@@ -719,7 +770,7 @@ class MoneyExperiment(pl.LightningModule):
                             **current_log_opts,
                         )
 
-                        seq_avg_risky_allocations = recalibrated_risky_allocations.mean(dim=1)
+                        seq_avg_risky_allocations = recalibrated_risky_allocations.abs().mean(dim=1)
                         self.log(
                             f"Portfolio/{stage}_seq_avg_HHI",
                             seq_avg_risky_allocations.pow(2).sum(dim=-1).mean(),
@@ -1292,6 +1343,14 @@ class MoneyExperiment(pl.LightningModule):
                 **log_opts_epoch,
             )
 
+            individual_metrics = calculate_individual_trading_metrics(final_weights, sequence_returns, self.tickers, transaction_cost_rate)
+            for ticker, metrics in individual_metrics.items():
+                for metric_name, metric_value in metrics.items():
+                    self.log(
+                        f"Individual_Metrics/{ticker}/val_{metric_name}",
+                        metric_value,
+                        **log_opts_epoch,
+                    )
 
             best_single_benchmark = torch.log(sequence_returns + 1 + 1e-8).mean(dim=0)
             best_single_benchmark = best_single_benchmark.max(dim=0)[0]

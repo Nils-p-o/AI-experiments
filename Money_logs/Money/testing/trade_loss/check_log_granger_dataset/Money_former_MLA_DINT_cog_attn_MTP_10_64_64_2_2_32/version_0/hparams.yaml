@@ -1,0 +1,159 @@
+args: !!python/object:argparse.Namespace
+  architecture: Money_former_MLA_DINT_cog_attn_MTP
+  aux_optimizer: adamw
+  batch_size: 32
+  bias: false
+  class_weights:
+  - - - 1.4560679197311401
+      - 0.633812665939331
+      - 1.3596829175949097
+    - - 1.235065221786499
+      - 0.7218241691589355
+      - 1.2423174381256104
+    - - 1.7571982145309448
+      - 0.5508114099502563
+      - 1.6249359846115112
+    - - 1.6966052055358887
+      - 0.5745971202850342
+      - 1.4920074939727783
+    - - 1.3458439111709595
+      - 0.681154727935791
+      - 1.267625331878662
+  - - - 1.667191982269287
+      - 0.5665952563285828
+      - 1.5741567611694336
+    - - 1.388232707977295
+      - 0.6336228251457214
+      - 1.4256514310836792
+    - - 2.1413629055023193
+      - 0.49144405126571655
+      - 2.0072739124298096
+    - - 1.8445219993591309
+      - 0.5278609395027161
+      - 1.7748881578445435
+    - - 1.4353233575820923
+      - 0.6244588494300842
+      - 1.4246913194656372
+  - - - 1.6286886930465698
+      - 0.5959624648094177
+      - 1.412327527999878
+    - - 1.4431560039520264
+      - 0.6586757898330688
+      - 1.267625331878662
+    - - 1.9662330150604248
+      - 0.5136359930038452
+      - 1.836516261100769
+    - - 1.830161452293396
+      - 0.5528264045715332
+      - 1.5510752201080322
+    - - 1.4878106117248535
+      - 0.6463998556137085
+      - 1.280669927597046
+  - - - 1.4295045137405396
+      - 0.6446272730827332
+      - 1.3348054885864258
+    - - 1.2423174381256104
+      - 0.7343515157699585
+      - 1.2000378370285034
+    - - 1.7929378747940063
+      - 0.54359370470047
+      - 1.6593464612960815
+    - - 1.6003530025482178
+      - 0.5936213731765747
+      - 1.4480949640274048
+    - - 1.278348445892334
+      - 0.7166892290115356
+      - 1.2159004211425781
+  - - - 0.6857914924621582
+      - 5.780509948730469
+      - 0.7305479049682617
+    - - 0.7005518674850464
+      - 6.02754020690918
+      - 0.7109094858169556
+    - - 0.691168487071991
+      - 6.5703935623168945
+      - 0.7137876749038696
+    - - 0.6844602823257446
+      - 6.204300880432129
+      - 0.7257861495018005
+    - - 0.6791867017745972
+      - 6.39174222946167
+      - 0.7292887568473816
+  classification_threshold: 0.01
+  config: ./experiment_configs/granger_trade_loss_exp_base.json
+  d_ff: 64
+  d_model: 64
+  dataset: Money
+  down_up_loss_weight: 1.0
+  drawdown_lambda: 0.0
+  dropout: 0.25
+  dtype: fp32
+  experiment_notes: trade loss - (transaction costs, exposure rebalance), log util
+    loss, hhi penalty (over seq_len), just close returns, real estate granger dataset
+    cluster nr.2, causal, no var or drawdown penalty
+  extra_descriptor: ''
+  flat_p_err_w: 1.5
+  flat_t_err_w: 2.0
+  folder_name: testing/trade_loss/check_log_granger_dataset/
+  head_dim: 32
+  hhi_lambda: 0.0015
+  include_sep_in_loss: false
+  indices_to_predict:
+  - 1
+  - 2
+  input_features: 11
+  kv_compression_dim: 16
+  lr: 0.00025
+  lr_mult: 0.5
+  muon_lr: 0.005
+  n_noisy_copies: 0
+  nhead: 2
+  noise_factor: 0.05
+  normalization_means:
+  - - 0.000758264446631074
+    - 0.0009282782557420433
+    - 0.0005419229273684323
+    - 0.00040947220986709
+    - 0.00105004059150815
+  normalization_stds:
+  - - 0.028667086735367775
+    - 0.040934007614851
+    - 0.017888113856315613
+    - 0.01781105250120163
+    - 0.03750482201576233
+  num_classes: 3
+  num_layers: 2
+  num_params: 87536
+  optimizer: muon
+  prediction_type: portfolio
+  q_compression_dim: 32
+  qk_rope_dim: 16
+  reload_data: true
+  scheduler_type: cosine_restarts
+  seed: 1
+  seq_len: 10
+  steepness_correction: 0.0
+  t_0: 4000
+  t_mult: 1.5
+  t_total: 5000
+  tickers:
+  - AMT
+  - EQIX
+  - FRT
+  - IRM
+  - SBAC
+  type: ''
+  unique_inputs_ratio:
+  - 0
+  - 1
+  up_down_err_w: 1.0
+  use_global_seperator: true
+  var_lambda: 0.0
+  warmup_steps: 1000
+  weight_decay: 0.0
+batch_size: 32
+learning_rate: 0.00025
+lr_mult: 0.5
+t_0: 5000
+t_mult: 1.5
+warmup_steps: 1000

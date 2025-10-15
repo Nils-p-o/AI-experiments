@@ -385,33 +385,33 @@ def download_numerical_financial_data(
     aux_data = torch.cat((aux_returns, raw_aux_data), dim=0)
     aux_columns = [col+"_returns" for col in aux_columns] + aux_columns
 
-    # aux emas
-    full_aux_ema = []
-    full_aux_ema_columns = []
-    for i in range(raw_aux_data.shape[0]):
-        temp_ema = []
-        for j in range(len(aux_tickers)):
-            ema_data, ema_columns = feature_ema(raw_aux_data[i, :, j], aux_columns[raw_aux_data.shape[0]+i] + "_")
-            temp_ema.append(ema_data.unsqueeze(-1))
-        full_aux_ema.append(torch.cat(temp_ema, dim=-1))
-        full_aux_ema_columns.extend(ema_columns)
+    # # aux emas
+    # full_aux_ema = []
+    # full_aux_ema_columns = []
+    # for i in range(raw_aux_data.shape[0]):
+    #     temp_ema = []
+    #     for j in range(len(aux_tickers)):
+    #         ema_data, ema_columns = feature_ema(raw_aux_data[i, :, j], aux_columns[raw_aux_data.shape[0]+i] + "_")
+    #         temp_ema.append(ema_data.unsqueeze(-1))
+    #     full_aux_ema.append(torch.cat(temp_ema, dim=-1))
+    #     full_aux_ema_columns.extend(ema_columns)
 
-    aux_data = torch.cat((aux_data, torch.cat(full_aux_ema, dim=0)), dim=0)
-    aux_columns.extend(full_aux_ema_columns)
+    # aux_data = torch.cat((aux_data, torch.cat(full_aux_ema, dim=0)), dim=0)
+    # aux_columns.extend(full_aux_ema_columns)
 
-    # aux return emas
-    full_aux_ema = []
-    full_aux_ema_columns = []
-    for i in range(4): 
-        temp_ema = []
-        for j in range(len(aux_tickers)):
-            ema_data, ema_columns = feature_ema(aux_returns[i, :, j], aux_columns[i] + "_")
-            temp_ema.append(ema_data.unsqueeze(-1))
-        full_aux_ema.append(torch.cat(temp_ema, dim=-1))
-        full_aux_ema_columns.extend(ema_columns)
+    # # aux return emas
+    # full_aux_ema = []
+    # full_aux_ema_columns = []
+    # for i in range(4): 
+    #     temp_ema = []
+    #     for j in range(len(aux_tickers)):
+    #         ema_data, ema_columns = feature_ema(aux_returns[i, :, j], aux_columns[i] + "_")
+    #         temp_ema.append(ema_data.unsqueeze(-1))
+    #     full_aux_ema.append(torch.cat(temp_ema, dim=-1))
+    #     full_aux_ema_columns.extend(ema_columns)
     
-    aux_data = torch.cat((aux_data, torch.cat(full_aux_ema, dim=0)), dim=0)
-    aux_columns.extend(full_aux_ema_columns)
+    # aux_data = torch.cat((aux_data, torch.cat(full_aux_ema, dim=0)), dim=0)
+    # aux_columns.extend(full_aux_ema_columns)
 
     aux_data = data_fix_ffill(aux_data)
 
@@ -679,47 +679,47 @@ def calculate_features(
     full_data = torch.cat((torch.zeros_like(full_data[:, 0:1, :]), full_data), dim=1)
     full_data = data_fix_ffill(full_data)
 
-    vol_data, vol_columns = feature_volatility_ret(returns=full_data[0:1], prefix="close_returns_")
-    full_data = torch.cat((full_data, vol_data), dim=0)
-    columns.extend(vol_columns)
+    # vol_data, vol_columns = feature_volatility_ret(returns=full_data[0:1], prefix="close_returns_")
+    # full_data = torch.cat((full_data, vol_data), dim=0)
+    # columns.extend(vol_columns)
 
-    vol_data, vol_columns = feature_volatility_ret(returns=full_data[4:5], prefix="volume_returns_")
-    full_data = torch.cat((full_data, vol_data), dim=0)
-    columns.extend(vol_columns)
+    # vol_data, vol_columns = feature_volatility_ret(returns=full_data[4:5], prefix="volume_returns_")
+    # full_data = torch.cat((full_data, vol_data), dim=0)
+    # columns.extend(vol_columns)
 
-    full_ema = []
-    full_ema_columns = []
-    for i in range(5):
-        temp_ema = []
-        for j in range(len(tickers)):
-            ema_data, ema_columns = feature_ema(full_data[i, :, j], columns[i] + "_")
-            temp_ema.append(ema_data.unsqueeze(-1))
-        full_ema.append(torch.cat(temp_ema, dim=-1))
-        full_ema_columns.extend(ema_columns)
-    full_data = torch.cat((full_data, torch.cat(full_ema, dim=0)), dim=0)
-    columns.extend(full_ema_columns)
+    # full_ema = []
+    # full_ema_columns = []
+    # for i in range(5):
+    #     temp_ema = []
+    #     for j in range(len(tickers)):
+    #         ema_data, ema_columns = feature_ema(full_data[i, :, j], columns[i] + "_")
+    #         temp_ema.append(ema_data.unsqueeze(-1))
+    #     full_ema.append(torch.cat(temp_ema, dim=-1))
+    #     full_ema_columns.extend(ema_columns)
+    # full_data = torch.cat((full_data, torch.cat(full_ema, dim=0)), dim=0)
+    # columns.extend(full_ema_columns)
 
-    full_vpt = []
-    vpt_data = calculate_volume_price_trend_standard(full_data[:4], raw_data[4:])
-    full_vpt.append(vpt_data)
-    full_data = torch.cat((full_data, torch.cat(full_vpt, dim=0)), dim=0)
-    columns.extend(["vpt_close", "vpt_high", "vpt_low", "vpt_open"])
+    # full_vpt = []
+    # vpt_data = calculate_volume_price_trend_standard(full_data[:4], raw_data[4:])
+    # full_vpt.append(vpt_data)
+    # full_data = torch.cat((full_data, torch.cat(full_vpt, dim=0)), dim=0)
+    # columns.extend(["vpt_close", "vpt_high", "vpt_low", "vpt_open"])
 
-    full_ppo = []
-    full_ppo_columns = []
-    for i in range(len(price_columns)):
-        temp_ppo = []
-        for j in range(len(tickers)):
-            ppo_data, ppo_columns = feature_ppo(raw_data[i, :, j], prefix=price_columns[i] + "_")
-            temp_ppo.append(ppo_data.unsqueeze(-1))
-        full_ppo.append(torch.cat(temp_ppo, dim=-1))
-        full_ppo_columns.extend(ppo_columns)
-    full_data = torch.cat((full_data, torch.cat(full_ppo, dim=0)), dim=0)
-    columns.extend(full_ppo_columns)
+    # full_ppo = []
+    # full_ppo_columns = []
+    # for i in range(len(price_columns)):
+    #     temp_ppo = []
+    #     for j in range(len(tickers)):
+    #         ppo_data, ppo_columns = feature_ppo(raw_data[i, :, j], prefix=price_columns[i] + "_")
+    #         temp_ppo.append(ppo_data.unsqueeze(-1))
+    #     full_ppo.append(torch.cat(temp_ppo, dim=-1))
+    #     full_ppo_columns.extend(ppo_columns)
+    # full_data = torch.cat((full_data, torch.cat(full_ppo, dim=0)), dim=0)
+    # columns.extend(full_ppo_columns)
 
-    clv_data = calculate_close_line_values(raw_data[0], raw_data[1], raw_data[2]).unsqueeze(0)
-    full_data = torch.cat((full_data, clv_data), dim=0)
-    columns.extend(["clv"])
+    # clv_data = calculate_close_line_values(raw_data[0], raw_data[1], raw_data[2]).unsqueeze(0)
+    # full_data = torch.cat((full_data, clv_data), dim=0)
+    # columns.extend(["clv"])
 
     # prices = raw_data
     # local_price_columns = ["local_" + s for s in price_columns]
