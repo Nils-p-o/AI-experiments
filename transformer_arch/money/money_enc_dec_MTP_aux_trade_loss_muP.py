@@ -64,9 +64,6 @@ class Money_former_MLA_DINT_cog_attn_MTP(nn.Module):
         self.main_seperator_embedding = nn.Embedding(1, self.d_model)
         self.use_global_seperator = args.use_global_seperator
 
-        # self.MTP_blocks = nn.ModuleList(
-        #     [MTP_money_former_block(args, depth + self.num_layers) for depth in range(max(args.indices_to_predict)-1)]
-        # )
 
         # auxiliary inputs
         self.aux_input = nn.Linear(args.aux_input_features, self.d_model, bias=args.bias)
@@ -80,12 +77,17 @@ class Money_former_MLA_DINT_cog_attn_MTP(nn.Module):
             [Decoder_layer(args, depth) for depth in range(args.dec_layers)]
         )
 
-        self.aux_norm = nn.RMSNorm(self.d_model)
+        # TODO do i need these norms?
+        # self.aux_norm = nn.RMSNorm(self.d_model)
         self.main_norm = nn.RMSNorm(self.d_model)
 
+        # TODO prev and curr norms in MTP
+        # aux norm in decoder block cross attn input
 
-    # TODO
-    # set up enc-dec MTP blocks
+        self.MTP_blocks = nn.ModuleList(
+            [MTP_enc_dec_block(args, depth) for depth in range(max(args.indices_to_predict)-1)]
+        )
+
 
     def forward(
         self, x_normal, x_aux, tickers=None, aux_tickers=None
@@ -153,27 +155,25 @@ class Money_former_MLA_DINT_cog_attn_MTP(nn.Module):
         freqs_cis = self.freqs_cis[0 : 0 + seq_len].to(x_normal.device)
         for layer in self.encoder_stack:
             x_aux_main = layer(x_aux_main, freqs_cis)
-        x_aux_main = self.aux_norm(x_aux_main)  # (batch_size, seq_len, d_model)
+        # x_aux_main = self.aux_norm(x_aux_main)  # (batch_size, seq_len, d_model)
 
         x_normal_main = x_normal[:, 0, :, :]
         for layer in self.decoder_stack:
             x_normal_main = layer(x_normal_main, x_aux_main, freqs_cis)
-        x_normal_main = self.main_norm(x_normal_main)  # (batch_size, seq_len, d_model)
+        # x_normal_main = self.main_norm(x_normal_main)  # (batch_size, seq_len, d_model)
 
         x_end = []
-        x_end.append(x_normal_main)
+        # x_end.append(x_normal_main)
+        x_end.append(self.main_norm(x_normal_main))
 
-        # TODO MTP blocks
-        # x_main = x[:, 0, :, :]
-        # freqs_cis = self.freqs_cis[0 : 0 + seq_len].to(x.device)
-        # for layer in self.layers:
-        #     x_main = layer(x_main, freqs_cis)
-        # x_main = self.norm(x_main)  # (batch_size, seq_len, d_model)
+        x_main_as_list = [t.squeeze(1) for t in torch.split(x_normal[:,1:], 1, dim=1)]
+        x_aux_as_list = [t.squeeze(1) for t in torch.split(x_aux[:,1:], 1, dim=1)]
+        x_aux_final = x_aux_main
+        for MTP_block in self.MTP_blocks:
+            x_main_temp, x_aux_temp = MTP_block(x_main_as_list.pop(0), x_end[-1], x_aux_as_list.pop(0), x_aux_final, freqs_cis)
+            x_end.append(x_main_temp)
+            x_aux_final = x_aux_temp
 
-        # x_end.append(x_main)
-        # x_as_list = [t.squeeze(1) for t in torch.split(x[:,1:], 1, dim=1)]
-        # for MTP_block in self.MTP_blocks:
-        #     x_end.append(self.norm(MTP_block(x_as_list.pop(0), x_end[-1], freqs_cis)))
         x_end = torch.stack(x_end, dim=1).contiguous()
 
         x_trades = self.out(x_end)
@@ -228,6 +228,7 @@ class Decoder_layer(nn.Module):
         self.norm2 = nn.RMSNorm(args.d_model)
         self.norm3 = nn.RMSNorm(args.d_model)
         self.ff = SwiGLU_feed_forward(args)
+        self.aux_norm = nn.RMSNorm(args.d_model)
 
         self.num_main_sequences = len(args.tickers)
         if args.use_global_seperator:
@@ -264,9 +265,38 @@ class Decoder_layer(nn.Module):
         self_attn_mask = self.self_attn_mask.expand(batch_size, 2 * self.nhead, -1, -1)
         cross_attn_mask = self.cross_attn_mask.expand(batch_size, 2 * self.nhead, -1, -1)
         x = x + self.self_mha(self.norm1(x), mask=self_attn_mask, freqs_cis=freqs_cis)
-        x = x + self.cross_mha(self.norm2(x), mask=cross_attn_mask, freqs_cis=freqs_cis, cross_attn=True, enc_x=enc)
+        x = x + self.cross_mha(self.norm2(x), mask=cross_attn_mask, freqs_cis=freqs_cis, cross_attn=True, enc_x=self.aux_norm(enc))
         x = x + self.ff(self.norm3(x))
         return x
+
+class MTP_enc_dec_block(nn.Module):
+    def __init__(self, args, depth=0):
+        super().__init__()
+        self.main_curr_norm = nn.RMSNorm(args.d_model)
+        self.main_prev_norm = nn.RMSNorm(args.d_model)
+        self.main_projection = nn.Linear(args.d_model*2, args.d_model)
+        self.aux_curr_norm = nn.RMSNorm(args.d_model)
+        self.aux_prev_norm = nn.RMSNorm(args.d_model)
+        self.aux_projection = nn.Linear(args.d_model*2, args.d_model)
+
+        self.enc_block = Encoder_layer(args, depth)
+        self.dec_block = Decoder_layer(args, depth)
+
+    def forward(self, x_main_curr, x_main_prev, x_aux_curr, x_aux_prev, freqs_cis):
+        x_main_curr = self.main_curr_norm(x_main_curr) # (batch_size, seq_len, d_model)
+        x_main_prev = self.main_prev_norm(x_main_prev)
+        x_main_combined = torch.cat([x_main_curr, x_main_prev], dim=-1)
+        x_main_combined = self.main_projection(x_main_combined)
+
+        x_aux_curr = self.aux_curr_norm(x_aux_curr) # (batch_size, seq_len, d_model)
+        x_aux_prev = self.aux_prev_norm(x_aux_prev)
+        x_aux_combined = torch.cat([x_aux_curr, x_aux_prev], dim=-1)
+        x_aux_combined = self.aux_projection(x_aux_combined)
+
+        x_aux_combined = self.enc_block(x_aux_combined, freqs_cis)
+        x_main_combined = self.dec_block(x_main_combined, x_aux_combined, freqs_cis)
+
+        return x_main_combined, x_aux_combined
 
 # class Money_former_block(nn.Module):
 #     def __init__(self, args, depth=0):
